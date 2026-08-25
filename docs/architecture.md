@@ -203,6 +203,17 @@ Milestones 10 and 11 are now implemented at MVP depth alongside 1-9:
   decision-vs-outcome quadrants — deliberately never conflating "was this profitable" with "was
   this well-reasoned." `AppState.model_performance_summary()` (`GET /models/performance`)
   aggregates closed trades by strategy for the model-performance dashboard.
+- **Quant/post-trade unification**: `AppState.submit_trade_idea()` attaches the Quantitative
+  Team's current `PriceForecast` for a trade's instrument at creation time
+  (`AppState.trade_forecasts`); `close_trade()` passes it into `evaluate_post_trade()`, which adds
+  `quant_model_type`/`quant_predicted_return`/`quant_forecast_error`/`quant_up_probability` to the
+  `PostTradeAnalysis` — direction-adjusted so they're comparable to the trade's own actual return,
+  independent of the strategy-level thesis/timing/risk scores computed alongside them.
+  `model_performance_summary()`'s `quant` section then reports each model's walk-forward-backtested
+  directional accuracy (`self.latest_backtests`) side by side with its *live* directional accuracy
+  and Brier score computed from closed trades — using the exact same
+  `quant_service.metrics.directional_accuracy`/`brier_score` functions the backtester itself uses,
+  so a model's backtested and live skill are directly comparable rather than two unrelated numbers.
 
 Milestone 5 (quantitative platform) is also implemented at MVP depth:
 
@@ -222,7 +233,5 @@ Milestone 5 (quantitative platform) is also implemented at MVP depth:
 - The Quantitative Team agents (`services/agents/agents_service/quant/`) wrap these engines:
   Forecasting, Regime Detection, Relative Value, and Backtesting agents, all wired into the
   Chief Trading Agent's research cycle and exposed via `/quant/*` endpoints.
-- Post-trade scoring (Milestone 11) and model-performance aggregation remain first-pass
-  heuristics independent of `services/quant`'s walk-forward framework — unifying the two (e.g.
-  running the actual implemented models' historical accuracy into post-trade lesson generation)
-  is a natural next increment, not yet done.
+- See "Quant/post-trade unification" above for how post-trade scoring and model-performance
+  aggregation now draw on this framework rather than living as disconnected heuristics.

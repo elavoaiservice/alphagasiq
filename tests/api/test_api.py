@@ -290,6 +290,13 @@ def test_full_lifecycle_execute_then_close_then_post_trade_and_performance(clien
         "BAD_DECISION_GOOD_OUTCOME",
         "BAD_DECISION_BAD_OUTCOME",
     )
+    # The Quantitative Team's forecast for this instrument was attached at trade
+    # creation (AppState.submit_trade_idea), so closing should score it too —
+    # the quant/post-trade unification this feature exists to prove.
+    assert analysis["quant_model_type"] == "LINEAR_REGRESSION"
+    assert analysis["quant_predicted_return"] is not None
+    assert analysis["quant_forecast_error"] is not None
+    assert 0 <= analysis["quant_up_probability"] <= 1
 
     # Closing twice must fail cleanly, not silently double-count P&L.
     close_again = client.post(f"/api/v1/trade-ideas/{trade_id}/close", json={}, headers=headers)
@@ -305,6 +312,13 @@ def test_full_lifecycle_execute_then_close_then_post_trade_and_performance(clien
     assert perf_body["closed_trade_count"] == 1
     assert perf_body["classification"] == "SIMULATED"
 
+    quant = perf_body["quant"]
+    assert set(quant["backtested"].keys()) == {"NAIVE_PERSISTENCE", "LINEAR_REGRESSION"}
+    assert quant["live"]["n_forecasts_resolved"] == 1
+    assert quant["live"]["directional_accuracy"] in (0.0, 1.0)
+    assert "LINEAR_REGRESSION" in quant["live"]["by_model"]
+    assert quant["live"]["by_model"]["LINEAR_REGRESSION"]["n"] == 1
+
 
 def test_model_performance_endpoint_empty_before_any_close(client):
     r = client.get("/api/v1/models/performance")
@@ -312,6 +326,13 @@ def test_model_performance_endpoint_empty_before_any_close(client):
     body = r.json()
     assert body["closed_trade_count"] == 0
     assert body["win_rate"] is None
+    # Backtested model performance is computed at startup (independent of any closed
+    # trade); only the "live" side is legitimately empty before anything has closed.
+    quant = body["quant"]
+    assert set(quant["backtested"].keys()) == {"NAIVE_PERSISTENCE", "LINEAR_REGRESSION"}
+    assert quant["live"]["n_forecasts_resolved"] == 0
+    assert quant["live"]["directional_accuracy"] is None
+    assert quant["live"]["by_model"] == {}
 
 
 def test_post_trade_reports_open_before_close(client):

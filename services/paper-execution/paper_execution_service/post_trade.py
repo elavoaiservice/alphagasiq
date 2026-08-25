@@ -1,12 +1,22 @@
 """Post-trade analysis: generated once a paper position closes.
 
-This is a first-pass, deterministic heuristic — not the full walk-forward model
-evaluation framework described for the Quantitative Team (`services/quant`, not yet
-built). It exists to make the platform's core discipline concrete: **decision quality
-and outcome quality are scored separately and never conflated.** A well-reasoned trade
-that lost money is not the same failure as a reckless trade that happened to work, and
-`OutcomeQuadrant` is what keeps that distinction visible in the record instead of
-collapsing everything to "was it profitable."
+The `thesis_accuracy`/`timing_accuracy`/`risk_accuracy`/`forecast_error` heuristics
+below score the *strategy's* stated thesis (target/stop/expected_return) and are
+self-contained — no dependency on `services/quant`. When the caller also has the
+Quantitative Team's actual `PriceForecast` for this trade (produced by
+`services/agents/agents_service/quant/forecasting.py::ForecastingAgent` around the
+time the trade was created), pass it in via `forecast` to additionally score the
+*model's* prediction against what happened, using the same `return_forecast`/
+`up_probability` fields `services/quant`'s walk-forward backtester scores — that is
+what lets `AppState.model_performance_summary()` compare a model's backtested skill
+to its live skill honestly, on the same terms, instead of two disconnected numbers.
+`quant_*` output fields are simply `None` when no forecast is attached.
+
+Both scoring paths independently uphold the platform's core discipline: **decision
+quality and outcome quality are scored separately and never conflated.** A
+well-reasoned trade that lost money is not the same failure as a reckless trade that
+happened to work, and `OutcomeQuadrant` is what keeps that distinction visible in the
+record instead of collapsing everything to "was it profitable."
 """
 
 from __future__ import annotations
@@ -16,8 +26,10 @@ from datetime import datetime
 from schemas import (
     Direction,
     InvestmentCommitteeDecision,
+    ModelType,
     OutcomeQuadrant,
     PostTradeAnalysis,
+    PriceForecast,
     RiskCheckResult,
     RiskVerdict,
     TradeIdea,
@@ -35,11 +47,28 @@ def evaluate_post_trade(
     exit_price: float,
     opened_at: datetime,
     closed_at: datetime,
+    forecast: PriceForecast | None = None,
+    forecast_model_type: ModelType | None = None,
+    forecast_model_version: str | None = None,
 ) -> PostTradeAnalysis:
     direction_sign = 1 if trade.direction == Direction.LONG else -1
     actual_return = direction_sign * (exit_price - entry_price)
     expected_return = trade.expected_return
     forecast_error = round(actual_return - expected_return, 4)
+
+    quant_predicted_return = None
+    quant_forecast_error = None
+    quant_up_probability = None
+    if forecast is not None:
+        # forecast.return_forecast/up_probability are direction-agnostic (they describe
+        # the instrument's raw price move, not "will this trade win"); re-express both
+        # in the trade's own direction so they're comparable to actual_return, which
+        # already is direction-adjusted.
+        quant_predicted_return = round(direction_sign * forecast.return_forecast, 4)
+        quant_forecast_error = round(actual_return - quant_predicted_return, 4)
+        quant_up_probability = round(
+            forecast.up_probability if direction_sign > 0 else forecast.down_probability, 4
+        )
 
     # Thesis accuracy: did the move go the right way, and how close in magnitude?
     same_direction = (actual_return >= 0) == (expected_return >= 0)
@@ -90,6 +119,15 @@ def evaluate_post_trade(
     elif quadrant == OutcomeQuadrant.GOOD_DECISION_BAD_OUTCOME:
         lessons_parts.append("Process was sound (committee consensus + risk-approved); the loss reflects normal variance, not a process failure.")
 
+    if forecast is not None and forecast_model_type is not None:
+        model_called_it_right = (quant_predicted_return >= 0) == (actual_return >= 0)
+        lessons_parts.append(
+            f"{forecast_model_type.value} forecast a {quant_predicted_return:+.3f} move for this trade "
+            f"({quant_up_probability:.0%} win-probability) and was "
+            f"{'directionally correct' if model_called_it_right else 'directionally wrong'} "
+            f"(quant forecast error {quant_forecast_error:+.3f})."
+        )
+
     return PostTradeAnalysis(
         trade_id=trade.trade_id,
         expected_outcome={
@@ -117,4 +155,9 @@ def evaluate_post_trade(
         unexpected_events=[],
         lessons=" ".join(lessons_parts),
         quadrant=quadrant,
+        quant_model_type=forecast_model_type,
+        quant_model_version=forecast_model_version,
+        quant_predicted_return=quant_predicted_return,
+        quant_forecast_error=quant_forecast_error,
+        quant_up_probability=quant_up_probability,
     )

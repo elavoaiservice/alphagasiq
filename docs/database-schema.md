@@ -80,7 +80,13 @@ No column for chain-of-thought. `reasoning_summary` is a concise, human-auditabl
 - **`post_trade_analyses`** — expected vs actual outcome, forecast_error, thesis_accuracy,
   timing_accuracy, risk_accuracy, model_contribution (jsonb), unexpected_events (jsonb), lessons
   (text), quadrant enum (`GOOD_DECISION_GOOD_OUTCOME`, `GOOD_DECISION_BAD_OUTCOME`,
-  `BAD_DECISION_GOOD_OUTCOME`, `BAD_DECISION_BAD_OUTCOME`).
+  `BAD_DECISION_GOOD_OUTCOME`, `BAD_DECISION_BAD_OUTCOME`). Also carries `quant_model_type`,
+  `quant_model_version`, `quant_predicted_return`, `quant_forecast_error`, and
+  `quant_up_probability` — populated only when a `services/quant` `PriceForecast` was attached to
+  the trade at creation time, scoring the *model's* prediction separately from the strategy's own
+  thesis (see `services/paper-execution/paper_execution_service/post_trade.py`). This is what lets
+  `GET /models/performance` compare a model's walk-forward-backtested skill to its live skill on
+  the same metrics.
 
 ## 4. Domain Reference Tables
 

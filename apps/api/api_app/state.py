@@ -41,6 +41,8 @@ from fundamentals_service.seed import (
 )
 from paper_execution_service import OrderSide, OrderType, PaperExecutionAdapter, PaperOrder, evaluate_post_trade
 from quant_service import generate_price_history
+from quant_service.metrics import brier_score, directional_accuracy as quant_directional_accuracy
+from quant_service.models import build_model as build_quant_model
 from risk_service.governor import RiskContext, RiskGovernor
 from risk_service.limits import default_risk_limits
 from risk_service.metrics import PositionSnapshot, summarize
@@ -50,6 +52,7 @@ from schemas import (
     DataClassification,
     ForecastHorizon,
     InvestmentCommitteeDecision,
+    ModelType,
     NewsEvent,
     ObservationDraft,
     PostTradeAnalysis,
@@ -111,6 +114,9 @@ class AppState:
         self.approvals: dict[UUID, Approval] = {}
         self.decision_journal: dict[UUID, list[dict]] = {}  # trade_id -> append-only entries
         self.post_trade_analyses: dict[UUID, PostTradeAnalysis] = {}
+        # The Quantitative Team's PriceForecast in effect when a trade was submitted —
+        # see AppState.submit_trade_idea / close_trade for the unification this enables.
+        self.trade_forecasts: dict[UUID, PriceForecast] = {}
 
         self.agent_execution_log: list[AgentResult] = []
 
@@ -275,6 +281,13 @@ class AppState:
     async def submit_trade_idea(self, trade: TradeIdea) -> Approval:
         self.trade_ideas[trade.trade_id] = trade
 
+        # Attach the Quantitative Team's current forecast for this instrument, if any,
+        # so that closing this trade can score the forecast against reality too (see
+        # close_trade / model_performance_summary). Only meaningful when the forecast
+        # is actually for the instrument being traded.
+        if self.latest_forecast is not None and self.latest_forecast.instrument == trade.instrument:
+            self.trade_forecasts[trade.trade_id] = self.latest_forecast
+
         decision = await self.investment_committee.deliberate(
             trade=trade,
             supporting_observations=[],
@@ -370,6 +383,13 @@ class AppState:
 
         committee = self.committee_decisions[trade_id]
         risk_check = self.risk_checks[trade_id]
+
+        forecast = self.trade_forecasts.get(trade_id)
+        forecast_model_type: ModelType | None = None
+        forecast_model_version: str | None = None
+        if forecast is not None:
+            forecast_model_type, forecast_model_version = self._forecast_model_type_and_version(forecast)
+
         analysis = evaluate_post_trade(
             trade=trade,
             committee=committee,
@@ -378,6 +398,9 @@ class AppState:
             exit_price=exit_fill_price,
             opened_at=opened_at,
             closed_at=closed_at,
+            forecast=forecast,
+            forecast_model_type=forecast_model_type,
+            forecast_model_version=forecast_model_version,
         )
         self.post_trade_analyses[trade_id] = analysis
 
@@ -400,6 +423,19 @@ class AppState:
 
         return {"post_trade_analysis": analysis, "exit_price": exit_fill_price}
 
+    @staticmethod
+    def _forecast_model_type_and_version(forecast: PriceForecast) -> tuple[ModelType, str]:
+        """Recovers which model actually produced `forecast` and that model's version,
+        from its `model_contributions` (the highest-weighted contributor). Looking the
+        version up from the live model registry (rather than hardcoding it here) means
+        this never drifts from whatever `services/quant` actually ships as that
+        model's current version.
+        """
+        dominant_model_name = max(forecast.model_contributions, key=forecast.model_contributions.get)
+        model_type = ModelType(dominant_model_name)
+        version = build_quant_model(model_type).version
+        return model_type, version
+
     def portfolio_risk_summary(self):
         positions = [
             PositionSnapshot(
@@ -417,12 +453,20 @@ class AppState:
     def model_performance_summary(self) -> dict:
         """Aggregates closed-trade outcomes by strategy — the Milestone 11
         "model-performance dashboard." Deliberately simple (counts + averages over
-        whatever has closed so far) rather than a walk-forward statistical framework;
-        that belongs to the Quantitative Team's backtesting engine (`services/quant`,
-        not yet built) once there is enough closed-trade history to make it
-        meaningful.
+        whatever has closed so far) rather than a full statistical framework.
+
+        The `quant` section is where this unifies with `services/quant`: it reports
+        the walk-forward-backtested skill of every implemented model
+        (`self.latest_backtests`) side by side with each model's *live* skill,
+        computed from closed trades that had a `PriceForecast` attached at creation
+        time (`self.trade_forecasts`) — using the exact same metric functions
+        (`quant_service.metrics.directional_accuracy` / `brier_score`) the backtester
+        itself uses, so "how well did this model actually do" and "how well did we
+        expect it to do" are directly comparable rather than two disconnected numbers.
         """
         analyses = list(self.post_trade_analyses.values())
+        quant_section = self._quant_backtested_vs_live(analyses)
+
         if not analyses:
             return {
                 "closed_trade_count": 0,
@@ -432,6 +476,7 @@ class AppState:
                 "avg_risk_accuracy": None,
                 "by_quadrant": {},
                 "by_strategy": {},
+                "quant": quant_section,
             }
 
         def avg(values: list[float]) -> float:
@@ -463,6 +508,51 @@ class AppState:
             "avg_risk_accuracy": avg([a.risk_accuracy for a in analyses]),
             "by_quadrant": by_quadrant,
             "by_strategy": by_strategy,
+            "quant": quant_section,
+        }
+
+    def _quant_backtested_vs_live(self, analyses: list[PostTradeAnalysis]) -> dict:
+        backtested = {
+            model_type: {
+                "n_folds": result.n_folds,
+                "directional_accuracy": result.directional_accuracy,
+                "mae": result.mae,
+                "rmse": result.rmse,
+                "sharpe_ratio": result.sharpe_ratio,
+            }
+            for model_type, result in self.latest_backtests.items()
+        }
+
+        scored = [a for a in analyses if a.quant_model_type is not None and a.quant_predicted_return is not None]
+        by_model: dict[str, list[PostTradeAnalysis]] = {}
+        for a in scored:
+            by_model.setdefault(a.quant_model_type.value, []).append(a)
+
+        def live_stats(group: list[PostTradeAnalysis]) -> dict:
+            actual = [g.actual_outcome["actual_return_per_unit"] for g in group]
+            predicted = [g.quant_predicted_return for g in group]
+            outcomes = [a_val > 0 for a_val in actual]
+            probabilities = [g.quant_up_probability for g in group if g.quant_up_probability is not None]
+            return {
+                "n": len(group),
+                "directional_accuracy": round(quant_directional_accuracy(actual, predicted), 4),
+                "brier_score": round(brier_score(probabilities, outcomes), 4) if probabilities else None,
+            }
+
+        return {
+            "backtested": backtested,
+            "live": {
+                "n_forecasts_resolved": len(scored),
+                "directional_accuracy": round(quant_directional_accuracy(
+                    [a.actual_outcome["actual_return_per_unit"] for a in scored],
+                    [a.quant_predicted_return for a in scored],
+                ), 4) if scored else None,
+                "brier_score": round(brier_score(
+                    [a.quant_up_probability for a in scored if a.quant_up_probability is not None],
+                    [a.actual_outcome["actual_return_per_unit"] > 0 for a in scored if a.quant_up_probability is not None],
+                ), 4) if any(a.quant_up_probability is not None for a in scored) else None,
+                "by_model": {model_type: live_stats(group) for model_type, group in by_model.items()},
+            },
         }
 
     def mark_price(self, instrument: str) -> float:

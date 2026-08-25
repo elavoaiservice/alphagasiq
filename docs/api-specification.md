@@ -107,7 +107,7 @@ provider. All mutating endpoints require RBAC role checks (`ADMIN`, `TRADER`, `R
 |---|---|---|
 | GET | `/journal/{trade_id}` | full decision journal entry |
 | GET | `/post-trade/{trade_id}` | post-trade analysis once closed |
-| GET | `/models/performance` | Milestone 11 model-performance dashboard: win rate, avg thesis/timing/risk accuracy, decision-vs-outcome quadrant counts, and per-strategy breakdown, aggregated over every closed trade |
+| GET | `/models/performance` | Milestone 11 model-performance dashboard: win rate, avg thesis/timing/risk accuracy, decision-vs-outcome quadrant counts, and per-strategy breakdown over every closed trade; plus a `quant` section comparing each `services/quant` model's walk-forward-backtested directional accuracy to its live directional accuracy/Brier score from closed trades that had a forecast attached |
 
 ## AI Trader Chat
 

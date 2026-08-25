@@ -210,6 +210,13 @@ CREATE TABLE IF NOT EXISTS post_trade_analyses (
         'GOOD_DECISION_GOOD_OUTCOME', 'GOOD_DECISION_BAD_OUTCOME',
         'BAD_DECISION_GOOD_OUTCOME', 'BAD_DECISION_BAD_OUTCOME'
     )),
+    -- Populated only when a services/quant PriceForecast was attached to the trade at
+    -- creation time; NULL otherwise. See services/paper-execution/.../post_trade.py.
+    quant_model_type TEXT,
+    quant_model_version TEXT,
+    quant_predicted_return DOUBLE PRECISION,
+    quant_forecast_error DOUBLE PRECISION,
+    quant_up_probability DOUBLE PRECISION,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

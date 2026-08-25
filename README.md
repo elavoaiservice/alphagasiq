@@ -105,12 +105,22 @@ A minimal dev-mode sign-in widget (top-right of the header) and an Approval Queu
 added alongside Milestone 11 so the full loop — recommendation → human approval → paper
 execution → close → post-trade analysis — is actually exercisable from the UI, not just the API.
 
+**Post-trade learning and the quantitative platform are unified**, not two disconnected
+heuristics: when a trade is created, the Quantitative Team's current `PriceForecast` for that
+instrument is attached to it; closing the trade scores that forecast (direction-adjusted
+predicted return, forecast error, win-probability) alongside the strategy's own thesis/timing/
+risk scoring, using the same fields the trade's `TradeIdea` and the model's `PriceForecast` both
+carry. `GET /models/performance`'s `quant` section then reports each model's walk-forward-
+backtested directional accuracy side by side with its *live* directional accuracy and Brier
+score from actual closed trades — computed with the exact same `quant_service.metrics`
+functions the backtester uses, so "how well we expected this model to do" and "how well it
+actually did" are directly comparable, not two disconnected numbers. See the "Quant/post-trade
+unification" note in `docs/architecture.md` §8 for the full mechanism.
+
 The MVP persistence layer is in-memory (`apps/api/api_app/state.py`), seeded at startup;
 `infrastructure/db/migrations` defines the production Postgres/TimescaleDB schema it mirrors,
 and swapping in a SQLAlchemy-backed repository remains the next-increment wiring — no router
-changes required. Post-trade scoring (Milestone 11) and model-performance aggregation are still
-independent, first-pass heuristics rather than being unified with `services/quant`'s
-walk-forward framework — that unification is a natural next increment, not yet done.
+changes required.
 
 Known follow-ups: the pinned `next` version has open advisories addressed only by a Next 16
 major upgrade (deferred to avoid an unreviewed breaking change); production auth should
