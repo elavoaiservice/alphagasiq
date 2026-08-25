@@ -1,0 +1,110 @@
+# API Specification (MVP)
+
+Base URL: `/api/v1`. FastAPI app in `apps/api`. Auth via OAuth2/OIDC-compatible bearer JWT
+(`Authorization: Bearer <token>`); dev environment ships a local password-grant stub identity
+provider. All mutating endpoints require RBAC role checks (`ADMIN`, `TRADER`, `RISK_MANAGER`,
+`RESEARCHER`, `VIEWER`).
+
+## Auth
+
+| Method | Path | Notes |
+|---|---|---|
+| POST | `/auth/login` | dev-mode credential login, returns JWT |
+| GET | `/auth/me` | current user + roles |
+
+## System / Observability
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/system/status` | overall system status: services, event bus, DB |
+| GET | `/system/freshness` | per-provider freshness + stale flags |
+| GET | `/system/providers` | registered providers, classification, health |
+
+## Market Data
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/market/curve/{instrument}` | forward curve M1-M36, with `as_of` compare param |
+| GET | `/market/ticks/{symbol}` | recent ticks/settlements |
+| GET | `/market/summary` | header strip: HH M1, daily %, M2, 12-mo strip |
+
+## Fundamentals
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/fundamentals/balance/daily` | Lower-48 daily balance series |
+| GET | `/fundamentals/storage/forecast` | latest `StorageForecast` |
+| GET | `/fundamentals/storage/current` | current inventory, yr-ago, 5yr avg/range, EOS projection |
+| GET | `/fundamentals/weather/impact` | latest `WeatherDemandImpact` records |
+| GET | `/fundamentals/lng/terminals` | LNG terminal states + netback economics |
+| GET | `/fundamentals/power-burn` | power burn estimate by ISO/RTO |
+| GET | `/fundamentals/pipeline/graph` | pipeline digital-twin nodes/edges (GeoJSON-friendly) |
+
+## News
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/news/events` | structured `NewsEvent` feed, filterable by type/geography |
+| GET | `/news/events/{event_id}` | single event with citations |
+
+## Agents
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/agents` | org chart + each agent's current status |
+| GET | `/agents/{agent_id}/executions` | recent `AgentResult`s for one agent |
+| POST | `/agents/chief-trading/run` | trigger a Chief Trading Agent research cycle (RESEARCHER+) |
+
+## Strategy / Committee
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/trade-ideas` | list `TradeIdea`s, filterable by status/instrument |
+| GET | `/trade-ideas/{trade_id}` | single trade idea + explainability payload |
+| POST | `/trade-ideas/{trade_id}/challenge` | "Challenge AI" — re-invokes Skeptic + Bear agents |
+| GET | `/committee-decisions/{trade_id}` | `InvestmentCommitteeDecision` for a trade idea |
+
+## Risk
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/risk/portfolio` | current exposure/greeks/VaR/ES/drawdown |
+| GET | `/risk/limits` | configured limits |
+| PUT | `/risk/limits` | update limits (RISK_MANAGER/ADMIN) |
+| POST | `/risk/scenarios/{scenario_id}/run` | run a stress scenario |
+| GET | `/risk/governor/checks/{trade_id}` | Risk Governor verdict + rule trace for a trade |
+
+## Approvals
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/approvals` | approval workflow items, filterable by state |
+| POST | `/approvals/{id}/action` | `{action, payload}` — approve/reject/modify/challenge/etc. (TRADER/RISK_MANAGER/ADMIN) |
+
+## Paper Trading / Portfolio
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/portfolio/positions` | current paper positions |
+| GET | `/portfolio/pnl` | daily/realized/unrealized P&L |
+| GET | `/paper-orders` | simulated order/fill history |
+
+## Decision Journal / Post-Trade
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/journal/{trade_id}` | full decision journal entry |
+| GET | `/post-trade/{trade_id}` | post-trade analysis once closed |
+
+## AI Trader Chat
+
+| Method | Path | Notes |
+|---|---|---|
+| POST | `/chat/sessions` | create a chat session |
+| POST | `/chat/sessions/{id}/messages` | send a message; returns assistant reply with citations |
+| GET | `/chat/sessions/{id}` | full transcript |
+| WS | `/ws/chat/{id}` | streaming token delivery |
+
+All list endpoints support `limit`/`cursor` pagination. All responses embed
+`data_sources`/`citations`/`freshness` metadata wherever the payload includes market or research
+facts, per the platform's explainability requirement.

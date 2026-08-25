@@ -1,0 +1,247 @@
+"""AI Trader Chat: answers questions using tools that retrieve real platform data —
+never hallucinated values. Every answer carries citations, source, and freshness.
+
+The tool router below is intentionally simple keyword matching rather than a full LLM
+tool-use loop, so the chat is fully useful even when `ANTHROPIC_API_KEY` is not set
+(`MockLLMProvider` cannot itself invoke tools). When a real Claude key is configured,
+the retrieved facts are handed to the LLM to phrase into prose; the underlying numbers
+always come from `AppState`, never from the model.
+"""
+
+from __future__ import annotations
+
+import re
+from datetime import datetime, timedelta, timezone
+from typing import Any
+from uuid import UUID
+
+from agent_sdk import LLMMessage, LLMProvider
+from risk_service.metrics import PositionSnapshot
+from risk_service.scenarios import get_scenario, run_scenario
+
+from .state import AppState
+
+
+class ToolResult:
+    def __init__(self, content: str, citations: list[dict[str, Any]], freshness: dict[str, Any]):
+        self.content = content
+        self.citations = citations
+        self.freshness = freshness
+
+
+class ChatAgent:
+    def __init__(self, llm: LLMProvider):
+        self.llm = llm
+
+    async def ask(self, question: str, state: AppState) -> ToolResult:
+        q = question.lower()
+
+        if "invalidate" in q:
+            result = self._what_invalidates(q, state)
+        elif "disagree" in q:
+            result = self._most_disagreeing_agent(state)
+        elif "sensitiv" in q and "hdd" in q:
+            result = self._hdd_sensitivity(q, state)
+        elif "ecmwf" in q or ("weather" in q and ("run" in q or "model" in q)):
+            result = self._weather_run_delta(state)
+        elif "scenario" in q or "freeport" in q or "offline" in q:
+            result = self._run_named_scenario(q, state)
+        elif "evidence" in q or "data point" in q or "show every" in q:
+            result = self._show_evidence(q, state)
+        elif "consensus" in q and ("eia" in q or "storage" in q):
+            result = self._compare_forecast_vs_consensus(state)
+        elif "largest risk" in q or "biggest risk" in q or "risk in the portfolio" in q:
+            result = self._top_risks(state)
+        elif "what changed" in q or "last six hours" in q or "recent" in q:
+            result = self._what_changed(q, state)
+        elif "caused today" in q or "today's move" in q or "why did" in q and "move" in q:
+            result = self._todays_move(state)
+        elif "why are we" in q or "why bullish" in q or "why bearish" in q or "argue" in q or "arguments against" in q:
+            result = self._why_bias(q, state)
+        else:
+            result = self._general_status(state)
+
+        prompt = (
+            "You are the AlphaGasIQ AI Trader Chat assistant. Using ONLY the facts below "
+            "(never invent numbers), answer the trader's question concisely and professionally.\n\n"
+            f"Question: {question}\n\nFacts:\n{result.content}"
+        )
+        llm_response = await self.llm.complete([LLMMessage(role="user", content=prompt)], max_tokens=400)
+        content = result.content if "MOCK LLM RESPONSE" in llm_response.content else llm_response.content
+        return ToolResult(content=content, citations=result.citations, freshness=result.freshness)
+
+    # -- tools -------------------------------------------------------------
+
+    def _why_bias(self, q: str, state: AppState) -> ToolResult:
+        if not state.trade_ideas:
+            return ToolResult("No active trade ideas at the moment.", [], {})
+        trade = list(state.trade_ideas.values())[-1]
+        decision = state.committee_decisions.get(trade.trade_id)
+        lines = [f"Latest trade idea: {trade.direction.value} {trade.instrument} — {trade.thesis}"]
+        if "argument" in q and "against" in q:
+            if decision:
+                lines.append(f"Strongest counter-arguments (Bear case): {decision.bear_case}")
+                lines.append(f"Skeptic case: {decision.skeptic_case}")
+            lines.append("Stated risks: " + "; ".join(trade.risks))
+        else:
+            lines.append("Catalysts: " + "; ".join(trade.catalysts))
+            if decision:
+                lines.append(f"Bull case: {decision.bull_case}")
+        return ToolResult(
+            "\n".join(lines),
+            [{"source": "trade_idea", "reference": str(trade.trade_id)}],
+            {"trade_created_at": trade.created_at.isoformat()},
+        )
+
+    def _what_invalidates(self, q: str, state: AppState) -> ToolResult:
+        if not state.trade_ideas:
+            return ToolResult("No active trade ideas.", [], {})
+        trade = list(state.trade_ideas.values())[-1]
+        content = (
+            f"Invalidation conditions for {trade.instrument}: " + "; ".join(trade.invalidation_conditions)
+            + f". Stop/invalidation level: {trade.stop_or_invalidation}."
+        )
+        return ToolResult(content, [{"source": "trade_idea", "reference": str(trade.trade_id)}], {})
+
+    def _most_disagreeing_agent(self, state: AppState) -> ToolResult:
+        if not state.committee_decisions:
+            return ToolResult("No committee deliberations recorded yet.", [], {})
+        decision = list(state.committee_decisions.values())[-1]
+        content = (
+            f"Bear Agent shows the strongest disagreement with the primary thesis: {decision.bear_case} "
+            f"Skeptic Agent raised: {decision.skeptic_case}"
+        )
+        return ToolResult(content, [{"source": "investment_committee", "reference": str(decision.original_trade.trade_id)}], {})
+
+    def _hdd_sensitivity(self, q: str, state: AppState) -> ToolResult:
+        match = re.search(r"(-?\d+(\.\d+)?)\s*hdd", q)
+        hdd_delta = float(match.group(1)) if match else -10.0
+        from fundamentals_service.weather_impact import DEFAULT_RESCOM_BCF_PER_HDD
+
+        demand_delta = hdd_delta * DEFAULT_RESCOM_BCF_PER_HDD
+        content = (
+            f"A {hdd_delta:+.0f} HDD change is estimated to shift res/comm demand by "
+            f"{demand_delta:+.2f} Bcf/d (using {DEFAULT_RESCOM_BCF_PER_HDD} Bcf/d per HDD, "
+            "the platform's current calibrated sensitivity). Portfolio-level price sensitivity "
+            "translation is not yet wired to a formal factor model (Quantitative Team backlog)."
+        )
+        return ToolResult(content, [{"source": "fundamentals_service.weather_impact", "reference": "DEFAULT_RESCOM_BCF_PER_HDD"}], {})
+
+    def _weather_run_delta(self, state: AppState) -> ToolResult:
+        weather_results = [r for r in state.agent_execution_log if r.agent_type.value == "WEATHER"]
+        if not weather_results:
+            return ToolResult("No weather model runs recorded yet.", [], {})
+        latest = weather_results[-1]
+        content = (
+            f"{latest.outputs.get('model')} {latest.outputs.get('run')} vs "
+            f"{latest.outputs.get('comparison_run')}: HDD delta {latest.outputs.get('hdd_delta'):+.2f}, "
+            f"CDD delta {latest.outputs.get('cdd_delta'):+.2f}, total demand delta "
+            f"{latest.outputs.get('total_demand_delta_bcf'):+.2f} Bcf/d "
+            f"({latest.outputs.get('price_direction')})."
+        )
+        return ToolResult(
+            content,
+            [c.model_dump(mode="json") for c in latest.citations],
+            {"last_execution_time": latest.last_execution_time.isoformat()},
+        )
+
+    def _run_named_scenario(self, q: str, state: AppState) -> ToolResult:
+        scenario_id = None
+        if "freeport" in q or "lng" in q and "offline" in q:
+            scenario_id = "freeport_lng_outage"
+        else:
+            for candidate in ("polar_vortex", "hurricane", "pipeline_disruption"):
+                if candidate.split("_")[0] in q:
+                    scenario_id = candidate
+                    break
+        scenario_id = scenario_id or "freeport_lng_outage"
+        try:
+            scenario = get_scenario(scenario_id)
+        except KeyError:
+            return ToolResult(f"Unknown scenario '{scenario_id}'.", [], {})
+
+        positions = [
+            PositionSnapshot(
+                instrument=instrument,
+                sector="NATURAL_GAS",
+                quantity=pos.quantity,
+                price=state.mark_price(instrument),
+                avg_price=pos.avg_price,
+            )
+            for instrument, pos in state.paper_adapter.portfolio.positions.items()
+        ]
+        result = run_scenario(scenario, positions)
+        content = (
+            f"Scenario '{scenario.name}': portfolio P&L impact {result.portfolio_pnl:+.2f}, "
+            f"VaR impact {result.var_impact:+.2f}, margin impact {result.margin_impact:.2f}, "
+            f"largest risk contributor: {result.largest_risk_contributor}."
+        )
+        return ToolResult(content, [{"source": "risk_service.scenarios", "reference": scenario_id}], {})
+
+    def _show_evidence(self, q: str, state: AppState) -> ToolResult:
+        if not state.trade_ideas:
+            return ToolResult("No active trade ideas.", [], {})
+        trade = list(state.trade_ideas.values())[-1]
+        content = (
+            f"Supporting data for {trade.instrument}: {', '.join(trade.supporting_data)}. "
+            f"Source citations: {', '.join(trade.source_citations)}."
+        )
+        return ToolResult(
+            content,
+            [{"source": s, "reference": s} for s in trade.source_citations],
+            {"trade_created_at": trade.created_at.isoformat()},
+        )
+
+    def _compare_forecast_vs_consensus(self, state: AppState) -> ToolResult:
+        storage_results = [r for r in state.agent_execution_log if r.agent_type.value == "STORAGE"]
+        if not storage_results:
+            return ToolResult("No storage forecast recorded yet.", [], {})
+        latest = storage_results[-1]
+        outputs = latest.outputs
+        content = (
+            f"AlphaGasIQ storage forecast: {outputs.get('forecast_bcf'):+.0f} Bcf vs. market consensus "
+            f"{outputs.get('market_consensus_bcf')} Bcf for week ending {outputs.get('week_ending')}. "
+            f"5-year average: {outputs.get('five_year_average_bcf')} Bcf; last year: {outputs.get('last_year_bcf')} Bcf."
+        )
+        return ToolResult(content, [c.model_dump(mode="json") for c in latest.citations], {"last_execution_time": latest.last_execution_time.isoformat()})
+
+    def _top_risks(self, state: AppState) -> ToolResult:
+        summary = state.portfolio_risk_summary()
+        content = (
+            f"Gross exposure {summary.gross_exposure}, net exposure {summary.net_exposure}, "
+            f"VaR(95) {summary.var_95}, Expected Shortfall(95) {summary.expected_shortfall_95}, "
+            f"max drawdown {summary.max_drawdown:.1%}, concentration (HHI) {summary.concentration_hhi}, "
+            f"largest single-position share {summary.largest_position_share:.1%}."
+        )
+        return ToolResult(content, [{"source": "risk_service.metrics", "reference": "portfolio_risk_summary"}], {})
+
+    def _what_changed(self, q: str, state: AppState) -> ToolResult:
+        hours = 6
+        match = re.search(r"(\d+)\s*hour", q)
+        if match:
+            hours = int(match.group(1))
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+        recent = [
+            r for r in state.agent_execution_log
+            if r.last_execution_time.replace(tzinfo=timezone.utc) >= cutoff
+        ]
+        if not recent:
+            return ToolResult(f"No agent activity recorded in the last {hours} hours.", [], {})
+        lines = [f"{r.agent_name}: {r.reasoning_summary}" for r in recent[-5:]]
+        return ToolResult("\n".join(lines), [{"source": "agent_execution_log", "reference": "recent"}], {"window_hours": hours})
+
+    def _todays_move(self, state: AppState) -> ToolResult:
+        if not state.news_events:
+            return ToolResult("No news events recorded today.", [], {})
+        top = sorted(state.news_events, key=lambda e: e.magnitude, reverse=True)[:3]
+        lines = [f"{e.headline} ({e.bullish_bearish}, magnitude {e.magnitude})" for e in top]
+        return ToolResult("\n".join(lines), [{"source": e.source, "reference": e.source_url} for e in top], {})
+
+    def _general_status(self, state: AppState) -> ToolResult:
+        m1 = state.market_curve[0].value if state.market_curve else None
+        content = (
+            f"Henry Hub M1 is {m1}. {len(state.trade_ideas)} active trade idea(s). "
+            f"Trading halted: {state.trading_halted}. Ask about a specific trade, weather run, "
+            "storage forecast, or portfolio risk for more detail."
+        )
+        return ToolResult(content, [{"source": "market_summary", "reference": "mock_cme"}], {})

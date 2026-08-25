@@ -1,0 +1,2 @@
+Placeholder for locally-archived raw provider payloads (dev stand-in for S3/MinIO object
+storage). Populated at runtime; not committed.

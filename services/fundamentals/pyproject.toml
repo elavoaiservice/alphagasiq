@@ -1,0 +1,13 @@
+[project]
+name = "alphagasiq-service-fundamentals"
+version = "0.1.0"
+description = "Natural gas balance engine, storage forecasting, weather-demand, LNG and power-burn engines"
+requires-python = ">=3.11"
+dependencies = ["alphagasiq-schemas"]
+
+[tool.setuptools.packages.find]
+include = ["fundamentals_service*"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"

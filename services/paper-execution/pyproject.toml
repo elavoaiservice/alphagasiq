@@ -1,0 +1,13 @@
+[project]
+name = "alphagasiq-service-paper-execution"
+version = "0.1.0"
+description = "Simulated execution engine and portfolio accounting for AlphaGasIQ paper trading"
+requires-python = ">=3.11"
+dependencies = ["alphagasiq-schemas"]
+
+[tool.setuptools.packages.find]
+include = ["paper_execution_service*"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
