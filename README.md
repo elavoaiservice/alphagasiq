@@ -46,8 +46,8 @@ report `not_configured`), and market data / news default to `MockCMEProvider` /
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e packages/schemas -e packages/data-sdk -e packages/agent-sdk -e packages/config \
-            -e services/data -e services/fundamentals -e services/risk \
-            -e services/paper-execution -e services/agents -e apps/api
+            -e packages/db -e services/data -e services/fundamentals -e services/risk \
+            -e services/paper-execution -e services/agents -e services/quant -e apps/api
 uvicorn api_app.main:app --reload --app-dir apps/api   # http://localhost:8000
 
 cd apps/web && npm install && npm run dev               # http://localhost:3000
@@ -68,8 +68,8 @@ coverage bar in the repo — see `tests/risk/test_governor.py` — per the platf
 ## Repository layout
 
 See `docs/architecture.md` §6. Short version: `/apps` (web, api) · `/services` (data, agents,
-fundamentals, risk, paper-execution, ...) · `/packages` (schemas, agent-sdk, data-sdk, ui,
-config) · `/infrastructure` (Docker, DB migrations) · `/docs` · `/tests`.
+fundamentals, risk, paper-execution, quant, ...) · `/packages` (schemas, agent-sdk, data-sdk, db,
+ui, config) · `/infrastructure` (Docker, DB migrations) · `/docs` · `/tests`.
 
 ## Current implementation status
 
@@ -117,11 +117,24 @@ functions the backtester uses, so "how well we expected this model to do" and "h
 actually did" are directly comparable, not two disconnected numbers. See the "Quant/post-trade
 unification" note in `docs/architecture.md` §8 for the full mechanism.
 
-The MVP persistence layer is in-memory (`apps/api/api_app/state.py`), seeded at startup;
-`infrastructure/db/migrations` defines the production Postgres/TimescaleDB schema it mirrors,
-and swapping in a SQLAlchemy-backed repository remains the next-increment wiring — no router
-changes required.
+**Persistence is now durable, not purely in-memory.** `apps/api/api_app/state.py` still exposes
+its in-memory dicts as the router-facing read path, but every mutation now writes through a real
+async SQLAlchemy 2.0 repository (`packages/db`) mirroring `infrastructure/db/migrations`, and boot
+hydrates from it — trade ideas, approvals, and post-trade analyses survive a process restart.
+`config.Settings.database_url` already resolves per environment (sqlite file for
+`uvicorn --reload`, real Postgres via docker-compose's `DATABASE_URL`); the test suite forces an
+isolated in-memory sqlite DB per test. Validated directly against a live local Postgres instance
+(`tests/db/test_repository.py`), which caught and fixed a real naive/aware-datetime bug that
+sqlite alone would have masked.
 
-Known follow-ups: the pinned `next` version has open advisories addressed only by a Next 16
-major upgrade (deferred to avoid an unreviewed breaking change); production auth should
-replace the dev-mode JWT issuer with a real OIDC provider.
+**`apps/web` runs Next.js 16 / React 19** (upgraded from 14/18) — `npm audit` reports zero
+vulnerabilities. No dynamic routes existed to hit the usual Next 15/16 breaking changes; verified
+with a full manual browser pass (every route, the sign-in → approve flow) against the live API.
+
+**Auth now supports real OIDC** (`apps/api/api_app/oidc.py`) — Authorization Code + PKCE, live
+JWKS signature validation, issuer/audience/nonce checks, and configurable-claim role mapping —
+active only when `OIDC_ISSUER_URL`/`OIDC_CLIENT_ID`/`OIDC_CLIENT_SECRET`/`OIDC_REDIRECT_URI` are
+set; every default dev/docker environment leaves them unset, so the dev-mode password-grant login
+above keeps working unchanged (`GET /auth/mode` reports which mode is active). See
+`docs/architecture.md` §8 and `tests/api/test_oidc.py` for the full mocked-IdP round trip,
+including a real PKCE verifier/challenge and RS256 signature check.

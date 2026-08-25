@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState } from "react";
-import { apiPost } from "./api-client";
+import { apiGet, apiPost } from "./api-client";
 
 interface AuthUser {
   user_id: string;
@@ -26,6 +26,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
 
   useEffect(() => {
+    // `/auth/oidc/callback` redirects back here with the session token in the URL
+    // fragment (never the query string, so it never reaches server logs or a
+    // Referer header). Picking it up client-side is what completes real SSO login.
+    const hash = window.location.hash;
+    if (hash.startsWith("#access_token=")) {
+      const oidcToken = decodeURIComponent(hash.slice("#access_token=".length));
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+      apiGet<AuthUser>("/auth/me", oidcToken)
+        .then((oidcUser) => {
+          setToken(oidcToken);
+          setUser(oidcUser);
+          try {
+            window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ token: oidcToken, user: oidcUser }));
+          } catch {
+            // ignore — private window / storage blocked
+          }
+        })
+        .catch(() => {
+          // Malformed/expired token from a stale redirect — fall through to whatever
+          // (if anything) is already in localStorage below.
+        });
+      return;
+    }
+
     try {
       const raw = window.localStorage.getItem(STORAGE_KEY);
       if (raw) {

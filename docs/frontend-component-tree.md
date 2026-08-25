@@ -65,7 +65,10 @@ components/
 │                                     breakdown from GET /models/performance (shipped)
 ├── auth/
 │   └── AuthWidget.tsx               dev-mode sign-in (Trader/Risk Manager/Admin) rendered in
-│                                     <HeaderBar/>; gates approve/reject/close/risk-limit actions
+│                                     <HeaderBar/>; gates approve/reject/close/risk-limit actions;
+│                                     also shows "Sign in with SSO" when GET /auth/mode reports a
+│                                     real OIDC provider is configured (redirects to
+│                                     /auth/oidc/login; dev-mode identities always stay available)
 ├── chat/
 │   ├── ChatPanel.tsx                persistent AI Trader Chat (docked + full-page variants)
 │   ├── ChatMessage.tsx              renders citations/freshness/source badges inline
@@ -80,9 +83,12 @@ components/
 
 lib/
 ├── api-client.ts                   typed fetch wrapper against apps/api
-├── auth-context.tsx                React context wrapping the dev-mode JWT session
-│                                     (localStorage-persisted); shipped in place of the
-│                                     originally-planned auth.ts/ws.ts session module
+├── auth-context.tsx                React context wrapping the session JWT
+│                                     (localStorage-persisted) — issued by either the dev-mode
+│                                     password login or a real OIDC callback (picked up from the
+│                                     `#access_token=` URL fragment `/auth/oidc/callback`
+│                                     redirects with); shipped in place of the originally-planned
+│                                     auth.ts/ws.ts session module
 └── ws.ts                           chat + live-tick WebSocket client (not yet built — the
                                      AI Trader Chat currently uses a plain POST per message)
 ```

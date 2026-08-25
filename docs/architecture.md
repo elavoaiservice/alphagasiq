@@ -235,3 +235,45 @@ Milestone 5 (quantitative platform) is also implemented at MVP depth:
   Chief Trading Agent's research cycle and exposed via `/quant/*` endpoints.
 - See "Quant/post-trade unification" above for how post-trade scoring and model-performance
   aggregation now draw on this framework rather than living as disconnected heuristics.
+
+Three follow-up hardening items from the MVP status are now closed out:
+
+- **Persistence**: `AppState` (`apps/api/api_app/state.py`) is no longer purely in-memory. A new
+  `packages/db` package (`db/models.py`, `db/engine.py`, `db/repository.py`) adds an async
+  SQLAlchemy 2.0 `SqlAppRepository` mirroring the trade-idea/committee-decision/risk-check/
+  approval/decision-journal/post-trade-analysis/risk-limits tables from
+  `infrastructure/db/migrations/001_init.sql`. `AppState`'s existing in-memory dicts stay the
+  router-facing read path (zero router changes for read paths); every mutation
+  (`submit_trade_idea`, `close_trade`, `persist_approval`, `set_risk_limits`) additionally writes
+  through to the repository, and `_hydrate_from_repo()` reloads everything durable at boot before
+  the demo research cycle runs — so trade ideas, approvals, and post-trade analyses survive a
+  process restart. `config.Settings.database_url` already selected the right DB per environment
+  (sqlite file for `uvicorn --reload`, real Postgres via `DATABASE_URL` in docker-compose);
+  `conftest.py` now forces `sqlite+aiosqlite:///:memory:` (with `StaticPool`) for the test suite so
+  every `AppState()` instance gets a fully isolated database. Validated directly against a live
+  local Postgres 16 instance via `asyncpg` — that validation caught a real bug (mixed naive/aware
+  datetimes, silently tolerated by sqlite but rejected by `asyncpg`'s stricter encoder), fixed by
+  `db.repository._naive_utc()`. See `tests/db/test_repository.py`.
+- **Next.js upgrade**: `apps/web` moved from Next 14.2.35/React 18.3.1 (which still carried
+  advisories fixable only by a major bump) to Next 16.3.3/React 19.2.8 — `npm audit` now reports
+  zero vulnerabilities. The app has no dynamic routes/`params`/`searchParams`/middleware, so the
+  usual Next 15/16 breaking changes (async route params, caching defaults) had nothing to touch;
+  `tsconfig.json`'s `jsx: react-jsx` was mandatorily migrated by Next's own tooling. Verified with a
+  full manual browser pass (every route, plus the sign-in → approve interactive flow) against the
+  live API, not just `next build`.
+- **Auth: real OIDC**: `apps/api/api_app/oidc.py` adds a real Authorization Code + PKCE flow
+  (`GET /auth/oidc/login`, `GET /auth/oidc/callback`) behind the existing dev-mode password-grant
+  login — active only when `OIDC_ISSUER_URL`/`OIDC_CLIENT_ID`/`OIDC_CLIENT_SECRET`/
+  `OIDC_REDIRECT_URI` are configured (every default dev/docker-compose environment leaves them
+  unset, so `GET /auth/mode` reports `oidc_configured: false` and the dev login keeps working
+  unchanged). The callback validates the ID token's signature against the IdP's live JWKS
+  (`PyJWKClient`), checks issuer/audience/nonce (replay protection), and maps a configurable
+  claim (`OIDC_ROLES_CLAIM`, default `"roles"`) onto this platform's own `Role` enum — unrecognized
+  claim values fall back to `VIEWER`, never an elevated role. The resulting session is an ordinary
+  `create_access_token()` JWT, so `require_role`/`get_current_user` and every router are completely
+  unaware whether a session came from SSO or dev login. `apps/web`'s `AuthWidget` shows a "Sign in
+  with SSO" option only when `GET /auth/mode` reports it configured; `auth-context.tsx` picks the
+  session token up from the callback's redirect URL fragment. See `tests/api/test_oidc.py` for the
+  full mocked-IdP round trip (real PKCE verifier/challenge matching, real RS256 signature
+  verification via a test keypair, and negative tests proving a nonce mismatch or wrong signing
+  key is rejected).

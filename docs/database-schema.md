@@ -1,8 +1,15 @@
 # Database Schema
 
-Postgres 16 + TimescaleDB. SQLAlchemy models live in `services/data/app/db/models.py`
-(canonical) and are reused by other services via `packages/schemas`. Alembic migrations live in
-`infrastructure/db/migrations`.
+Postgres 16 + TimescaleDB. `infrastructure/db/migrations` defines the canonical
+production DDL. The trading-object subset of this schema (trade ideas, committee
+decisions, risk checks, approvals, decision journal, post-trade analyses, risk limits —
+the tables `apps/api/api_app/state.py` mutates on every trade lifecycle event) is also
+mirrored as async SQLAlchemy 2.0 models in `packages/db/db/models.py`, backing the real
+`SqlAppRepository` (`packages/db/db/repository.py`) that persists `AppState` — see
+"Persistence" in `docs/architecture.md` §8. Everything else in this document (the
+`observations` hypertable, pipeline graph, LNG/power-burn/storage reference tables) is
+the full production schema the migrations create; only the tables above currently have
+a live SQLAlchemy-backed read/write path.
 
 ## 1. Canonical Time-Series Observation
 

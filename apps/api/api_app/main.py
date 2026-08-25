@@ -12,8 +12,9 @@ from .state import get_app_state
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    await get_app_state()
+    state = await get_app_state()
     yield
+    await state.repo.dispose()
 
 
 def create_app() -> FastAPI:

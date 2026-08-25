@@ -30,6 +30,7 @@ from data_sdk import FetchRequest, ProviderRegistry
 from data_service.providers.mock_market_data import MockCMEProvider, MockICEProvider
 from data_service.providers.mock_news import MockNewsProvider
 from data_service.registry import build_default_registry
+from db import SqlAppRepository
 from fundamentals_service.lng import LNGTerminalState, compute_netback
 from fundamentals_service.pipeline_graph import PipelineGraph, build_default_pipeline_graph
 from fundamentals_service.power_burn import PowerMarketState, estimate_power_burn_bcf_d
@@ -66,7 +67,7 @@ from schemas import (
     TradeIdea,
 )
 
-from .models import Approval, ApprovalState, ChatSession
+from .models import Approval, ApprovalActionRecord, ApprovalState, ChatSession
 
 DEFAULT_INSTRUMENT_FALLBACK = "NG-M1"
 
@@ -75,6 +76,7 @@ class AppState:
     def __init__(self) -> None:
         settings = get_settings()
         self.settings = settings
+        self.repo = SqlAppRepository(settings.database_url)
         self.event_bus = InMemoryEventBus()
         self.providers: ProviderRegistry = build_default_registry()
         llm = get_default_llm_provider()
@@ -131,9 +133,62 @@ class AppState:
         async with self._lock:
             if self._seeded:
                 return
+            await self.repo.init_schema()
+            await self._hydrate_from_repo()
             await self._seed_market_and_fundamentals()
             await self._run_initial_research_cycle()
             self._seeded = True
+
+    async def _hydrate_from_repo(self) -> None:
+        """Reloads every durable trading object left over from a previous process
+        (`SqlAppRepository` persists to `DATABASE_URL` — sqlite file in dev, real
+        Postgres in docker-compose, isolated in-memory sqlite per test). Demo trade
+        ideas continuing to accumulate across restarts on top of these is expected:
+        `_run_initial_research_cycle` (and `worker.py`'s periodic cycle) always submit
+        more trade ideas after this, exactly as they would on a long-running process
+        that was never restarted.
+        """
+        data = await self.repo.hydrate()
+        for key, trade in data["trade_ideas"].items():
+            self.trade_ideas[UUID(key)] = trade
+        for key, forecast in data["forecasts"].items():
+            self.trade_forecasts[UUID(key)] = forecast
+        for key, decision in data["committee_decisions"].items():
+            self.committee_decisions[UUID(key)] = decision
+        for key, risk_check in data["risk_checks"].items():
+            self.risk_checks[UUID(key)] = risk_check
+        for row in data["approvals"]:
+            approval = Approval(
+                id=UUID(row["id"]),
+                trade_id=UUID(row["trade_id"]),
+                state=ApprovalState(row["state"]),
+                actions=[ApprovalActionRecord.model_validate(a) for a in row["actions"]],
+                updated_at=row["updated_at"],
+            )
+            self.approvals[approval.id] = approval
+        for key, entries in data["decision_journal"].items():
+            self.decision_journal[UUID(key)] = entries
+        for key, analysis in data["post_trade_analyses"].items():
+            self.post_trade_analyses[UUID(key)] = analysis
+        if data["risk_limits"] is not None:
+            self.risk_limits = data["risk_limits"]
+
+    async def persist_approval(self, approval: Approval) -> None:
+        """Write-through hook for routers that mutate an `Approval` in place (e.g.
+        `POST /approvals/{id}/action`) after looking it up from `state.approvals` —
+        the dict already holds the same object by reference, so only the durable copy
+        needs updating here."""
+        await self.repo.save_approval(
+            approval_id=approval.id,
+            trade_id=approval.trade_id,
+            state=approval.state.value,
+            actions=[a.model_dump(mode="json") for a in approval.actions],
+            updated_at=approval.updated_at,
+        )
+
+    async def set_risk_limits(self, limits: RiskLimits) -> None:
+        self.risk_limits = limits
+        await self.repo.save_risk_limits(limits)
 
     async def _seed_market_and_fundamentals(self) -> None:
         as_of = datetime.now(timezone.utc)
@@ -287,6 +342,7 @@ class AppState:
         # is actually for the instrument being traded.
         if self.latest_forecast is not None and self.latest_forecast.instrument == trade.instrument:
             self.trade_forecasts[trade.trade_id] = self.latest_forecast
+        await self.repo.save_trade_idea(trade, self.trade_forecasts.get(trade.trade_id))
 
         decision = await self.investment_committee.deliberate(
             trade=trade,
@@ -297,6 +353,7 @@ class AppState:
             },
         )
         self.committee_decisions[trade.trade_id] = decision
+        await self.repo.save_committee_decision(trade.trade_id, decision)
 
         ctx = RiskContext(
             trade=trade,
@@ -311,6 +368,7 @@ class AppState:
         )
         risk_check = self.risk_governor.evaluate_fail_closed(ctx)
         self.risk_checks[trade.trade_id] = risk_check
+        await self.repo.save_risk_check(trade.trade_id, risk_check)
 
         cia_result = await self.chief_investment_agent.run(
             committee_decision=decision, risk_verdict=risk_check.verdict
@@ -325,23 +383,24 @@ class AppState:
         else:
             approval.state = ApprovalState.REJECTED
         self.approvals[approval.id] = approval
+        await self.persist_approval(approval)
 
-        self.decision_journal.setdefault(trade.trade_id, []).append(
-            {
-                "recorded_at": datetime.now(timezone.utc).isoformat(),
-                "thesis": trade.thesis,
-                "counter_thesis": decision.bear_case,
-                "model_versions": {"chief_trading_agent": self.chief_trading_agent.version},
-                "agent_versions": {
-                    "storage_agent": self.chief_trading_agent.storage_agent.version,
-                    "weather_agent": self.chief_trading_agent.weather_agent.version,
-                },
-                "risk_analysis": {"verdict": risk_check.verdict.value, "governor_version": risk_check.governor_version},
-                "human_decision": None,
-                "paper_execution": None,
-                "outcome": None,
-            }
-        )
+        journal_entry = {
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+            "thesis": trade.thesis,
+            "counter_thesis": decision.bear_case,
+            "model_versions": {"chief_trading_agent": self.chief_trading_agent.version},
+            "agent_versions": {
+                "storage_agent": self.chief_trading_agent.storage_agent.version,
+                "weather_agent": self.chief_trading_agent.weather_agent.version,
+            },
+            "risk_analysis": {"verdict": risk_check.verdict.value, "governor_version": risk_check.governor_version},
+            "human_decision": None,
+            "paper_execution": None,
+            "outcome": None,
+        }
+        self.decision_journal.setdefault(trade.trade_id, []).append(journal_entry)
+        await self.repo.append_decision_journal_entry(trade.trade_id, journal_entry)
         return approval
 
     async def close_trade(
@@ -403,23 +462,25 @@ class AppState:
             forecast_model_version=forecast_model_version,
         )
         self.post_trade_analyses[trade_id] = analysis
+        await self.repo.save_post_trade_analysis(analysis)
 
         approval.state = ApprovalState.CLOSED
         approval.updated_at = closed_at
+        await self.persist_approval(approval)
 
-        self.decision_journal.setdefault(trade_id, []).append(
-            {
-                "recorded_at": closed_at.isoformat(),
-                "thesis": trade.thesis,
-                "counter_thesis": committee.bear_case,
-                "model_versions": {"chief_trading_agent": self.chief_trading_agent.version},
-                "agent_versions": {},
-                "risk_analysis": {"verdict": risk_check.verdict.value, "governor_version": risk_check.governor_version},
-                "human_decision": {"action": "CLOSE_POSITION", "reason": exit_reason},
-                "paper_execution": {"exit_price": exit_fill_price, "instrument": trade.instrument},
-                "outcome": analysis.model_dump(mode="json"),
-            }
-        )
+        journal_entry = {
+            "recorded_at": closed_at.isoformat(),
+            "thesis": trade.thesis,
+            "counter_thesis": committee.bear_case,
+            "model_versions": {"chief_trading_agent": self.chief_trading_agent.version},
+            "agent_versions": {},
+            "risk_analysis": {"verdict": risk_check.verdict.value, "governor_version": risk_check.governor_version},
+            "human_decision": {"action": "CLOSE_POSITION", "reason": exit_reason},
+            "paper_execution": {"exit_price": exit_fill_price, "instrument": trade.instrument},
+            "outcome": analysis.model_dump(mode="json"),
+        }
+        self.decision_journal.setdefault(trade_id, []).append(journal_entry)
+        await self.repo.append_decision_journal_entry(trade_id, journal_entry)
 
         return {"post_trade_analysis": analysis, "exit_price": exit_fill_price}
 

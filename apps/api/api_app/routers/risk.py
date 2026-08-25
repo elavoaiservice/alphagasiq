@@ -45,7 +45,7 @@ async def put_limits(
     user: User = Depends(require_role(Role.RISK_MANAGER, Role.ADMIN)),
 ):
     body.set_by_user_id = user.user_id
-    state.risk_limits = body
+    await state.set_risk_limits(body)
     return state.risk_limits
 
 

@@ -19,6 +19,26 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 480
 
+    # Real OIDC (Authorization Code + PKCE) sits behind the dev-mode password-grant
+    # login: when `oidc_issuer_url` is unset (the default for every local/dev/docker
+    # environment), only the existing dev login works and the /auth/oidc/* endpoints
+    # report "not_configured" rather than erroring — the platform's consistent honest-
+    # stub pattern (see EIA_API_KEY, CME_API_ID, etc.).
+    oidc_issuer_url: str | None = None
+    oidc_client_id: str | None = None
+    oidc_client_secret: str | None = None
+    oidc_redirect_uri: str | None = None
+    oidc_audience: str | None = None
+    # Name of the ID token / userinfo claim carrying this platform's roles
+    # (ADMIN/TRADER/RISK_MANAGER/RESEARCHER/VIEWER) — IdPs vary (custom claim,
+    # namespaced claim like `https://alphagasiq/roles`, or an `groups` claim mapped
+    # by the IdP's admin console), so this is configurable rather than hardcoded.
+    oidc_roles_claim: str = "roles"
+    # Roles granted to any authenticated OIDC user who has none of the above claim's
+    # values recognized as a platform Role — VIEWER (read-only) is the safe default,
+    # never an elevated role.
+    oidc_default_roles: str = "VIEWER"
+
     anthropic_api_key: str | None = None
     eia_api_key: str | None = None
     noaa_api_token: str | None = None

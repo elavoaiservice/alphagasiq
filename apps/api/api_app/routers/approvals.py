@@ -75,4 +75,5 @@ async def act_on_approval(
         await state.paper_adapter.submit_order(order, market_price)
         approval.state = ApprovalState.EXECUTED_SIMULATION
 
+    await state.persist_approval(approval)
     return approval

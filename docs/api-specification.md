@@ -1,9 +1,11 @@
 # API Specification (MVP)
 
 Base URL: `/api/v1`. FastAPI app in `apps/api`. Auth via OAuth2/OIDC-compatible bearer JWT
-(`Authorization: Bearer <token>`); dev environment ships a local password-grant stub identity
-provider. All mutating endpoints require RBAC role checks (`ADMIN`, `TRADER`, `RISK_MANAGER`,
-`RESEARCHER`, `VIEWER`).
+(`Authorization: Bearer <token>`); every environment ships the local password-grant dev login,
+and a real OIDC provider (Authorization Code + PKCE) is available wherever `OIDC_ISSUER_URL` is
+configured — see `apps/api/api_app/oidc.py` and the "Auth" section of `docs/architecture.md` §8.
+All mutating endpoints require RBAC role checks (`ADMIN`, `TRADER`, `RISK_MANAGER`,
+`RESEARCHER`, `VIEWER`), regardless of which login path issued the session JWT.
 
 ## Auth
 
@@ -11,6 +13,9 @@ provider. All mutating endpoints require RBAC role checks (`ADMIN`, `TRADER`, `R
 |---|---|---|
 | POST | `/auth/login` | dev-mode credential login, returns JWT |
 | GET | `/auth/me` | current user + roles |
+| GET | `/auth/mode` | `{"oidc_configured": bool}` — whether real SSO is available on this deployment |
+| GET | `/auth/oidc/login` | redirects to the configured IdP's authorization endpoint (PKCE); `501` if OIDC isn't configured |
+| GET | `/auth/oidc/callback` | IdP redirect target; validates the ID token (JWKS signature, issuer, audience, nonce), maps claims to a `Role` set, and redirects to the frontend with this platform's own session JWT in the URL fragment |
 
 ## System / Observability
 

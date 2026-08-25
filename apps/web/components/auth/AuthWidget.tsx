@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
+import { API_BASE, apiGet } from "@/lib/api-client";
 
 const DEV_USERS = [
   { label: "Trader", email: "trader@alphagasiq.local", password: "trader-dev-password" },
@@ -13,6 +14,13 @@ export function AuthWidget() {
   const { user, login, logout } = useAuth();
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [oidcConfigured, setOidcConfigured] = useState(false);
+
+  useEffect(() => {
+    apiGet<{ oidc_configured: boolean }>("/auth/mode")
+      .then((mode) => setOidcConfigured(mode.oidc_configured))
+      .catch(() => setOidcConfigured(false));
+  }, []);
 
   if (user) {
     return (
@@ -37,6 +45,19 @@ export function AuthWidget() {
       </button>
       {open && (
         <div className="absolute right-0 mt-1 z-10 bg-terminal-panel border border-terminal-border rounded p-2 w-56 text-xs">
+          {oidcConfigured && (
+            <>
+              <button
+                onClick={() => {
+                  window.location.href = `${API_BASE}/auth/oidc/login`;
+                }}
+                className="block w-full text-left px-1.5 py-1 rounded border border-terminal-border mb-2 hover:bg-terminal-bg hover:text-terminal-accent"
+              >
+                Sign in with SSO
+              </button>
+              <div className="text-terminal-muted mb-1 border-t border-terminal-border pt-1">Or a dev-mode identity:</div>
+            </>
+          )}
           <div className="text-terminal-muted mb-1">
             Dev-mode identities — approving/rejecting trades and closing positions requires signing in.
           </div>
