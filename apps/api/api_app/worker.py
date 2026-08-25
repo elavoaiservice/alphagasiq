@@ -15,7 +15,7 @@ import logging
 import os
 from datetime import date
 
-from .state import PRIMARY_INSTRUMENT, get_app_state
+from .state import get_app_state
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("alphagasiq.worker")
@@ -30,7 +30,7 @@ async def run_forever() -> None:
             current_price = state.market_curve[0].value if state.market_curve else 3.0
             week_balance = sum(b.balance_bcf for b in state.balances[-7:])
             result = await state.chief_trading_agent.run_research_cycle(
-                instrument=PRIMARY_INSTRUMENT,
+                instrument=state.primary_instrument(),
                 current_price=current_price,
                 balances=state.balances,
                 five_year_average_bcf=state.storage_baseline["five_year_average_bcf"],

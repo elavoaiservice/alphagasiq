@@ -13,6 +13,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <Link href="/chat" className="hover:text-terminal-accent">
             AI Trader Chat
           </Link>
+          <Link href="/pipeline-map" className="hover:text-terminal-accent">
+            Pipeline Map
+          </Link>
+          <Link href="/model-performance" className="hover:text-terminal-accent">
+            Model Performance
+          </Link>
         </nav>
         <main className="flex-1 p-4">{children}</main>
       </div>

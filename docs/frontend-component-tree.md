@@ -11,7 +11,8 @@ app/
 │   ├── layout.tsx                 Dashboard shell: <HeaderBar/> + <NavRail/> + content grid
 │   └── page.tsx                   Composes the panels below
 ├── trade-ideas/[tradeId]/page.tsx  Trade idea explainability detail view
-├── pipeline-map/page.tsx           Full-screen pipeline digital twin
+├── pipeline-map/page.tsx           Full-screen pipeline digital twin (shipped)
+├── model-performance/page.tsx      Milestone 11 model-performance dashboard (shipped)
 ├── chat/page.tsx                   Full AI Trader Chat view
 └── admin/risk-limits/page.tsx      Risk limit configuration (RISK_MANAGER/ADMIN)
 
@@ -33,8 +34,13 @@ components/
 │   ├── ModelRunDeltaTable.tsx       WeatherDemandImpact rows
 │   └── RegionalTempMap.tsx          Mapbox/deck.gl regional temperature overlay
 ├── pipeline-map/
-│   ├── PipelineMap.tsx              Mapbox/deck.gl network: pipelines/storage/basins/LNG/power
-│   └── PipelineNodeInspector.tsx    node/edge detail drawer
+│   ├── PipelineMap.tsx              Shipped as a dependency-free inline-SVG network view
+│   │                                 (lat/lon-projected nodes/edges, click-to-inspect,
+│   │                                 constrained/maintenance coloring) so it needs no
+│   │                                 Mapbox token; swapping in real Mapbox/deck.gl tiles
+│   │                                 later only touches `projection.ts`'s project() call
+│   ├── projection.ts                lat/lon -> SVG coordinate projection (continental US bounds)
+│   └── PipelineNodeInspector.tsx    node/edge detail drawer (shipped)
 ├── recommendations/
 │   ├── RecommendationCard.tsx       trade/entry/target/invalidation/return/probability/
 │   │                                 confidence/thesis/catalysts/risks + <ChallengeAiButton/>
@@ -46,7 +52,17 @@ components/
 │   ├── RiskSummaryCard.tsx          gross/net exposure, greeks, VaR/ES, drawdown
 │   └── ScenarioRunner.tsx           stress-test scenario picker + results
 ├── approvals/
-│   └── ApprovalQueue.tsx            human-in-the-loop actions on pending trade ideas
+│   └── ApprovalQueue.tsx            human-in-the-loop approve/reject on pending trade ideas
+│                                     (shipped; authenticated action, anonymous view)
+├── portfolio/
+│   └── PositionsPanel.tsx           open paper positions + "Close" -> POST
+│                                     /trade-ideas/{id}/close -> post-trade analysis (shipped)
+├── model-performance/
+│   └── ModelPerformanceTable.tsx    win rate, decision-vs-outcome quadrant, per-strategy
+│                                     breakdown from GET /models/performance (shipped)
+├── auth/
+│   └── AuthWidget.tsx               dev-mode sign-in (Trader/Risk Manager/Admin) rendered in
+│                                     <HeaderBar/>; gates approve/reject/close/risk-limit actions
 ├── chat/
 │   ├── ChatPanel.tsx                persistent AI Trader Chat (docked + full-page variants)
 │   ├── ChatMessage.tsx              renders citations/freshness/source badges inline
@@ -61,8 +77,11 @@ components/
 
 lib/
 ├── api-client.ts                   typed fetch wrapper against apps/api
-├── auth.ts                         session/JWT handling
-└── ws.ts                           chat + live-tick WebSocket client
+├── auth-context.tsx                React context wrapping the dev-mode JWT session
+│                                     (localStorage-persisted); shipped in place of the
+│                                     originally-planned auth.ts/ws.ts session module
+└── ws.ts                           chat + live-tick WebSocket client (not yet built — the
+                                     AI Trader Chat currently uses a plain POST per message)
 ```
 
 Design rules (enforced via `packages/ui` tokens): dark background, information-dense tables over

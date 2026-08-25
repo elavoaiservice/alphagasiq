@@ -15,13 +15,14 @@ from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
 
 from agent_sdk import InMemoryEventBus, get_default_llm_provider
-from agents_service import ChiefInvestmentAgent, ChiefTradingAgent, InvestmentCommittee
+from agents_service import ChiefInvestmentAgent, ChiefTradingAgent, InvestmentCommittee, PipelineAgent
 from config import get_settings
 from data_sdk import FetchRequest, ProviderRegistry
 from data_service.providers.mock_market_data import MockCMEProvider, MockICEProvider
 from data_service.providers.mock_news import MockNewsProvider
 from data_service.registry import build_default_registry
 from fundamentals_service.lng import LNGTerminalState, compute_netback
+from fundamentals_service.pipeline_graph import PipelineGraph, build_default_pipeline_graph
 from fundamentals_service.power_burn import PowerMarketState, estimate_power_burn_bcf_d
 from fundamentals_service.seed import (
     generate_daily_balances,
@@ -29,7 +30,7 @@ from fundamentals_service.seed import (
     seed_power_markets,
     seed_storage_baseline,
 )
-from paper_execution_service import PaperExecutionAdapter
+from paper_execution_service import OrderSide, OrderType, PaperExecutionAdapter, PaperOrder, evaluate_post_trade
 from risk_service.governor import RiskContext, RiskGovernor
 from risk_service.limits import default_risk_limits
 from risk_service.metrics import PositionSnapshot, summarize
@@ -39,6 +40,7 @@ from schemas import (
     InvestmentCommitteeDecision,
     NewsEvent,
     ObservationDraft,
+    PostTradeAnalysis,
     RiskCheckResult,
     RiskLimits,
     RiskVerdict,
@@ -47,7 +49,7 @@ from schemas import (
 
 from .models import Approval, ApprovalState, ChatSession
 
-PRIMARY_INSTRUMENT = "NGZ26"
+DEFAULT_INSTRUMENT_FALLBACK = "NG-M1"
 
 
 class AppState:
@@ -61,6 +63,7 @@ class AppState:
         self.chief_trading_agent = ChiefTradingAgent(llm=llm)
         self.investment_committee = InvestmentCommittee(llm=llm)
         self.chief_investment_agent = ChiefInvestmentAgent(llm=llm)
+        self.pipeline_agent = PipelineAgent(llm=llm)
         self.risk_governor = RiskGovernor()
 
         self.risk_limits: RiskLimits = default_risk_limits()
@@ -75,12 +78,14 @@ class AppState:
         self.news_events: list[NewsEvent] = []
         self.lng_terminals: list[LNGTerminalState] = []
         self.power_markets: list[PowerMarketState] = []
+        self.pipeline_graph: PipelineGraph | None = None
 
         self.trade_ideas: dict[UUID, TradeIdea] = {}
         self.committee_decisions: dict[UUID, InvestmentCommitteeDecision] = {}
         self.risk_checks: dict[UUID, RiskCheckResult] = {}
         self.approvals: dict[UUID, Approval] = {}
         self.decision_journal: dict[UUID, list[dict]] = {}  # trade_id -> append-only entries
+        self.post_trade_analyses: dict[UUID, PostTradeAnalysis] = {}
 
         self.agent_execution_log: list[AgentResult] = []
 
@@ -107,6 +112,7 @@ class AppState:
         self.storage_baseline = seed_storage_baseline(as_of=today)
         self.lng_terminals = seed_lng_terminals()
         self.power_markets = seed_power_markets()
+        self.pipeline_graph = build_default_pipeline_graph()
 
         cme = self.providers.get("mock_cme")
         self.market_curve = await cme.fetch(FetchRequest(end=as_of))
@@ -118,6 +124,18 @@ class AppState:
         news_observations = await news_provider.fetch(FetchRequest(end=as_of))
         self.news_events = _observations_to_news_events(news_observations)
 
+    def primary_instrument(self) -> str:
+        """The tradable instrument for strategy/research purposes: always the actual
+        current front-month (M1) contract symbol, so a generated `TradeIdea.entry`
+        matches the real executable price for that symbol (`mark_price()` looks up by
+        symbol, and M1 rolls month-to-month like any real futures desk's front
+        month). A previous version hardcoded a fixed contract month here, which
+        silently desynced the recorded entry price from the price paper orders
+        actually executed at — fixed after the Milestone 11 close-trade flow surfaced
+        the mismatch.
+        """
+        return self.market_curve[0].symbol if self.market_curve else DEFAULT_INSTRUMENT_FALLBACK
+
     async def _run_initial_research_cycle(self) -> None:
         today = date.today()
         current_price = self.market_curve[0].value if self.market_curve else 3.0
@@ -125,7 +143,7 @@ class AppState:
         market_consensus_bcf = round(week_balance) + 3  # illustrative "street" estimate
 
         result = await self.chief_trading_agent.run_research_cycle(
-            instrument=PRIMARY_INSTRUMENT,
+            instrument=self.primary_instrument(),
             current_price=current_price,
             balances=self.balances,
             five_year_average_bcf=self.storage_baseline["five_year_average_bcf"],
@@ -146,6 +164,10 @@ class AppState:
         for res in (result.supply, result.demand, result.storage, result.weather, result.strategy, result.chief):
             if res is not None:
                 self.agent_execution_log.append(res)
+
+        if self.pipeline_graph is not None:
+            pipeline_result = await self.pipeline_agent.run(graph=self.pipeline_graph)
+            self.agent_execution_log.append(pipeline_result)
 
         for trade in result.trade_ideas:
             await self.submit_trade_idea(trade)
@@ -209,6 +231,75 @@ class AppState:
         )
         return approval
 
+    async def close_trade(
+        self, trade_id: UUID, *, exit_price: float | None = None, exit_reason: str = "manual_close"
+    ) -> dict:
+        """Flattens the paper position tied to `trade_id`, then generates the
+        `PostTradeAnalysis` (docs/architecture.md "POST-TRADE ANALYSIS") comparing
+        expected vs. actual outcome. Only valid for a trade that actually reached
+        `EXECUTED_SIMULATION` — you cannot "close" a position that was never opened.
+        """
+        trade = self.trade_ideas[trade_id]
+        approval = next((a for a in self.approvals.values() if a.trade_id == trade_id), None)
+        if approval is None:
+            raise ValueError("No approval record for this trade_id")
+        if approval.state != ApprovalState.EXECUTED_SIMULATION:
+            raise ValueError(
+                f"Trade is in state {approval.state.value}, not EXECUTED_SIMULATION; nothing to close"
+            )
+
+        position = self.paper_adapter.portfolio.positions.get(trade.instrument)
+        if position is None or position.quantity == 0:
+            raise ValueError("No open paper position for this trade's instrument")
+
+        entry_price = position.avg_price
+        opened_at = trade.created_at
+
+        close_side = OrderSide.SELL if position.quantity > 0 else OrderSide.BUY
+        close_order = PaperOrder(
+            trade_id=trade_id,
+            instrument=trade.instrument,
+            order_type=OrderType.MARKET,
+            side=close_side,
+            quantity=abs(position.quantity),
+        )
+        market_price = exit_price if exit_price is not None else self.mark_price(trade.instrument)
+        fills = await self.paper_adapter.submit_order(close_order, market_price)
+        exit_fill_price = fills[0].fill_price if fills else market_price
+        closed_at = datetime.now(timezone.utc)
+
+        committee = self.committee_decisions[trade_id]
+        risk_check = self.risk_checks[trade_id]
+        analysis = evaluate_post_trade(
+            trade=trade,
+            committee=committee,
+            risk_check=risk_check,
+            entry_price=entry_price,
+            exit_price=exit_fill_price,
+            opened_at=opened_at,
+            closed_at=closed_at,
+        )
+        self.post_trade_analyses[trade_id] = analysis
+
+        approval.state = ApprovalState.CLOSED
+        approval.updated_at = closed_at
+
+        self.decision_journal.setdefault(trade_id, []).append(
+            {
+                "recorded_at": closed_at.isoformat(),
+                "thesis": trade.thesis,
+                "counter_thesis": committee.bear_case,
+                "model_versions": {"chief_trading_agent": self.chief_trading_agent.version},
+                "agent_versions": {},
+                "risk_analysis": {"verdict": risk_check.verdict.value, "governor_version": risk_check.governor_version},
+                "human_decision": {"action": "CLOSE_POSITION", "reason": exit_reason},
+                "paper_execution": {"exit_price": exit_fill_price, "instrument": trade.instrument},
+                "outcome": analysis.model_dump(mode="json"),
+            }
+        )
+
+        return {"post_trade_analysis": analysis, "exit_price": exit_fill_price}
+
     def portfolio_risk_summary(self):
         positions = [
             PositionSnapshot(
@@ -222,6 +313,57 @@ class AppState:
         ]
         equity_curve = [100_000, 100_500, 99_800, 101_200, 100_900]
         return summarize(positions, equity_curve)
+
+    def model_performance_summary(self) -> dict:
+        """Aggregates closed-trade outcomes by strategy — the Milestone 11
+        "model-performance dashboard." Deliberately simple (counts + averages over
+        whatever has closed so far) rather than a walk-forward statistical framework;
+        that belongs to the Quantitative Team's backtesting engine (`services/quant`,
+        not yet built) once there is enough closed-trade history to make it
+        meaningful.
+        """
+        analyses = list(self.post_trade_analyses.values())
+        if not analyses:
+            return {
+                "closed_trade_count": 0,
+                "win_rate": None,
+                "avg_thesis_accuracy": None,
+                "avg_timing_accuracy": None,
+                "avg_risk_accuracy": None,
+                "by_quadrant": {},
+                "by_strategy": {},
+            }
+
+        def avg(values: list[float]) -> float:
+            return round(sum(values) / len(values), 3)
+
+        wins = sum(1 for a in analyses if (a.actual_outcome.get("actual_return_per_unit") or 0) > 0)
+        by_quadrant: dict[str, int] = {}
+        for a in analyses:
+            by_quadrant[a.quadrant.value] = by_quadrant.get(a.quadrant.value, 0) + 1
+
+        by_strategy: dict[str, dict] = {}
+        for a in analyses:
+            trade = self.trade_ideas.get(a.trade_id)
+            strategy = trade.strategy if trade else "unknown"
+            bucket = by_strategy.setdefault(strategy, {"count": 0, "thesis_accuracies": [], "wins": 0})
+            bucket["count"] += 1
+            bucket["thesis_accuracies"].append(a.thesis_accuracy)
+            if (a.actual_outcome.get("actual_return_per_unit") or 0) > 0:
+                bucket["wins"] += 1
+        for strategy, bucket in by_strategy.items():
+            bucket["avg_thesis_accuracy"] = avg(bucket.pop("thesis_accuracies"))
+            bucket["win_rate"] = round(bucket["wins"] / bucket["count"], 3)
+
+        return {
+            "closed_trade_count": len(analyses),
+            "win_rate": round(wins / len(analyses), 3),
+            "avg_thesis_accuracy": avg([a.thesis_accuracy for a in analyses]),
+            "avg_timing_accuracy": avg([a.timing_accuracy for a in analyses]),
+            "avg_risk_accuracy": avg([a.risk_accuracy for a in analyses]),
+            "by_quadrant": by_quadrant,
+            "by_strategy": by_strategy,
+        }
 
     def mark_price(self, instrument: str) -> float:
         for obs in self.market_curve:

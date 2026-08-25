@@ -19,18 +19,26 @@ async def journal_entry(trade_id: UUID, state: AppStateDep):
 
 @router.get("/post-trade/{trade_id}")
 async def post_trade_analysis(trade_id: UUID, state: AppStateDep):
-    """Post-trade analysis is generated once a position closes (Milestone 11). Until
-    then this reports the position as still open rather than fabricating an outcome."""
+    """Post-trade analysis is generated once a position closes via
+    `POST /trade-ideas/{trade_id}/close` (Milestone 11). Until then this reports the
+    position as still open rather than fabricating an outcome."""
     trade = state.trade_ideas.get(trade_id)
     if trade is None:
         raise HTTPException(status_code=404, detail="Trade idea not found")
 
-    approvals = [a for a in state.approvals.values() if a.trade_id == trade_id]
-    closed = any(a.state.value == "CLOSED" for a in approvals)
-    if not closed:
+    analysis = state.post_trade_analyses.get(trade_id)
+    if analysis is None:
         return {
             "trade_id": trade_id,
             "status": "OPEN",
             "detail": "Position has not closed yet; post-trade analysis is generated on close.",
         }
-    raise HTTPException(status_code=501, detail="Post-trade analysis generation not yet implemented (Milestone 11)")
+    return {"trade_id": trade_id, "status": "CLOSED", "analysis": analysis}
+
+
+@router.get("/models/performance")
+async def model_performance(state: AppStateDep):
+    """Milestone 11 model-performance dashboard: aggregates closed-trade outcomes by
+    strategy. See `AppState.model_performance_summary` for the (deliberately simple)
+    methodology and its limits."""
+    return {**state.model_performance_summary(), "classification": "SIMULATED"}

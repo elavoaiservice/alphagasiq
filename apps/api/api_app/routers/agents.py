@@ -16,6 +16,7 @@ _IMPLEMENTED = {
     "DEMAND",
     "STORAGE",
     "WEATHER",
+    "PIPELINE",
     "NEWS_INTELLIGENCE",
     "DIRECTIONAL_STRATEGY",
     "BULL",
@@ -75,12 +76,10 @@ async def run_chief_trading(
     state: AppStateDep,
     user: User = Depends(require_role(Role.RESEARCHER, Role.TRADER, Role.ADMIN)),
 ):
-    from ..state import PRIMARY_INSTRUMENT
-
     current_price = state.market_curve[0].value if state.market_curve else 3.0
     week_balance = sum(b.balance_bcf for b in state.balances[-7:])
     result = await state.chief_trading_agent.run_research_cycle(
-        instrument=PRIMARY_INSTRUMENT,
+        instrument=state.primary_instrument(),
         current_price=current_price,
         balances=state.balances,
         five_year_average_bcf=state.storage_baseline["five_year_average_bcf"],

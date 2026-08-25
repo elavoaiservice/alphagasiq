@@ -57,7 +57,24 @@ def test_storage_forecast_endpoint(client):
 def test_pipeline_graph_endpoint(client):
     r = client.get("/api/v1/fundamentals/pipeline/graph")
     assert r.status_code == 200
-    assert len(r.json()["nodes"]) > 0
+    body = r.json()
+    assert len(body["nodes"]) > 20
+    assert body["classification"] == "SIMULATED"
+    node_types = {n["type"] for n in body["nodes"]}
+    assert {"production_basin", "LNG_terminal", "hub", "storage_facility"}.issubset(node_types)
+
+
+def test_pipeline_node_detail_endpoint(client):
+    r = client.get("/api/v1/fundamentals/pipeline/nodes/henry_hub")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["node"]["id"] == "henry_hub"
+    assert len(body["edges"]) > 0
+
+
+def test_pipeline_node_detail_404_for_unknown_node(client):
+    r = client.get("/api/v1/fundamentals/pipeline/nodes/does-not-exist")
+    assert r.status_code == 404
 
 
 def test_news_events_endpoint(client):
@@ -207,3 +224,99 @@ def test_portfolio_positions_endpoint(client):
     r = client.get("/api/v1/portfolio/positions")
     assert r.status_code == 200
     assert isinstance(r.json(), list)
+
+
+def _admin_headers(client) -> dict:
+    login = client.post(
+        "/api/v1/auth/login", json={"email": "admin@alphagasiq.local", "password": "admin-dev-password"}
+    )
+    token = login.json()["access_token"]
+    return {"Authorization": f"Bearer {token}"}
+
+
+def test_close_trade_requires_auth(client):
+    trades = client.get("/api/v1/trade-ideas").json()
+    trade_id = trades[0]["trade_id"]
+    r = client.post(f"/api/v1/trade-ideas/{trade_id}/close", json={})
+    assert r.status_code == 401
+
+
+def test_close_trade_before_execution_is_conflict(client):
+    headers = _admin_headers(client)
+    trades = client.get("/api/v1/trade-ideas").json()
+    trade_id = trades[0]["trade_id"]
+    r = client.post(f"/api/v1/trade-ideas/{trade_id}/close", json={}, headers=headers)
+    assert r.status_code == 409
+
+
+def test_full_lifecycle_execute_then_close_then_post_trade_and_performance(client):
+    headers = _admin_headers(client)
+
+    trades = client.get("/api/v1/trade-ideas").json()
+    trade_id = trades[0]["trade_id"]
+    entry_price = trades[0]["entry"]
+
+    approvals = client.get("/api/v1/approvals").json()
+    approval = next(a for a in approvals if a["trade_id"] == trade_id)
+
+    approve = client.post(
+        f"/api/v1/approvals/{approval['id']}/action",
+        json={"action": "APPROVE", "payload": {"quantity": 10}},
+        headers=headers,
+    )
+    if approval["state"] == "RISK_REVIEW":
+        assert approve.status_code == 409
+        return  # Risk Governor blocked this seed's trade; nothing further to exercise.
+
+    assert approve.status_code == 200
+    assert approve.json()["state"] == "EXECUTED_SIMULATION"
+
+    positions = client.get("/api/v1/portfolio/positions").json()
+    position = next(p for p in positions if p["instrument"] == trades[0]["instrument"])
+    assert position["quantity"] != 0
+    # Entry price recorded on the trade idea should closely match the actual paper
+    # fill price (small gap only from simulated slippage/spread) — regression guard
+    # for the instrument/mark-price desync bug fixed alongside this feature.
+    assert abs(position["avg_price"] - entry_price) < 0.05
+
+    close = client.post(
+        f"/api/v1/trade-ideas/{trade_id}/close", json={"exit_reason": "test_close"}, headers=headers
+    )
+    assert close.status_code == 200
+    analysis = close.json()["post_trade_analysis"]
+    assert analysis["quadrant"] in (
+        "GOOD_DECISION_GOOD_OUTCOME",
+        "GOOD_DECISION_BAD_OUTCOME",
+        "BAD_DECISION_GOOD_OUTCOME",
+        "BAD_DECISION_BAD_OUTCOME",
+    )
+
+    # Closing twice must fail cleanly, not silently double-count P&L.
+    close_again = client.post(f"/api/v1/trade-ideas/{trade_id}/close", json={}, headers=headers)
+    assert close_again.status_code == 409
+
+    post_trade = client.get(f"/api/v1/post-trade/{trade_id}")
+    assert post_trade.status_code == 200
+    assert post_trade.json()["status"] == "CLOSED"
+
+    performance = client.get("/api/v1/models/performance")
+    assert performance.status_code == 200
+    perf_body = performance.json()
+    assert perf_body["closed_trade_count"] == 1
+    assert perf_body["classification"] == "SIMULATED"
+
+
+def test_model_performance_endpoint_empty_before_any_close(client):
+    r = client.get("/api/v1/models/performance")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["closed_trade_count"] == 0
+    assert body["win_rate"] is None
+
+
+def test_post_trade_reports_open_before_close(client):
+    trades = client.get("/api/v1/trade-ideas").json()
+    trade_id = trades[0]["trade_id"]
+    r = client.get(f"/api/v1/post-trade/{trade_id}")
+    assert r.status_code == 200
+    assert r.json()["status"] == "OPEN"

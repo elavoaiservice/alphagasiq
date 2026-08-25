@@ -27,6 +27,7 @@ from .news import NewsEvent
 from .weather import WeatherDemandImpact
 from .fundamentals import GasBalanceDaily, StorageForecast
 from .events import DomainEvent, EventType
+from .post_trade import PostTradeAnalysis
 
 __all__ = [
     "AgentStatus",
@@ -58,4 +59,5 @@ __all__ = [
     "StorageForecast",
     "DomainEvent",
     "EventType",
+    "PostTradeAnalysis",
 ]

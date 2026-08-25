@@ -39,6 +39,7 @@ provider. All mutating endpoints require RBAC role checks (`ADMIN`, `TRADER`, `R
 | GET | `/fundamentals/lng/terminals` | LNG terminal states + netback economics |
 | GET | `/fundamentals/power-burn` | power burn estimate by ISO/RTO |
 | GET | `/fundamentals/pipeline/graph` | pipeline digital-twin nodes/edges (GeoJSON-friendly) |
+| GET | `/fundamentals/pipeline/nodes/{node_id}` | one node + its connected edges (capacity/flow/utilization/maintenance/constraint) |
 
 ## News
 
@@ -62,6 +63,7 @@ provider. All mutating endpoints require RBAC role checks (`ADMIN`, `TRADER`, `R
 | GET | `/trade-ideas` | list `TradeIdea`s, filterable by status/instrument |
 | GET | `/trade-ideas/{trade_id}` | single trade idea + explainability payload |
 | POST | `/trade-ideas/{trade_id}/challenge` | "Challenge AI" — re-invokes Skeptic + Bear agents |
+| POST | `/trade-ideas/{trade_id}/close` | flattens the paper position and generates the post-trade analysis (TRADER/RISK_MANAGER/ADMIN) |
 | GET | `/committee-decisions/{trade_id}` | `InvestmentCommitteeDecision` for a trade idea |
 
 ## Risk
@@ -95,6 +97,7 @@ provider. All mutating endpoints require RBAC role checks (`ADMIN`, `TRADER`, `R
 |---|---|---|
 | GET | `/journal/{trade_id}` | full decision journal entry |
 | GET | `/post-trade/{trade_id}` | post-trade analysis once closed |
+| GET | `/models/performance` | Milestone 11 model-performance dashboard: win rate, avg thesis/timing/risk accuracy, decision-vs-outcome quadrant counts, and per-strategy breakdown, aggregated over every closed trade |
 
 ## AI Trader Chat
 

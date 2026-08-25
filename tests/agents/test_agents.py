@@ -7,10 +7,12 @@ from agents_service import (
     ChiefTradingAgent,
     DemandAgent,
     InvestmentCommittee,
+    PipelineAgent,
     StorageAgent,
     SupplyAgent,
     WeatherAgent,
 )
+from fundamentals_service.pipeline_graph import PipelineGraph, build_default_pipeline_graph
 from fundamentals_service.seed import generate_daily_balances, seed_storage_baseline
 from schemas import AgentStatus, RecommendedAction, RiskVerdict
 
@@ -57,6 +59,23 @@ async def test_storage_agent_produces_forecast(balances):
     )
     assert result.status == AgentStatus.SUCCESS
     assert "forecast_bcf" in result.outputs
+
+
+@pytest.mark.asyncio
+async def test_pipeline_agent_reports_constrained_corridors():
+    graph = build_default_pipeline_graph()
+    agent = PipelineAgent(llm=MockLLMProvider())
+    result = await agent.run(graph=graph)
+    assert result.status == AgentStatus.SUCCESS
+    assert result.outputs["constrained_corridor_count"] == len(graph.constrained_edges())
+    assert result.outputs["total_capacity_bcf_d"] == graph.total_capacity_bcf_d()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_agent_skips_on_empty_graph():
+    agent = PipelineAgent(llm=MockLLMProvider())
+    result = await agent.run(graph=PipelineGraph(nodes=[], edges=[]))
+    assert result.status == AgentStatus.SKIPPED
 
 
 @pytest.mark.asyncio

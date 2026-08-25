@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 
+from ..auth import Role, User, require_role
 from ..deps import AppStateDep
 from ..explainability import build_explainability
 
@@ -59,3 +61,31 @@ async def committee_decision(trade_id: UUID, state: AppStateDep):
     if decision is None:
         raise HTTPException(status_code=404, detail="No committee decision for this trade")
     return decision
+
+
+class CloseTradeRequest(BaseModel):
+    exit_reason: str = "manual_close"
+    exit_price: float | None = None
+
+
+@router.post("/trade-ideas/{trade_id}/close")
+async def close_trade_idea(
+    trade_id: UUID,
+    body: CloseTradeRequest,
+    state: AppStateDep,
+    user: User = Depends(require_role(Role.TRADER, Role.RISK_MANAGER, Role.ADMIN)),
+):
+    """Flattens the paper position and generates the post-trade analysis (Milestone
+    11). Only valid once a trade has actually reached EXECUTED_SIMULATION via
+    `POST /approvals/{id}/action`."""
+    if trade_id not in state.trade_ideas:
+        raise HTTPException(status_code=404, detail="Trade idea not found")
+    try:
+        result = await state.close_trade(trade_id, exit_price=body.exit_price, exit_reason=body.exit_reason)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {
+        "trade_id": trade_id,
+        "exit_price": result["exit_price"],
+        "post_trade_analysis": result["post_trade_analysis"],
+    }

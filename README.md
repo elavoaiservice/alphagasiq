@@ -73,18 +73,33 @@ config) · `/infrastructure` (Docker, DB migrations) · `/docs` · `/tests`.
 
 ## Current implementation status
 
-This repo implements Milestones 1-9 of the phased build plan in `docs/architecture.md` §8 at
-MVP depth: repo/db/auth/dashboard shell, EIA/NOAA/mock-market/mock-news ingestion, the natural
-gas balance + storage forecast + weather-demand engines, the Chief Trading Agent with
-Supply/Demand/Storage/Weather agents, a Directional Strategy Agent, the AI Investment
-Committee (Bull/Bear/Skeptic/Data Integrity/Portfolio), the deterministic Risk Governor, the
-paper-trading engine, and the AI Trader Chat. Milestones 10 (full pipeline digital twin /
-interactive map — a minimal illustrative graph ships now) and 11 (post-trade learning) are
-intentionally left as the next increment, per "build sequentially, don't build everything at
-once." The MVP persistence layer is in-memory (`apps/api/api_app/state.py`), seeded at
-startup; `infrastructure/db/migrations` defines the production Postgres/TimescaleDB schema it
-mirrors, and swapping in a SQLAlchemy-backed repository is the next milestone's wiring — no
-router changes required.
+This repo implements all 11 milestones of the phased build plan in `docs/architecture.md` §8
+at MVP depth:
+
+- **1-9**: repo/db/auth/dashboard shell, EIA/NOAA/mock-market/mock-news ingestion, the natural
+  gas balance + storage forecast + weather-demand engines, the Chief Trading Agent with
+  Supply/Demand/Storage/Weather agents, a Directional Strategy Agent, the AI Investment
+  Committee (Bull/Bear/Skeptic/Data Integrity/Portfolio), the deterministic Risk Governor, the
+  paper-trading engine, and the AI Trader Chat.
+- **10 (pipeline digital twin)**: a ~30-node/~27-edge graph across every node/edge type in
+  docs/database-schema.md, a `PipelineAgent`, and a dependency-free inline-SVG interactive map
+  (no Mapbox token needed) with a click-to-inspect node drawer.
+- **11 (post-trade learning)**: closing a paper position (`POST /trade-ideas/{id}/close`, or the
+  dashboard's Paper Positions panel) generates a `PostTradeAnalysis` — thesis/timing/risk
+  accuracy plus a GOOD/BAD-decision × GOOD/BAD-outcome quadrant that deliberately never
+  conflates "profitable" with "well-reasoned" — and `GET /models/performance` aggregates closed
+  trades into a model-performance dashboard.
+
+A minimal dev-mode sign-in widget (top-right of the header) and an Approval Queue panel were
+added alongside Milestone 11 so the full loop — recommendation → human approval → paper
+execution → close → post-trade analysis — is actually exercisable from the UI, not just the API.
+
+The MVP persistence layer is in-memory (`apps/api/api_app/state.py`), seeded at startup;
+`infrastructure/db/migrations` defines the production Postgres/TimescaleDB schema it mirrors,
+and swapping in a SQLAlchemy-backed repository remains the next-increment wiring — no router
+changes required. `services/quant` (the full walk-forward backtesting/forecasting engine) is
+not yet built; the post-trade scoring and model-performance aggregation are first-pass
+heuristics pending it.
 
 Known follow-ups: the pinned `next` version has open advisories addressed only by a Next 16
 major upgrade (deferred to avoid an unreviewed breaking change); production auth should

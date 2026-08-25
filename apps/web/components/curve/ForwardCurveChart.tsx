@@ -10,23 +10,29 @@ interface CurvePoint {
   observation_time: string;
 }
 
-export function ForwardCurveChart({ instrument }: { instrument: string }) {
+export function ForwardCurveChart() {
   const containerRef = useRef<HTMLDivElement>(null);
   const [points, setPoints] = useState<CurvePoint[] | null>(null);
+  const [instrument, setInstrument] = useState<string>("M1");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    fetch(`${API_BASE}/market/curve/${instrument}`)
+    // The path segment is vestigial — the API always returns the single continuous
+    // Henry Hub curve and reports the real (month-rolling) M1 symbol in the body.
+    fetch(`${API_BASE}/market/curve/front-month`)
       .then((r) => r.json())
       .then((data) => {
-        if (!cancelled) setPoints(data.points);
+        if (!cancelled) {
+          setPoints(data.points);
+          setInstrument(data.instrument);
+        }
       })
       .catch(() => !cancelled && setError("Unable to load forward curve"));
     return () => {
       cancelled = true;
     };
-  }, [instrument]);
+  }, []);
 
   useEffect(() => {
     if (!points || !containerRef.current) return;

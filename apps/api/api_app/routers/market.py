@@ -9,6 +9,12 @@ router = APIRouter(prefix="/market", tags=["market"])
 
 @router.get("/curve/{instrument}")
 async def curve(instrument: str, state: AppStateDep):
+    """`instrument` is accepted for URL/REST symmetry with the API spec, but the
+    platform currently maintains a single continuous Henry Hub curve (M1-M36), so the
+    response always reports the real M1 contract symbol (`state.primary_instrument()`)
+    rather than echoing back whatever string was passed in the path — that symbol
+    rolls month-to-month and is what paper orders actually execute against (see
+    `AppState.primary_instrument`)."""
     points = [
         {
             "symbol": o.symbol,
@@ -21,7 +27,11 @@ async def curve(instrument: str, state: AppStateDep):
         }
         for o in state.market_curve
     ]
-    return {"instrument": instrument, "points": points, "as_of": state.market_curve[0].observation_time if points else None}
+    return {
+        "instrument": state.primary_instrument(),
+        "points": points,
+        "as_of": state.market_curve[0].observation_time if points else None,
+    }
 
 
 @router.get("/summary")

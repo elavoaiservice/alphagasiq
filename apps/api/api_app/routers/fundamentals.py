@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from datetime import date
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from fundamentals_service.lng import compute_netback
+from fundamentals_service.pipeline_graph import to_geojson_like
 from fundamentals_service.power_burn import estimate_power_burn_bcf_d
 from fundamentals_service.storage_forecast import forecast_storage_week, week_ending_for
 
@@ -90,22 +91,42 @@ async def power_burn(state: AppStateDep):
 
 
 @router.get("/pipeline/graph")
-async def pipeline_graph():
-    """Minimal illustrative digital-twin graph (see docs/database-schema.md §pipeline
-    nodes/edges). A handful of representative nodes; the full US network model is
-    Milestone 10 scope."""
-    nodes = [
-        {"id": "permian", "type": "production_basin", "name": "Permian Basin", "lat": 31.9, "lon": -102.6},
-        {"id": "waha", "type": "hub", "name": "Waha Hub", "lat": 31.05, "lon": -103.13},
-        {"id": "henry_hub", "type": "hub", "name": "Henry Hub", "lat": 29.9, "lon": -91.8},
-        {"id": "sabine_pass", "type": "LNG_terminal", "name": "Sabine Pass LNG", "lat": 29.7, "lon": -93.87},
-        {"id": "freeport", "type": "LNG_terminal", "name": "Freeport LNG", "lat": 28.95, "lon": -95.35},
-        {"id": "aliso_canyon", "type": "storage_facility", "name": "Aliso Canyon", "lat": 34.32, "lon": -118.56},
-    ]
-    edges = [
-        {"id": "permian_waha", "type": "pipeline", "from": "permian", "to": "waha", "capacity_bcf_d": 2.5, "utilization": 0.82},
-        {"id": "waha_henry", "type": "pipeline", "from": "waha", "to": "henry_hub", "capacity_bcf_d": 4.0, "utilization": 0.65},
-        {"id": "henry_sabine", "type": "pipeline", "from": "henry_hub", "to": "sabine_pass", "capacity_bcf_d": 5.0, "utilization": 0.9},
-        {"id": "henry_freeport", "type": "pipeline", "from": "henry_hub", "to": "freeport", "capacity_bcf_d": 2.4, "utilization": 0.58},
-    ]
-    return {"nodes": nodes, "edges": edges, "classification": "SIMULATED"}
+async def pipeline_graph(state: AppStateDep):
+    """Pipeline digital-twin graph (see docs/database-schema.md §pipeline nodes/edges
+    and docs/architecture.md Milestone 10): production basins, processing plants,
+    hubs, storage, city gates, power plants, LNG terminals, and Mexico export points,
+    connected by pipeline/transport-contract/interconnect edges carrying
+    capacity/flow/utilization/maintenance/constraint/basis data."""
+    if state.pipeline_graph is None:
+        raise HTTPException(status_code=503, detail="Pipeline graph not yet seeded")
+    return {**to_geojson_like(state.pipeline_graph), "classification": "SIMULATED"}
+
+
+@router.get("/pipeline/nodes/{node_id}")
+async def pipeline_node_detail(node_id: str, state: AppStateDep):
+    if state.pipeline_graph is None:
+        raise HTTPException(status_code=503, detail="Pipeline graph not yet seeded")
+    node = state.pipeline_graph.node(node_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="Unknown pipeline node")
+    edges = state.pipeline_graph.edges_for(node_id)
+    return {
+        "node": {"id": node.id, "type": node.node_type, "name": node.name, "lat": node.lat, "lon": node.lon},
+        "edges": [
+            {
+                "id": e.id,
+                "type": e.edge_type,
+                "from": e.from_node_id,
+                "to": e.to_node_id,
+                "capacity_bcf_d": e.capacity_bcf_d,
+                "actual_flow_bcf_d": e.actual_flow_bcf_d,
+                "utilization": e.utilization,
+                "maintenance": e.maintenance,
+                "constraint": e.constraint,
+                "basis_relationship": e.basis_relationship,
+                "is_constrained": e.is_constrained,
+            }
+            for e in edges
+        ],
+        "classification": "SIMULATED",
+    }

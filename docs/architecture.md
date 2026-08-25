@@ -186,3 +186,22 @@ pipeline twin → post-trade learning). Each milestone ships with tests, docs up
 logical commit; later milestones intentionally stub interfaces defined earlier (e.g. the
 `LiveBrokerExecutionAdapter`, Neo4j-backed pipeline graph, Kafka-backed `EventBus`) rather than
 building them speculatively ahead of need.
+
+Milestones 10 and 11 are now implemented at MVP depth alongside 1-9:
+
+- **Milestone 10 (pipeline digital twin)**: `services/fundamentals/fundamentals_service/pipeline_graph.py`
+  models ~30 nodes across every node type (production basins, processing plants,
+  interconnects, storage, city gates, power plants, LNG terminals, Mexico export points, hubs)
+  and ~27 edges across every edge type, with capacity/scheduled-flow/actual-flow/utilization/
+  maintenance/constraint/basis-relationship fields. A `PipelineAgent` (Fundamental Research
+  Team) surfaces constrained corridors and active maintenance. The frontend map
+  (`apps/web/components/pipeline-map/PipelineMap.tsx`) is a dependency-free inline-SVG network
+  view — no Mapbox token required — click a node to open `PipelineNodeInspector`.
+- **Milestone 11 (post-trade learning)**: `services/paper-execution/paper_execution_service/post_trade.py`
+  generates a `PostTradeAnalysis` on every position close (`POST /trade-ideas/{id}/close`),
+  scoring thesis/timing/risk accuracy and classifying the outcome into one of the four
+  decision-vs-outcome quadrants — deliberately never conflating "was this profitable" with "was
+  this well-reasoned." `AppState.model_performance_summary()` (`GET /models/performance`)
+  aggregates closed trades by strategy for the model-performance dashboard. Both are first-pass
+  heuristics, not the full walk-forward statistical framework the Quantitative Team's
+  backtesting engine (`services/quant`, still unbuilt) will eventually own.

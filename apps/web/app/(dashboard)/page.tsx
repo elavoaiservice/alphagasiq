@@ -4,6 +4,8 @@ import { StoragePanel } from "@/components/storage/StoragePanel";
 import { WeatherPanel } from "@/components/weather/WeatherPanel";
 import { RiskSummaryCard } from "@/components/risk/RiskSummaryCard";
 import { RecommendationsList } from "@/components/recommendations/RecommendationCard";
+import { ApprovalQueue } from "@/components/approvals/ApprovalQueue";
+import { PositionsPanel } from "@/components/portfolio/PositionsPanel";
 
 export default function DashboardPage() {
   return (
@@ -11,13 +13,17 @@ export default function DashboardPage() {
       <MarketIntelGrid />
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2">
-          <ForwardCurveChart instrument="NGZ26" />
+          <ForwardCurveChart />
         </div>
         <StoragePanel />
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <WeatherPanel />
         <RiskSummaryCard />
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <ApprovalQueue />
+        <PositionsPanel />
       </div>
       <div>
         <h2 className="panel-title mb-2">AI Recommendations</h2>
