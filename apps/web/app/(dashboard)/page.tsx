@@ -6,6 +6,7 @@ import { RiskSummaryCard } from "@/components/risk/RiskSummaryCard";
 import { RecommendationsList } from "@/components/recommendations/RecommendationCard";
 import { ApprovalQueue } from "@/components/approvals/ApprovalQueue";
 import { PositionsPanel } from "@/components/portfolio/PositionsPanel";
+import { QuantPanel } from "@/components/quant/QuantPanel";
 
 export default function DashboardPage() {
   return (
@@ -21,6 +22,7 @@ export default function DashboardPage() {
         <WeatherPanel />
         <RiskSummaryCard />
       </div>
+      <QuantPanel />
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <ApprovalQueue />
         <PositionsPanel />

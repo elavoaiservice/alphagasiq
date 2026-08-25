@@ -3,18 +3,23 @@ from datetime import date
 import pytest
 from agent_sdk import MockLLMProvider
 from agents_service import (
+    BacktestingAgent,
     ChiefInvestmentAgent,
     ChiefTradingAgent,
     DemandAgent,
+    ForecastingAgent,
     InvestmentCommittee,
     PipelineAgent,
+    RegimeDetectionAgent,
+    RelativeValueAgent,
     StorageAgent,
     SupplyAgent,
     WeatherAgent,
 )
 from fundamentals_service.pipeline_graph import PipelineGraph, build_default_pipeline_graph
 from fundamentals_service.seed import generate_daily_balances, seed_storage_baseline
-from schemas import AgentStatus, RecommendedAction, RiskVerdict
+from quant_service import generate_price_history
+from schemas import AgentStatus, ForecastHorizon, RecommendedAction, RiskVerdict
 
 
 @pytest.fixture
@@ -170,3 +175,62 @@ async def test_chief_investment_agent_never_forwards_when_risk_blocks():
 
     allowed = await cia.run(committee_decision=decision, risk_verdict=RiskVerdict.ALLOW)
     assert allowed.outputs["forward_for_human_review"] is True
+
+
+@pytest.fixture
+def price_history():
+    return generate_price_history(end_date=date(2026, 8, 25), num_days=250)
+
+
+@pytest.mark.asyncio
+async def test_forecasting_agent_produces_price_forecast(price_history):
+    prices = [o.value for o in sorted(price_history, key=lambda o: o.observation_time)]
+    agent = ForecastingAgent(llm=MockLLMProvider())
+    result = await agent.run(
+        instrument="NGQ26", horizon=ForecastHorizon.SEVEN_DAY,
+        training_prices=prices[-60:], current_price=prices[-1],
+    )
+    assert result.status == AgentStatus.SUCCESS
+    assert "price_forecast" in result.outputs
+    assert result.agent_id == "quant.forecasting.v1"
+
+
+@pytest.mark.asyncio
+async def test_forecasting_agent_skips_with_insufficient_history():
+    agent = ForecastingAgent(llm=MockLLMProvider())
+    result = await agent.run(instrument="NGQ26", horizon=ForecastHorizon.SEVEN_DAY, training_prices=[3.0], current_price=3.0)
+    assert result.status == AgentStatus.SKIPPED
+
+
+@pytest.mark.asyncio
+async def test_regime_detection_agent_classifies_regime():
+    agent = RegimeDetectionAgent(llm=MockLLMProvider())
+    result = await agent.run(recent_returns=[0.01, -0.02, 0.015, -0.01, 0.02])
+    assert result.status == AgentStatus.SUCCESS
+    assert "regime" in result.outputs
+
+
+@pytest.mark.asyncio
+async def test_relative_value_agent_produces_both_signals():
+    agent = RelativeValueAgent(llm=MockLLMProvider())
+    result = await agent.run(henry_hub_price=2.5, ttf_price=9.5, m1_price=2.5, m2_price=2.6)
+    assert result.status == AgentStatus.SUCCESS
+    assert "hh_ttf_netback" in result.outputs
+    assert "calendar_spread" in result.outputs
+
+
+@pytest.mark.asyncio
+async def test_backtesting_agent_compares_implemented_models(price_history):
+    agent = BacktestingAgent(llm=MockLLMProvider())
+    result = await agent.run(instrument="NGQ26", price_history=price_history, horizon=ForecastHorizon.SEVEN_DAY)
+    assert result.status == AgentStatus.SUCCESS
+    assert set(result.outputs["results_by_model"].keys()) == {"NAIVE_PERSISTENCE", "LINEAR_REGRESSION"}
+    assert result.outputs["best_model"] in result.outputs["results_by_model"]
+
+
+@pytest.mark.asyncio
+async def test_backtesting_agent_skips_with_insufficient_history():
+    agent = BacktestingAgent(llm=MockLLMProvider())
+    short_history = generate_price_history(end_date=date(2026, 8, 25), num_days=10)
+    result = await agent.run(instrument="NGQ26", price_history=short_history, horizon=ForecastHorizon.SEVEN_DAY)
+    assert result.status == AgentStatus.SKIPPED

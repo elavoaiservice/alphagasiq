@@ -95,10 +95,18 @@ call result that is logged as a `citation`.
 
 ## 4. MVP Implementation Scope
 
-Milestone 4 ships the Chief Trading Agent plus concrete Supply, Demand, Storage, and Weather
-agents (the agents with the clearest, most testable data contracts) and the News Intelligence
-Agent. Milestone 6 adds the Strategy Team and Investment Committee. Later milestones add the
-remaining fundamental/market-intel/quant agents. All unimplemented agents are defined as
-`AgentType` enum members and have a `NotImplementedAgent` placeholder that returns
-`status=SKIPPED` with a clear `errors` entry, so the org chart is always introspectable via the
-API even before every seat is filled.
+Implemented so far: the Chief Trading Agent and Chief Investment Agent; Supply, Demand,
+Storage, Weather, and Pipeline agents (Fundamental Research Team); News Intelligence Agent
+(Market Intelligence Team); the full Quantitative Team — Forecasting, Regime Detection,
+Relative Value, and Backtesting agents (`services/agents/agents_service/quant/`, backed by
+`services/quant`); the Directional Strategy Agent; and the full AI Investment Committee
+(Bull/Bear/Skeptic/Data Integrity/Portfolio).
+
+Every `AgentType` enum member is defined whether or not a concrete agent exists for it yet.
+Unbuilt seats (Market Data, Event Detection, Sentiment, the remaining Strategy Team members,
+the Independent Risk Org's non-Governor agents) are simply not instantiated — there is no
+`NotImplementedAgent` class; instead `GET /agents` reports each `AgentType`'s
+`implemented` flag from a maintained roster (`apps/api/api_app/routers/agents.py`), so the
+org chart is always introspectable via the API even before every seat is filled. This mirrors
+the honesty pattern used for unbuilt data connectors (`NotImplementedProvider`) and unbuilt
+quant models (`NotImplementedModel`) — never claim a seat is filled when it isn't.

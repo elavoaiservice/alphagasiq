@@ -15,7 +15,16 @@ from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
 
 from agent_sdk import InMemoryEventBus, get_default_llm_provider
-from agents_service import ChiefInvestmentAgent, ChiefTradingAgent, InvestmentCommittee, PipelineAgent
+from agents_service import (
+    BacktestingAgent,
+    ChiefInvestmentAgent,
+    ChiefTradingAgent,
+    ForecastingAgent,
+    InvestmentCommittee,
+    PipelineAgent,
+    RegimeDetectionAgent,
+    RelativeValueAgent,
+)
 from config import get_settings
 from data_sdk import FetchRequest, ProviderRegistry
 from data_service.providers.mock_market_data import MockCMEProvider, MockICEProvider
@@ -31,19 +40,26 @@ from fundamentals_service.seed import (
     seed_storage_baseline,
 )
 from paper_execution_service import OrderSide, OrderType, PaperExecutionAdapter, PaperOrder, evaluate_post_trade
+from quant_service import generate_price_history
 from risk_service.governor import RiskContext, RiskGovernor
 from risk_service.limits import default_risk_limits
 from risk_service.metrics import PositionSnapshot, summarize
 from schemas import (
     AgentResult,
+    BacktestResult,
     DataClassification,
+    ForecastHorizon,
     InvestmentCommitteeDecision,
     NewsEvent,
     ObservationDraft,
     PostTradeAnalysis,
+    PriceForecast,
+    RegimeResult,
+    RelativeValueSignal,
     RiskCheckResult,
     RiskLimits,
     RiskVerdict,
+    TimeSeriesObservation,
     TradeIdea,
 )
 
@@ -64,6 +80,10 @@ class AppState:
         self.investment_committee = InvestmentCommittee(llm=llm)
         self.chief_investment_agent = ChiefInvestmentAgent(llm=llm)
         self.pipeline_agent = PipelineAgent(llm=llm)
+        self.forecasting_agent = ForecastingAgent(llm=llm)
+        self.regime_detection_agent = RegimeDetectionAgent(llm=llm)
+        self.relative_value_agent = RelativeValueAgent(llm=llm)
+        self.backtesting_agent = BacktestingAgent(llm=llm)
         self.risk_governor = RiskGovernor()
 
         self.risk_limits: RiskLimits = default_risk_limits()
@@ -79,6 +99,11 @@ class AppState:
         self.lng_terminals: list[LNGTerminalState] = []
         self.power_markets: list[PowerMarketState] = []
         self.pipeline_graph: PipelineGraph | None = None
+        self.price_history: list[TimeSeriesObservation] = []
+        self.latest_forecast: PriceForecast | None = None
+        self.latest_regime: RegimeResult | None = None
+        self.latest_relative_value: dict | None = None
+        self.latest_backtests: dict[str, BacktestResult] = {}
 
         self.trade_ideas: dict[UUID, TradeIdea] = {}
         self.committee_decisions: dict[UUID, InvestmentCommitteeDecision] = {}
@@ -113,6 +138,7 @@ class AppState:
         self.lng_terminals = seed_lng_terminals()
         self.power_markets = seed_power_markets()
         self.pipeline_graph = build_default_pipeline_graph()
+        self.price_history = generate_price_history(end_date=today, num_days=250)
 
         cme = self.providers.get("mock_cme")
         self.market_curve = await cme.fetch(FetchRequest(end=as_of))
@@ -169,8 +195,82 @@ class AppState:
             pipeline_result = await self.pipeline_agent.run(graph=self.pipeline_graph)
             self.agent_execution_log.append(pipeline_result)
 
+        await self._run_quant_research(result)
+
         for trade in result.trade_ideas:
             await self.submit_trade_idea(trade)
+
+    async def _run_quant_research(self, research_result) -> None:
+        """Runs the Quantitative Team over `self.price_history` — a synthetic daily
+        Henry Hub spot series generated independently of `self.market_curve` (the
+        forward-curve snapshot used for trading). Real desks keep spot and forward
+        curves as related but distinct series too; this is not an inconsistency."""
+        if len(self.price_history) < 60:
+            return
+
+        sorted_history = sorted(self.price_history, key=lambda o: o.observation_time)
+        prices = [o.value for o in sorted_history]
+        training_prices = prices[-60:]
+        current_price = prices[-1]
+        recent_returns = [
+            (training_prices[i] - training_prices[i - 1]) / training_prices[i - 1]
+            for i in range(1, len(training_prices))
+            if training_prices[i - 1] != 0
+        ]
+
+        forecast_result = await self.forecasting_agent.run(
+            instrument=self.primary_instrument(),
+            horizon=ForecastHorizon.SEVEN_DAY,
+            training_prices=training_prices,
+            current_price=current_price,
+        )
+        self.agent_execution_log.append(forecast_result)
+        if forecast_result.outputs.get("price_forecast") is not None:
+            self.latest_forecast = PriceForecast.model_validate(forecast_result.outputs)
+
+        weather_impact = None
+        if research_result.weather is not None and research_result.weather.outputs:
+            from schemas import WeatherDemandImpact
+
+            weather_impact = WeatherDemandImpact.model_validate(research_result.weather.outputs)
+        storage_forecast = None
+        if research_result.storage is not None and research_result.storage.outputs:
+            from schemas import StorageForecast
+
+            storage_forecast = StorageForecast.model_validate(research_result.storage.outputs)
+
+        regime_result = await self.regime_detection_agent.run(
+            recent_returns=recent_returns,
+            weather_impact=weather_impact,
+            storage_forecast=storage_forecast,
+            news_events=self.news_events,
+        )
+        self.agent_execution_log.append(regime_result)
+        if regime_result.outputs.get("regime") is not None:
+            self.latest_regime = RegimeResult.model_validate(regime_result.outputs)
+
+        if self.market_curve and self.ttf_price:
+            rv_result = await self.relative_value_agent.run(
+                henry_hub_price=self.market_curve[0].value,
+                ttf_price=self.ttf_price[0].value,
+                m1_price=self.market_curve[0].value,
+                m2_price=self.market_curve[1].value if len(self.market_curve) > 1 else self.market_curve[0].value,
+            )
+            self.agent_execution_log.append(rv_result)
+            if rv_result.outputs:
+                self.latest_relative_value = rv_result.outputs
+
+        backtest_result = await self.backtesting_agent.run(
+            instrument=self.primary_instrument(),
+            price_history=self.price_history,
+            horizon=ForecastHorizon.SEVEN_DAY,
+        )
+        self.agent_execution_log.append(backtest_result)
+        results_by_model = backtest_result.outputs.get("results_by_model")
+        if results_by_model:
+            self.latest_backtests = {
+                name: BacktestResult.model_validate(payload) for name, payload in results_by_model.items()
+            }
 
     async def submit_trade_idea(self, trade: TradeIdea) -> Approval:
         self.trade_ideas[trade.trade_id] = trade

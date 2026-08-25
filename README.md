@@ -76,10 +76,21 @@ config) · `/infrastructure` (Docker, DB migrations) · `/docs` · `/tests`.
 This repo implements all 11 milestones of the phased build plan in `docs/architecture.md` §8
 at MVP depth:
 
-- **1-9**: repo/db/auth/dashboard shell, EIA/NOAA/mock-market/mock-news ingestion, the natural
+- **1-4**: repo/db/auth/dashboard shell, EIA/NOAA/mock-market/mock-news ingestion, the natural
   gas balance + storage forecast + weather-demand engines, the Chief Trading Agent with
-  Supply/Demand/Storage/Weather agents, a Directional Strategy Agent, the AI Investment
-  Committee (Bull/Bear/Skeptic/Data Integrity/Portfolio), the deterministic Risk Governor, the
+  Supply/Demand/Storage/Weather/Pipeline agents.
+- **5 (quantitative platform)**: `services/quant` — a point-in-time-correctness module
+  (`pit.py`, guarding against the exact EIA-style reporting-lag look-ahead bug the brief calls
+  "critical"), two real forecasting models (naive persistence, OLS linear trend) plus an honest
+  `NotImplementedModel` stub for every other model type named (ARIMA/VAR/state-space/Random
+  Forest/XGBoost/LightGBM/TFT/LSTM — `GET /quant/models` shows which), the metrics module (MAE,
+  RMSE, directional accuracy, hit rate, profit factor, Sharpe, Sortino, max drawdown, Brier
+  score), a multi-horizon forecast engine, a deterministic regime-detection engine, a
+  relative-value engine (HH-TTF netback + calendar spread), and a walk-forward backtesting
+  engine — all wrapped by four Quantitative Team agents (Forecasting/Regime
+  Detection/Relative Value/Backtesting) and exposed via `/quant/*`.
+- **6-9**: a Directional Strategy Agent, the AI Investment Committee
+  (Bull/Bear/Skeptic/Data Integrity/Portfolio), the deterministic Risk Governor, the
   paper-trading engine, and the AI Trader Chat.
 - **10 (pipeline digital twin)**: a ~30-node/~27-edge graph across every node/edge type in
   docs/database-schema.md, a `PipelineAgent`, and a dependency-free inline-SVG interactive map
@@ -97,9 +108,9 @@ execution → close → post-trade analysis — is actually exercisable from the
 The MVP persistence layer is in-memory (`apps/api/api_app/state.py`), seeded at startup;
 `infrastructure/db/migrations` defines the production Postgres/TimescaleDB schema it mirrors,
 and swapping in a SQLAlchemy-backed repository remains the next-increment wiring — no router
-changes required. `services/quant` (the full walk-forward backtesting/forecasting engine) is
-not yet built; the post-trade scoring and model-performance aggregation are first-pass
-heuristics pending it.
+changes required. Post-trade scoring (Milestone 11) and model-performance aggregation are still
+independent, first-pass heuristics rather than being unified with `services/quant`'s
+walk-forward framework — that unification is a natural next increment, not yet done.
 
 Known follow-ups: the pinned `next` version has open advisories addressed only by a Next 16
 major upgrade (deferred to avoid an unreviewed breaking change); production auth should

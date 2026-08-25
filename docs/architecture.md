@@ -202,6 +202,27 @@ Milestones 10 and 11 are now implemented at MVP depth alongside 1-9:
   scoring thesis/timing/risk accuracy and classifying the outcome into one of the four
   decision-vs-outcome quadrants — deliberately never conflating "was this profitable" with "was
   this well-reasoned." `AppState.model_performance_summary()` (`GET /models/performance`)
-  aggregates closed trades by strategy for the model-performance dashboard. Both are first-pass
-  heuristics, not the full walk-forward statistical framework the Quantitative Team's
-  backtesting engine (`services/quant`, still unbuilt) will eventually own.
+  aggregates closed trades by strategy for the model-performance dashboard.
+
+Milestone 5 (quantitative platform) is also implemented at MVP depth:
+
+- **`services/quant`**: a point-in-time-correctness module (`pit.py` — the platform's most
+  load-bearing anti-look-ahead-bias guarantee, since every forecast/backtest depends on it), a
+  `ForecastModel` interface with two real implementations (naive persistence, OLS linear trend)
+  and an honest `NotImplementedModel` stub for every other model type the brief names (ARIMA,
+  VAR, state-space, Random Forest, XGBoost, LightGBM, TFT, LSTM — `GET /quant/models` reports
+  which are real), a metrics module (MAE, RMSE, directional accuracy, hit rate, profit factor,
+  Sharpe, Sortino, max drawdown, Brier score), a multi-horizon forecast engine, a deterministic
+  regime-detection engine (news/weather/storage-shock priority over a plain volatility read,
+  matching the `Regime` enum), a relative-value engine (HH-TTF netback + M1-M2 calendar spread
+  vs. an illustrative cost-of-carry), and a walk-forward backtesting engine that only ever sees
+  what `pit.as_of_filter` says was knowable at each fold — proven by a synthetic price history
+  seed that deliberately includes late-published revisions and a regression test asserting they
+  are excluded/included at exactly the right moment.
+- The Quantitative Team agents (`services/agents/agents_service/quant/`) wrap these engines:
+  Forecasting, Regime Detection, Relative Value, and Backtesting agents, all wired into the
+  Chief Trading Agent's research cycle and exposed via `/quant/*` endpoints.
+- Post-trade scoring (Milestone 11) and model-performance aggregation remain first-pass
+  heuristics independent of `services/quant`'s walk-forward framework — unifying the two (e.g.
+  running the actual implemented models' historical accuracy into post-trade lesson generation)
+  is a natural next increment, not yet done.

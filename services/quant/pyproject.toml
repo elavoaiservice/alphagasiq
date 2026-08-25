@@ -1,17 +1,16 @@
 [project]
-name = "alphagasiq-service-agents"
+name = "alphagasiq-service-quant"
 version = "0.1.0"
-description = "The multi-agent trading organization: Chief Trading Agent and every specialist agent"
+description = "Quantitative platform: point-in-time-correct forecasting, regime detection, relative value, and walk-forward backtesting"
 requires-python = ">=3.11"
 dependencies = [
   "alphagasiq-schemas",
-  "alphagasiq-agent-sdk",
   "alphagasiq-service-fundamentals",
-  "alphagasiq-service-quant",
+  "numpy>=1.26",
 ]
 
 [tool.setuptools.packages.find]
-include = ["agents_service*"]
+include = ["quant_service*"]
 
 [build-system]
 requires = ["setuptools>=68"]

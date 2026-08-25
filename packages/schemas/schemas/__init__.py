@@ -28,6 +28,7 @@ from .weather import WeatherDemandImpact
 from .fundamentals import GasBalanceDaily, StorageForecast
 from .events import DomainEvent, EventType
 from .post_trade import PostTradeAnalysis
+from .quant import BacktestResult, ForecastHorizon, ModelType, PriceForecast, RegimeResult, RelativeValueSignal
 
 __all__ = [
     "AgentStatus",
@@ -60,4 +61,10 @@ __all__ = [
     "DomainEvent",
     "EventType",
     "PostTradeAnalysis",
+    "BacktestResult",
+    "ForecastHorizon",
+    "ModelType",
+    "PriceForecast",
+    "RegimeResult",
+    "RelativeValueSignal",
 ]

@@ -7,6 +7,10 @@ from .fundamental.storage import StorageAgent
 from .fundamental.supply import SupplyAgent
 from .fundamental.weather import WeatherAgent
 from .market_intel.news_intelligence import NewsIntelligenceAgent
+from .quant.backtesting import BacktestingAgent
+from .quant.forecasting import ForecastingAgent
+from .quant.regime_detection import RegimeDetectionAgent
+from .quant.relative_value import RelativeValueAgent
 from .strategy.directional import DirectionalStrategyAgent
 
 __all__ = [
@@ -20,5 +24,9 @@ __all__ = [
     "SupplyAgent",
     "WeatherAgent",
     "NewsIntelligenceAgent",
+    "BacktestingAgent",
+    "ForecastingAgent",
+    "RegimeDetectionAgent",
+    "RelativeValueAgent",
     "DirectionalStrategyAgent",
 ]

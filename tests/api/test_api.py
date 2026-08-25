@@ -320,3 +320,52 @@ def test_post_trade_reports_open_before_close(client):
     r = client.get(f"/api/v1/post-trade/{trade_id}")
     assert r.status_code == 200
     assert r.json()["status"] == "OPEN"
+
+
+def test_quant_forecast_endpoint(client):
+    r = client.get("/api/v1/quant/forecast")
+    assert r.status_code == 200
+    body = r.json()
+    assert "price_forecast" in body
+    assert body["classification"] == "SIMULATED"
+
+
+def test_quant_regime_endpoint(client):
+    r = client.get("/api/v1/quant/regime")
+    assert r.status_code == 200
+    body = r.json()
+    assert "regime" in body
+    assert body["classification"] == "SIMULATED"
+
+
+def test_quant_relative_value_endpoint(client):
+    r = client.get("/api/v1/quant/relative-value")
+    assert r.status_code == 200
+    body = r.json()
+    assert "hh_ttf_netback" in body
+    assert "calendar_spread" in body
+
+
+def test_quant_backtest_endpoint(client):
+    r = client.get("/api/v1/quant/backtest")
+    assert r.status_code == 200
+    body = r.json()
+    assert set(body["results_by_model"].keys()) == {"NAIVE_PERSISTENCE", "LINEAR_REGRESSION"}
+
+
+def test_quant_models_endpoint_lists_every_model_type_honestly(client):
+    r = client.get("/api/v1/quant/models")
+    assert r.status_code == 200
+    statuses = {s["model_type"]: s["implemented"] for s in r.json()}
+    assert statuses["NAIVE_PERSISTENCE"] is True
+    assert statuses["LINEAR_REGRESSION"] is True
+    assert statuses["ARIMA"] is False
+    assert statuses["XGBOOST"] is False
+
+
+def test_org_chart_includes_quantitative_team_as_implemented(client):
+    r = client.get("/api/v1/agents")
+    body = r.json()
+    quant_types = {"FORECASTING", "REGIME_DETECTION", "RELATIVE_VALUE", "BACKTESTING"}
+    implemented = {a["agent_type"] for a in body if a["agent_type"] in quant_types and a["implemented"]}
+    assert implemented == quant_types

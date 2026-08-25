@@ -56,6 +56,16 @@ provider. All mutating endpoints require RBAC role checks (`ADMIN`, `TRADER`, `R
 | GET | `/agents/{agent_id}/executions` | recent `AgentResult`s for one agent |
 | POST | `/agents/chief-trading/run` | trigger a Chief Trading Agent research cycle (RESEARCHER+) |
 
+## Quantitative
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/quant/forecast` | latest multi-horizon `PriceForecast` from the Forecasting Agent |
+| GET | `/quant/regime` | latest `RegimeResult` from the Regime Detection Agent |
+| GET | `/quant/relative-value` | latest HH-TTF netback + M1-M2 calendar-spread `RelativeValueSignal`s |
+| GET | `/quant/backtest` | latest walk-forward `BacktestResult` per implemented model |
+| GET | `/quant/models` | every `ModelType` the platform names, with an honest implemented/not-implemented flag |
+
 ## Strategy / Committee
 
 | Method | Path | Notes |

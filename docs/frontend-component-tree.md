@@ -41,6 +41,9 @@ components/
 │   │                                 later only touches `projection.ts`'s project() call
 │   ├── projection.ts                lat/lon -> SVG coordinate projection (continental US bounds)
 │   └── PipelineNodeInspector.tsx    node/edge detail drawer (shipped)
+├── quant/
+│   └── QuantPanel.tsx               Forecast/regime/relative-value/backtest summary from
+│                                     GET /quant/* (shipped)
 ├── recommendations/
 │   ├── RecommendationCard.tsx       trade/entry/target/invalidation/return/probability/
 │   │                                 confidence/thesis/catalysts/risks + <ChallengeAiButton/>
