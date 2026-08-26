@@ -6,7 +6,21 @@ from config import branding, get_settings
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .routers import agents, approvals, auth, chat, fundamentals, journal, market, news, portfolio, quant, risk, trading
+from .routers import (
+    agents,
+    approvals,
+    auth,
+    chat,
+    contact,
+    fundamentals,
+    journal,
+    market,
+    news,
+    portfolio,
+    quant,
+    risk,
+    trading,
+)
 from .state import get_app_state
 
 
@@ -43,7 +57,21 @@ def create_app() -> FastAPI:
     )
 
     api = FastAPI(title=f"{branding.FULL_NAME} API")
-    for router in (auth.router, market.router, fundamentals.router, news.router, agents.router, trading.router, risk.router, approvals.router, portfolio.router, journal.router, quant.router, chat.router):
+    for router in (
+        auth.router,
+        market.router,
+        fundamentals.router,
+        news.router,
+        agents.router,
+        trading.router,
+        risk.router,
+        approvals.router,
+        portfolio.router,
+        journal.router,
+        quant.router,
+        chat.router,
+        contact.router,
+    ):
         api.include_router(router)
 
     from .routers import system as system_router

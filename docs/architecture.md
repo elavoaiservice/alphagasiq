@@ -331,3 +331,23 @@ Several follow-up hardening items from the MVP status are now closed out:
   and this sandboxed environment's egress policy also blocks reaching any of these hosts directly
   to verify request shapes live — an honest `not_configured` stub beats a plausible-looking but
   unverified connector. See `tests/data/test_providers.py` for the new connectors' tests.
+- **Access model, Milestone 1 (public site + magic-link UI shell)**: AlphaGasIQ is a private,
+  admin-provisioned platform — see `docs/access-model.md` for the full account-lifecycle and
+  RBAC/entitlement design (built out across Milestones 2-4). This milestone lays the frontend
+  groundwork only: `/` is now the public marketing site (`apps/web/app/page.tsx`), and the
+  authenticated trading dashboard that previously lived at `/` has moved to `/platform`
+  (`apps/web/app/platform/*`, formerly the `(dashboard)` route group plus the top-level
+  `chat`/`pipeline-map`/`model-performance` routes — nesting them under `platform/` also fixed a
+  pre-existing bug where those three pages weren't wrapped by the shared header/sidebar layout).
+  `/login` replaces the dev-mode credential dropdown as the primary entry point with an
+  email-only "Send Secure Magic Link" form; `/contact` is a public business-inquiry form. Per the
+  spec's core invariant, there is no `/signup`, `/register`, or `/request-access` route, and
+  `POST /contact` persists only to a standalone `ContactInquiry` table with no code path to a
+  `User`/`Organization`/session — see `tests/api/test_api.py::test_contact_form_never_creates_a_user_or_session`.
+  `POST /auth/magic-link/request` exists now as an honest placeholder: it already implements the
+  final non-enumerating response contract (identical generic response for any email), but real
+  token issuance and email dispatch don't exist until Milestone 3. The existing dev-mode password
+  login (`_DEV_USERS`) is intentionally left in place through Milestone 2 so the platform stays
+  usable during the transition; it will be removed once Milestone 3's real magic-link auth lands,
+  since a standing password grant would directly conflict with the "no plaintext passwords"
+  requirement.

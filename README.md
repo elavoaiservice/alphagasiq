@@ -22,6 +22,7 @@ can override a failed hard risk rule.
 - `docs/risk-framework.md` — the Risk Governor's deterministic rule chain
 - `docs/api-specification.md` — REST API surface
 - `docs/frontend-component-tree.md` — dashboard component hierarchy
+- `docs/access-model.md` — admin-provisioned account lifecycle, magic-link auth, RBAC & entitlements
 
 ## Run it
 
@@ -168,6 +169,19 @@ key needed, just a contact email per SEC's fair-access policy (`SEC_EDGAR_CONTAC
 and pipeline-bulletin-board connectors deliberately stay honest `not_configured` stubs — neither
 has a single stable public JSON API to build against with confidence, and this sandbox's egress
 policy blocks verifying request shapes live against any of these hosts anyway.
+
+**`/` is now a public marketing site; the trading dashboard moved to `/platform`.**
+AlphaGasIQ is being extended into a private, admin-provisioned institutional platform — see
+`docs/access-model.md`. Milestone 1 lands the frontend groundwork: a public landing page
+(`apps/web/app/page.tsx`), a `/login` page with an email-only "Send Secure Magic Link" form
+(`POST /auth/magic-link/request` already returns its final non-enumerating generic response,
+though real token issuance/email is Milestone 3), and a `/contact` business-inquiry form
+(`POST /contact`) that is structurally incapable of creating a user, organization, or session —
+there is no `/signup`, `/register`, or `/request-access` route, and none will be added. The
+existing dashboard (previously at `/`) now lives at `/platform`, with `chat`/`pipeline-map`/
+`model-performance` nested under it (which also fixed a pre-existing bug: those pages weren't
+wrapped by the shared header/sidebar layout before). The dev-mode password login stays available
+through Milestone 2 so the platform remains usable during the transition.
 
 **The pipeline digital twin can now be backed by a real Neo4j instance.**
 `fundamentals_service/pipeline_graph_neo4j.py` seeds the same `PipelineGraph`

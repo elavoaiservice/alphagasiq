@@ -11,11 +11,18 @@ All mutating endpoints require RBAC role checks (`ADMIN`, `TRADER`, `RISK_MANAGE
 
 | Method | Path | Notes |
 |---|---|---|
-| POST | `/auth/login` | dev-mode credential login, returns JWT |
+| POST | `/auth/login` | dev-mode credential login, returns JWT (kept for local development only through Milestone 2; removed once Milestone 3 wires real magic-link issuance — see `docs/access-model.md`) |
+| POST | `/auth/magic-link/request` | `{email}` — **always** returns the same generic `{"message": "If an authorized AlphaGasIQ account exists for this email, a secure sign-in link has been sent."}` regardless of whether the email matches a user, to prevent account enumeration. No token issuance or email dispatch yet (Milestone 1 placeholder; real behavior lands in Milestone 3) |
 | GET | `/auth/me` | current user + roles |
 | GET | `/auth/mode` | `{"oidc_configured": bool}` — whether real SSO is available on this deployment |
 | GET | `/auth/oidc/login` | redirects to the configured IdP's authorization endpoint (PKCE); `501` if OIDC isn't configured |
-| GET | `/auth/oidc/callback` | IdP redirect target; validates the ID token (JWKS signature, issuer, audience, nonce), maps claims to a `Role` set, and redirects to the frontend with this platform's own session JWT in the URL fragment |
+| GET | `/auth/oidc/callback` | IdP redirect target; validates the ID token (JWKS signature, issuer, audience, nonce), maps claims to a `Role` set, and redirects to the frontend (`/platform#access_token=...`) with this platform's own session JWT in the URL fragment |
+
+## Contact (public, no account creation)
+
+| Method | Path | Notes |
+|---|---|---|
+| POST | `/contact` | Public business-inquiry form submission (first/last name, business email, company, job title, phone, inquiry type, message). Persists a `ContactInquiry` row for admin visibility only. **Never** creates a `User`, `Organization`, `MagicLinkToken`, or session — see `docs/access-model.md` "No Self-Registration." |
 
 ## System / Observability
 

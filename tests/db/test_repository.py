@@ -223,6 +223,47 @@ async def test_risk_limits_hydrate_returns_most_recent(repo):
     assert data["risk_limits"].set_by_user_id == "risk-manager-1"
 
 
+async def test_contact_inquiry_save_and_list_round_trips_and_never_touches_users(repo):
+    """Regression test for the account-provisioning invariant: `ContactInquiryRow` is
+    a standalone table with no relationship to `User`/`Organization`/`MagicLinkToken`
+    — this only checks the round-trip and ordering, since the "never creates a user"
+    guarantee is structural (no such table/FK exists yet), not something a repository
+    test can violate."""
+    first_id = await repo.save_contact_inquiry(
+        first_name="Jane",
+        last_name="Doe",
+        business_email="jane.doe@example.com",
+        company_name="Example Energy Corp",
+        job_title="VP Trading",
+        phone="555-0100",
+        inquiry_type="SALES",
+        message="Interested in a platform demo.",
+    )
+    second_id = await repo.save_contact_inquiry(
+        first_name="John",
+        last_name="Smith",
+        business_email="john.smith@example.com",
+        company_name="Smith Gas LLC",
+        job_title=None,
+        phone=None,
+        inquiry_type="GENERAL",
+        message="General question about coverage.",
+    )
+
+    inquiries = await repo.list_contact_inquiries()
+    assert [i["id"] for i in inquiries] == [second_id, first_id], "most recent first"
+
+    saved = next(i for i in inquiries if i["id"] == first_id)
+    assert saved["business_email"] == "jane.doe@example.com"
+    assert saved["company_name"] == "Example Energy Corp"
+    assert saved["job_title"] == "VP Trading"
+    assert saved["inquiry_type"] == "SALES"
+
+    saved_optional = next(i for i in inquiries if i["id"] == second_id)
+    assert saved_optional["job_title"] is None
+    assert saved_optional["phone"] is None
+
+
 async def test_hydrate_on_empty_db_is_well_shaped(repo):
     data = await repo.hydrate()
     assert data["trade_ideas"] == {}

@@ -20,6 +20,7 @@ from .models import (
     ApprovalRow,
     Base,
     CommitteeDecisionRow,
+    ContactInquiryRow,
     DecisionJournalRow,
     PostTradeAnalysisRow,
     RiskCheckRow,
@@ -180,6 +181,60 @@ class SqlAppRepository:
         async with self.session_factory() as session:
             await session.merge(row)
             await session.commit()
+
+    async def save_contact_inquiry(
+        self,
+        *,
+        first_name: str,
+        last_name: str,
+        business_email: str,
+        company_name: str,
+        job_title: str | None,
+        phone: str | None,
+        inquiry_type: str,
+        message: str,
+    ) -> str:
+        """Persists a /contact submission. Deliberately takes only plain business-
+        inquiry fields — there is no path from here to a `User`/`Organization`/
+        `MagicLinkToken` row; this table exists purely for admin visibility into
+        inbound inquiries."""
+        row = ContactInquiryRow(
+            first_name=first_name,
+            last_name=last_name,
+            business_email=business_email,
+            company_name=company_name,
+            job_title=job_title,
+            phone=phone,
+            inquiry_type=inquiry_type,
+            message=message,
+        )
+        async with self.session_factory() as session:
+            session.add(row)
+            await session.commit()
+        return row.id
+
+    async def list_contact_inquiries(self) -> list[dict]:
+        async with self.session_factory() as session:
+            rows = (
+                (await session.execute(select(ContactInquiryRow).order_by(ContactInquiryRow.created_at.desc())))
+                .scalars()
+                .all()
+            )
+        return [
+            {
+                "id": r.id,
+                "first_name": r.first_name,
+                "last_name": r.last_name,
+                "business_email": r.business_email,
+                "company_name": r.company_name,
+                "job_title": r.job_title,
+                "phone": r.phone,
+                "inquiry_type": r.inquiry_type,
+                "message": r.message,
+                "created_at": r.created_at,
+            }
+            for r in rows
+        ]
 
     async def save_risk_limits(self, limits: RiskLimits) -> None:
         row = RiskLimitsRow(

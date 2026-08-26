@@ -126,6 +126,26 @@ class PostTradeAnalysisRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
 
 
+class ContactInquiryRow(Base):
+    """A general business inquiry submitted via the public /contact page. This is
+    deliberately NOT part of the account-provisioning system: it never creates a
+    User, Organization, or MagicLinkToken row, and nothing reads this table to grant
+    platform access. See docs/access-model.md "No Self-Registration"."""
+
+    __tablename__ = "contact_inquiries"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    first_name: Mapped[str] = mapped_column(String, nullable=False)
+    last_name: Mapped[str] = mapped_column(String, nullable=False)
+    business_email: Mapped[str] = mapped_column(String, nullable=False)
+    company_name: Mapped[str] = mapped_column(String, nullable=False)
+    job_title: Mapped[str | None] = mapped_column(String, nullable=True)
+    phone: Mapped[str | None] = mapped_column(String, nullable=True)
+    inquiry_type: Mapped[str] = mapped_column(String, nullable=False)
+    message: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
 class RiskLimitsRow(Base):
     __tablename__ = "risk_limits"
 

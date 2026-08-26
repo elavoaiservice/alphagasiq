@@ -16,6 +16,13 @@ const config: Config = {
           bear: "#e5534b",
           warn: "#e0a941",
         },
+        // Elavo-brand electric blue — used on the public marketing site
+        // (landing/login/contact) to distinguish it from the platform's teal accent.
+        elavo: {
+          blue: "#2f6fed",
+          blueLight: "#6b9bff",
+          navy: "#060a12",
+        },
       },
       fontFamily: {
         mono: ["ui-monospace", "SFMono-Regular", "Menlo", "monospace"],

@@ -187,7 +187,9 @@ def test_full_oidc_login_and_callback_flow_maps_claims_and_issues_session(client
     )
     assert callback_resp.status_code in (302, 307)
     redirect_location = callback_resp.headers["location"]
-    assert redirect_location.startswith("http://localhost:3000/#access_token=")
+    # /platform is the authenticated app's URL prefix (the public marketing site now
+    # owns "/") -- see apps/web/app/platform/ and docs/access-model.md.
+    assert redirect_location.startswith("http://localhost:3000/platform#access_token=")
     session_token = redirect_location.split("access_token=", 1)[1]
 
     # This platform's own session JWT is indistinguishable downstream from a dev-mode

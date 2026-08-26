@@ -100,6 +100,60 @@ def test_login_success_and_failure(client):
     assert bad.status_code == 401
 
 
+def test_magic_link_request_returns_generic_response_regardless_of_email(client):
+    known = client.post("/api/v1/auth/magic-link/request", json={"email": "trader@alphagasiq.local"})
+    unknown = client.post("/api/v1/auth/magic-link/request", json={"email": "not-a-real-user@example.com"})
+    assert known.status_code == 200
+    assert unknown.status_code == 200
+    # The exact same response either way -- an attacker must never be able to
+    # distinguish a real account from a made-up one via this endpoint.
+    assert known.json() == unknown.json()
+    assert "secure sign-in link has been sent" in known.json()["detail"]
+
+
+def test_contact_form_never_creates_a_user_or_session(client):
+    before = client.get("/api/v1/auth/mode")  # sanity: API is up
+    assert before.status_code == 200
+
+    r = client.post(
+        "/api/v1/contact",
+        json={
+            "first_name": "Jamie",
+            "last_name": "Rivera",
+            "business_email": "jamie.rivera@example-energy.com",
+            "company_name": "Example Energy Partners",
+            "job_title": "VP Trading",
+            "phone": "+1-555-0100",
+            "inquiry_type": "SALES",
+            "message": "Interested in learning more about AlphaGasIQ for our trading desk.",
+        },
+    )
+    assert r.status_code == 200
+    assert "does not create an AlphaGasIQ account" in r.json()["detail"]
+
+    # No login endpoint should now authenticate as this submitter -- there is no
+    # code path from a contact-form submission to a usable account.
+    login_attempt = client.post(
+        "/api/v1/auth/login", json={"email": "jamie.rivera@example-energy.com", "password": "anything"}
+    )
+    assert login_attempt.status_code == 401
+
+
+def test_contact_form_rejects_invalid_email(client):
+    r = client.post(
+        "/api/v1/contact",
+        json={
+            "first_name": "Jamie",
+            "last_name": "Rivera",
+            "business_email": "not-an-email",
+            "company_name": "Example Energy Partners",
+            "inquiry_type": "GENERAL",
+            "message": "Hello",
+        },
+    )
+    assert r.status_code == 422
+
+
 def test_chief_trading_run_requires_auth(client):
     r = client.post("/api/v1/agents/chief-trading/run")
     assert r.status_code == 401

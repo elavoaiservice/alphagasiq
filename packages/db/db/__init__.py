@@ -3,6 +3,7 @@ from .models import (
     ApprovalRow,
     Base,
     CommitteeDecisionRow,
+    ContactInquiryRow,
     DecisionJournalRow,
     PostTradeAnalysisRow,
     RiskCheckRow,
@@ -22,5 +23,6 @@ __all__ = [
     "DecisionJournalRow",
     "PostTradeAnalysisRow",
     "RiskLimitsRow",
+    "ContactInquiryRow",
     "SqlAppRepository",
 ]
