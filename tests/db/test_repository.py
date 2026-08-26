@@ -318,3 +318,101 @@ async def test_data_survives_across_repository_instances_same_file_db(tmp_path):
     assert data["trade_ideas"][str(trade.trade_id)].thesis == trade.thesis
     assert str(trade.trade_id) in data["committee_decisions"]
     await second.dispose()
+
+
+async def test_seed_rbac_defaults_creates_eight_roles_and_permission_grants(repo):
+    await repo.seed_rbac_defaults()
+
+    roles = await repo.list_roles()
+    assert {r["name"] for r in roles} == {
+        "SUPER_ADMIN",
+        "ADMIN",
+        "TRADER",
+        "RISK_MANAGER",
+        "RESEARCHER",
+        "EXECUTIVE",
+        "VIEWER",
+        "API_USER",
+    }
+
+    trader = await repo.get_role_by_name("TRADER")
+    assert trader is not None
+    admin = await repo.get_role_by_name("ADMIN")
+    assert admin is not None
+    assert await repo.get_role_by_id(admin["id"]) == admin
+
+
+async def test_seed_rbac_defaults_is_idempotent(repo):
+    """Regression test: re-running the seed (as happens on every process boot) must
+    not create duplicate Role/Permission rows or duplicate RolePermission grants."""
+    await repo.seed_rbac_defaults()
+    first_roles = await repo.list_roles()
+    await repo.seed_rbac_defaults()
+    await repo.seed_rbac_defaults()
+    second_roles = await repo.list_roles()
+    assert len(first_roles) == len(second_roles) == 8
+
+
+async def test_organization_create_lookup_and_list(repo):
+    org = await repo.create_organization(name="Acme Gas Trading", country="United States")
+    assert org["status"] == "ACTIVE"
+    assert org["data_entitlements"] == {}
+
+    found = await repo.find_organization_by_name("Acme Gas Trading")
+    assert found is not None
+    assert found["id"] == org["id"]
+
+    assert await repo.find_organization_by_name("Does Not Exist Co") is None
+    assert await repo.get_organization(org["id"]) == found
+
+    listed = await repo.list_organizations()
+    assert [o["id"] for o in listed] == [org["id"]]
+
+
+async def test_user_create_and_lookup_round_trips(repo):
+    await repo.seed_rbac_defaults()
+    role = await repo.get_role_by_name("RESEARCHER")
+    org = await repo.create_organization(name="Northwind Energy")
+
+    created = await repo.create_user(
+        first_name="Ada",
+        last_name="Lovelace",
+        email="Ada.Lovelace@Northwind.example",
+        organization_id=org["id"],
+        role_id=role["id"],
+        status="INVITED",
+        job_title="Research Analyst",
+        created_by="u-admin-1",
+    )
+    assert created["status"] == "INVITED"
+
+    by_id = await repo.get_user_by_id(created["id"])
+    assert by_id == created
+
+    # Email lookups are case-insensitive; storage itself preserves what was written.
+    by_email = await repo.get_user_by_email("ada.lovelace@northwind.example")
+    assert by_email is not None
+    assert by_email["id"] == created["id"]
+
+    listed = await repo.list_users()
+    assert [u["id"] for u in listed] == [created["id"]]
+
+
+async def test_update_user_status_persists_and_missing_user_returns_none(repo):
+    await repo.seed_rbac_defaults()
+    role = await repo.get_role_by_name("VIEWER")
+    org = await repo.create_organization(name="Southbay Utilities")
+    user = await repo.create_user(
+        first_name="Sam",
+        last_name="Rivera",
+        email="sam.rivera@southbay.example",
+        organization_id=org["id"],
+        role_id=role["id"],
+        status="INVITED",
+    )
+
+    updated = await repo.update_user_status(user["id"], "REVOKED")
+    assert updated["status"] == "REVOKED"
+    assert (await repo.get_user_by_id(user["id"]))["status"] == "REVOKED"
+
+    assert await repo.update_user_status("no-such-user-id", "REVOKED") is None

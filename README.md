@@ -23,6 +23,7 @@ can override a failed hard risk rule.
 - `docs/api-specification.md` — REST API surface
 - `docs/frontend-component-tree.md` — dashboard component hierarchy
 - `docs/access-model.md` — admin-provisioned account lifecycle, magic-link auth, RBAC & entitlements
+- `docs/agent-governance.md` — Agent Control Center, versioning/optimization workflow, Risk Governor boundary (design-only; built out in Milestones 8-10)
 
 ## Run it
 
@@ -182,6 +183,20 @@ existing dashboard (previously at `/`) now lives at `/platform`, with `chat`/`pi
 `model-performance` nested under it (which also fixed a pre-existing bug: those pages weren't
 wrapped by the shared header/sidebar layout before). The dev-mode password login stays available
 through Milestone 2 so the platform remains usable during the transition.
+
+**Admin-provisioned Users and Organizations are now real, not a placeholder.** Milestone 2 adds
+`Organization`/`User`/`Role`/`Permission`/`RolePermission` tables (`packages/db`) and the only
+endpoint that can ever create a `User`: `POST /admin/users` (`apps/api/api_app/routers/
+admin_users.py`), which looks up or inline-creates the user's organization by company name,
+always creates the account `INVITED` (never any other status, no matter what's requested), and
+rejects duplicate emails and unrecognized roles. The 8 fixed roles and full permission-key list
+seed idempotently on every boot (`SqlAppRepository.seed_rbac_defaults()`); real permission
+enforcement lands in Milestone 4, so every `/admin/*` route is gated by today's dev-mode
+`ADMIN` role check for now. `apps/api/api_app/account_states.py` implements the account-state
+machine (`INVITED`/`ACTIVE`/`SUSPENDED`/`DISABLED`/`EXPIRED`/`LOCKED`/`REVOKED`) enforced by
+`POST /admin/users/{id}/status` — `REVOKED` is terminal, and `INVITED`→`ACTIVE` only ever
+happens via magic-link activation (Milestone 3), never an admin action. See
+`docs/access-model.md`.
 
 **The pipeline digital twin can now be backed by a real Neo4j instance.**
 `fundamentals_service/pipeline_graph_neo4j.py` seeds the same `PipelineGraph`

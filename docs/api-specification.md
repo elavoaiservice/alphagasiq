@@ -24,6 +24,24 @@ All mutating endpoints require RBAC role checks (`ADMIN`, `TRADER`, `RISK_MANAGE
 |---|---|---|
 | POST | `/contact` | Public business-inquiry form submission (first/last name, business email, company, job title, phone, inquiry type, message). Persists a `ContactInquiry` row for admin visibility only. **Never** creates a `User`, `Organization`, `MagicLinkToken`, or session — see `docs/access-model.md` "No Self-Registration." |
 
+## Admin: Users & Organizations (Milestone 2)
+
+Every endpoint below requires the dev-mode `ADMIN` role (`require_role(Role.ADMIN)`) — this is
+the interim enforcement mechanism until Milestone 4 wires real `admin.users.*`/`admin.organizations`
+permission checks against the seeded `RolePermission` data. There is no endpoint anywhere that
+lets an unauthenticated or non-admin caller create a `User` or `Organization` — see
+`docs/access-model.md` "No Self-Registration."
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/admin/roles` | the 8 seeded roles (`SUPER_ADMIN`, `ADMIN`, `TRADER`, `RISK_MANAGER`, `RESEARCHER`, `EXECUTIVE`, `VIEWER`, `API_USER`) |
+| POST | `/admin/organizations` | create an organization; `409` if the name already exists |
+| GET | `/admin/organizations` | list organizations |
+| POST | `/admin/users` | admin-create a user — looks up the organization by `company_name` (creating it inline if it doesn't exist, per spec §14), always creates the user in `INVITED` status regardless of what's requested, `409` on a duplicate (case-insensitive) email, `400` on an unrecognized role |
+| GET | `/admin/users` | list users, with `organization_name`/`role_name` resolved for display |
+| GET | `/admin/users/{user_id}` | single user; `404` if not found |
+| POST | `/admin/users/{user_id}/status` | transition a user's account status (`apps/api/api_app/account_states.py`'s state machine — e.g. `ACTIVE`→`SUSPENDED`→`ACTIVE`, or any status→`REVOKED`, which is terminal); `400` on an illegal transition (e.g. `INVITED`→`ACTIVE`, which only ever happens via magic-link activation in Milestone 3, never an admin action) |
+
 ## System / Observability
 
 | Method | Path | Notes |

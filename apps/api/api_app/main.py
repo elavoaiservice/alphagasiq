@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .routers import (
+    admin_users,
     agents,
     approvals,
     auth,
@@ -71,6 +72,7 @@ def create_app() -> FastAPI:
         quant.router,
         chat.router,
         contact.router,
+        admin_users.router,
     ):
         api.include_router(router)
 

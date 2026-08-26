@@ -146,6 +146,93 @@ class ContactInquiryRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
 
 
+class OrganizationRow(Base):
+    """An institutional client account. Users belong to exactly one Organization,
+    looked up by name or created inline during admin user creation — see
+    docs/access-model.md §14 "Organization Management"."""
+
+    __tablename__ = "organizations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    name: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    website: Mapped[str | None] = mapped_column(String, nullable=True)
+    industry: Mapped[str | None] = mapped_column(String, nullable=True)
+    company_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    country: Mapped[str | None] = mapped_column(String, nullable=True)
+    state_region: Mapped[str | None] = mapped_column(String, nullable=True)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="ACTIVE")
+    billing_plan: Mapped[str | None] = mapped_column(String, nullable=True)
+    account_owner: Mapped[str | None] = mapped_column(String, nullable=True)
+    primary_contact: Mapped[str | None] = mapped_column(String, nullable=True)
+    feature_package: Mapped[str | None] = mapped_column(String, nullable=True)
+    data_entitlements: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    notes: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class RoleRow(Base):
+    """One of the 8 fixed roles seeded at startup (`SqlAppRepository.seed_rbac_defaults`)
+    — see docs/access-model.md §5. Custom roles are structurally possible (this is a
+    DB row, not a hardcoded enum) but none are created by this codebase."""
+
+    __tablename__ = "roles"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    name: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class PermissionRow(Base):
+    """A single fine-grained permission key (e.g. `admin.users.create`), seeded at
+    startup from the fixed list in docs/access-model.md §5. Enforcement of these via
+    `require_permission(...)` FastAPI dependencies lands in Milestone 4 — today only
+    `require_role` (apps/api/api_app/auth.py) is enforced at the router layer."""
+
+    __tablename__ = "permissions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    key: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class RolePermissionRow(Base):
+    __tablename__ = "role_permissions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    role_id: Mapped[str] = mapped_column(String(36), ForeignKey("roles.id"), nullable=False)
+    permission_id: Mapped[str] = mapped_column(String(36), ForeignKey("permissions.id"), nullable=False)
+
+
+class UserRow(Base):
+    """An AlphaGasIQ account. Only ever created by an authenticated administrator via
+    `POST /admin/users` (`apps/api/api_app/routers/admin_users.py`) — there is no
+    unauthenticated code path that can insert a row here. See docs/access-model.md."""
+
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    first_name: Mapped[str] = mapped_column(String, nullable=False)
+    last_name: Mapped[str] = mapped_column(String, nullable=False)
+    email: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    organization_id: Mapped[str] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=False)
+    job_title: Mapped[str | None] = mapped_column(String, nullable=True)
+    department: Mapped[str | None] = mapped_column(String, nullable=True)
+    phone: Mapped[str | None] = mapped_column(String, nullable=True)
+    country: Mapped[str | None] = mapped_column(String, nullable=True)
+    state_region: Mapped[str | None] = mapped_column(String, nullable=True)
+    primary_use_case: Mapped[str | None] = mapped_column(String, nullable=True)
+    market_experience: Mapped[str | None] = mapped_column(String, nullable=True)
+    role_id: Mapped[str] = mapped_column(String(36), ForeignKey("roles.id"), nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="INVITED")
+    expiration_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class RiskLimitsRow(Base):
     __tablename__ = "risk_limits"
 

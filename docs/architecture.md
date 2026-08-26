@@ -351,3 +351,15 @@ Several follow-up hardening items from the MVP status are now closed out:
   usable during the transition; it will be removed once Milestone 3's real magic-link auth lands,
   since a standing password grant would directly conflict with the "no plaintext passwords"
   requirement.
+- **Access model, Milestone 2 (admin-provisioned User/Organization/RBAC seed data)**:
+  `packages/db/db/models.py` adds `OrganizationRow`/`UserRow`/`RoleRow`/`PermissionRow`/
+  `RolePermissionRow`. `SqlAppRepository.seed_rbac_defaults()` idempotently seeds the 8 fixed
+  roles and the full permission-key list (with a reviewable default role→permission mapping) on
+  every boot. `apps/api/api_app/routers/admin_users.py` is the platform's only `User`-row writer:
+  `POST /admin/users` (admin-create, org lookup-or-create-inline, always starts `INVITED`),
+  `GET/POST /admin/organizations`, `GET /admin/users(/{id})`, and
+  `POST /admin/users/{id}/status` (the account-state machine in the new
+  `apps/api/api_app/account_states.py` — see `docs/access-model.md` §2). Every `/admin/*`
+  endpoint is gated by today's dev-mode `require_role(Role.ADMIN)` as an interim mechanism; the
+  DB-backed `admin.users.create`-style permission check the spec calls for lands in Milestone 4
+  once there's a session/user-identity bridge between a JWT and a `UserRow` (Milestone 3).

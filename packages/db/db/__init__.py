@@ -5,10 +5,15 @@ from .models import (
     CommitteeDecisionRow,
     ContactInquiryRow,
     DecisionJournalRow,
+    OrganizationRow,
+    PermissionRow,
     PostTradeAnalysisRow,
     RiskCheckRow,
     RiskLimitsRow,
+    RolePermissionRow,
+    RoleRow,
     TradeIdeaRow,
+    UserRow,
 )
 from .repository import SqlAppRepository
 
@@ -24,5 +29,10 @@ __all__ = [
     "PostTradeAnalysisRow",
     "RiskLimitsRow",
     "ContactInquiryRow",
+    "OrganizationRow",
+    "RoleRow",
+    "PermissionRow",
+    "RolePermissionRow",
+    "UserRow",
     "SqlAppRepository",
 ]

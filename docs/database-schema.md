@@ -130,8 +130,38 @@ No column for chain-of-thought. `reasoning_summary` is a concise, human-auditabl
 - **`risk_limits`** — configurable: max_position_size, max_risk_per_trade, max_daily_loss,
   max_drawdown, max_portfolio_var, max_sector_exposure, max_contract_exposure,
   max_correlated_exposure, effective_from, effective_to, set_by_user_id.
-- **`users`** / **`roles`** — RBAC (`ADMIN`, `TRADER`, `RISK_MANAGER`, `RESEARCHER`, `VIEWER`).
+- **`users`** / **`roles`** / **`permissions`** / **`role_permissions`** / **`organizations`** —
+  the real, admin-provisioned account model (`packages/db/db/models.py`:
+  `UserRow`/`RoleRow`/`PermissionRow`/`RolePermissionRow`/`OrganizationRow`), replacing the
+  placeholder 5-role list above. See `docs/access-model.md` for the full account lifecycle,
+  RBAC seed data, and why `apps/api/api_app/auth.py`'s dev-mode `Role` enum (`ADMIN`, `TRADER`,
+  `RISK_MANAGER`, `RESEARCHER`, `VIEWER`) still gates every router today — it is the interim
+  enforcement mechanism until Milestone 4 wires `require_permission(...)` against these tables.
+  `organizations.name` is unique and looked-up-or-created-inline when an admin creates a user
+  (spec §14); `users.email` is unique and always stored lowercase.
 - **`audit_log`** — append-only record of every mutating action (who, what, when, before/after).
+  Not yet implemented as a real table (lands in Milestone 10 as `AuditEvent` — see
+  `docs/access-model.md` §7); this row remains a forward-looking placeholder until then.
+
+## 4a. Account & RBAC Tables (Milestone 2)
+
+- **`organizations`** — id, name (unique), website, industry, company_type, country,
+  state_region, status, billing_plan, account_owner, primary_contact, feature_package,
+  data_entitlements (jsonb), notes, created_at, updated_at.
+- **`users`** — id, first_name, last_name, email (unique, lowercase), organization_id (FK),
+  job_title, department, phone, country, state_region, primary_use_case, market_experience,
+  role_id (FK), status, expiration_at, created_by, created_at, updated_at, activated_at,
+  last_login_at. `status` is one of `INVITED`/`ACTIVE`/`SUSPENDED`/`DISABLED`/`EXPIRED`/
+  `LOCKED`/`REVOKED` (`apps/api/api_app/account_states.py` enforces the legal transitions
+  between them — see `docs/access-model.md` §2). Only ever created by
+  `POST /admin/users` — no other writer exists.
+- **`roles`** — id, name (unique), description. Seeded with the 8 fixed roles
+  (`SUPER_ADMIN`, `ADMIN`, `TRADER`, `RISK_MANAGER`, `RESEARCHER`, `EXECUTIVE`, `VIEWER`,
+  `API_USER`) by `SqlAppRepository.seed_rbac_defaults()` on every boot (idempotent).
+- **`permissions`** — id, key (unique), description. Seeded with the full permission-key list
+  from `docs/access-model.md` §5.
+- **`role_permissions`** — id, role_id (FK), permission_id (FK). Each seeded role's default
+  grants; not yet read by any enforcement path (Milestone 4).
 
 ## 5. TimescaleDB Specifics
 
