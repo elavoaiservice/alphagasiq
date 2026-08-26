@@ -12,6 +12,13 @@ class BacktestingAgent(BaseAgent):
     Runs every implemented `ModelType` against the same price history and horizon so
     they can be compared on equal footing — "do NOT assume a deep learning model is
     superior" applies equally to assuming any model is superior without evidence.
+
+    `step_days=15` (rather than `walk_forward_evaluate`'s own finer-grained default)
+    is this agent's own choice: it runs automatically on every research cycle, across
+    all 8 implemented models, so it trades some fold count (and thus some backtest
+    confidence — already honestly reflected in `confidence = min(0.8, n_folds / 50)`
+    below) for keeping every automatic cycle fast. A deeper, slower analysis is still
+    available by calling `walk_forward_evaluate` directly with a smaller `step_days`.
     """
 
     agent_id = "quant.backtesting.v1"
@@ -26,7 +33,7 @@ class BacktestingAgent(BaseAgent):
         price_history: list[TimeSeriesObservation],
         horizon: ForecastHorizon = ForecastHorizon.SEVEN_DAY,
         train_window_days: int = 60,
-        step_days: int = 5,
+        step_days: int = 15,
     ) -> AgentOutcome:
         results = {}
         errors = []

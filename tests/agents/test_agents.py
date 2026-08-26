@@ -224,7 +224,16 @@ async def test_backtesting_agent_compares_implemented_models(price_history):
     agent = BacktestingAgent(llm=MockLLMProvider())
     result = await agent.run(instrument="NGQ26", price_history=price_history, horizon=ForecastHorizon.SEVEN_DAY)
     assert result.status == AgentStatus.SUCCESS
-    assert set(result.outputs["results_by_model"].keys()) == {"NAIVE_PERSISTENCE", "LINEAR_REGRESSION"}
+    assert set(result.outputs["results_by_model"].keys()) == {
+        "NAIVE_PERSISTENCE",
+        "LINEAR_REGRESSION",
+        "ARIMA",
+        "VAR",
+        "STATE_SPACE",
+        "RANDOM_FOREST",
+        "XGBOOST",
+        "LIGHTGBM",
+    }
     assert result.outputs["best_model"] in result.outputs["results_by_model"]
 
 

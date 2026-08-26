@@ -121,10 +121,10 @@ keeps local dev cheap while preserving the production interface.
 | Cache / pub-sub | Redis 7 |
 | Streaming | Kafka-compatible (Redpanda for dev), abstracted `EventBus` |
 | Orchestration | Temporal (durable workflows), abstracted behind `WorkflowEngine` for MVP |
-| Frontend | Next.js 14 (App Router), React 18, TypeScript, Tailwind CSS |
+| Frontend | Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS |
 | Charting | TradingView Lightweight Charts; Mapbox/deck.gl for the pipeline map |
 | AI | Anthropic Claude via `packages/agent-sdk/llm.py` `LLMProvider` interface |
-| ML | scikit-learn, XGBoost, LightGBM, statsmodels, PyTorch (interfaces only initially) |
+| ML | scikit-learn, XGBoost, LightGBM, statsmodels — all real and in use in `services/quant`; PyTorch (TFT/LSTM) is interface-only, not yet implemented |
 | Vector/search | pgvector |
 | Object storage | S3-compatible (`boto3`, MinIO in dev) |
 | Containerization | Docker / docker-compose (dev), designed for AWS (ECS/EKS) in prod |
@@ -219,10 +219,23 @@ Milestone 5 (quantitative platform) is also implemented at MVP depth:
 
 - **`services/quant`**: a point-in-time-correctness module (`pit.py` — the platform's most
   load-bearing anti-look-ahead-bias guarantee, since every forecast/backtest depends on it), a
-  `ForecastModel` interface with two real implementations (naive persistence, OLS linear trend)
-  and an honest `NotImplementedModel` stub for every other model type the brief names (ARIMA,
-  VAR, state-space, Random Forest, XGBoost, LightGBM, TFT, LSTM — `GET /quant/models` reports
-  which are real), a metrics module (MAE, RMSE, directional accuracy, hit rate, profit factor,
+  `ForecastModel` interface with eight real implementations — naive persistence, OLS linear
+  trend, ARIMA(2,1,0) (`statsmodels`, with a fallback order ladder for near-degenerate windows),
+  VAR (`statsmodels`, fit on a genuine 2-variable system derived from the series itself — price
+  level + first difference — so a model that is inherently multivariate still fits the same
+  univariate `fit(x, y)` interface every model is judged by, without giving it privileged access
+  to a second real-world series the pipeline doesn't otherwise feed into model fitting), a
+  state-space local-level Kalman filter model (`statsmodels.tsa.statespace.structural
+  .UnobservedComponents`), and Random Forest/XGBoost/LightGBM (`scikit-learn`/`xgboost`
+  /`lightgbm`, via a shared lag-feature-plus-recursive-forecast base class in
+  `models/tree_ensemble.py`) — plus an honest `NotImplementedModel` stub for the two model types
+  the brief names that remain unbuilt (Temporal Fusion Transformer, LSTM — `GET /quant/models`
+  reports which are real). Tree-model hyperparameters (`n_estimators`, `n_jobs=1`) and the
+  automatic research cycle's own walk-forward `step_days` are deliberately tuned for the
+  repeated-small-fit regime walk-forward backtesting runs in (dozens of folds, tens of rows per
+  fit) rather than a single large production fit — `n_jobs=-1` measured ~19s for one 37-fold
+  Random Forest backtest here purely from repeated multiprocess-pool startup overhead, vs. ~1s at
+  `n_jobs=1`. A metrics module (MAE, RMSE, directional accuracy, hit rate, profit factor,
   Sharpe, Sortino, max drawdown, Brier score), a multi-horizon forecast engine, a deterministic
   regime-detection engine (news/weather/storage-shock priority over a plain volatility read,
   matching the `Regime` enum), a relative-value engine (HH-TTF netback + M1-M2 calendar spread

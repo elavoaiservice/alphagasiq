@@ -8,33 +8,36 @@ from __future__ import annotations
 
 from schemas import ModelType
 
+from .arima import ARIMAModel
 from .base import ForecastModel, NotImplementedModel
 from .linear import LinearRegressionModel
 from .naive import NaivePersistenceModel
+from .state_space import StateSpaceModel
+from .tree_ensemble import LightGBMModel, RandomForestModel, XGBoostModel
+from .var import VARModel
 
-_UNIMPLEMENTED_TYPES = [
-    ModelType.ARIMA,
-    ModelType.VAR,
-    ModelType.STATE_SPACE,
-    ModelType.RANDOM_FOREST,
-    ModelType.XGBOOST,
-    ModelType.LIGHTGBM,
-    ModelType.TEMPORAL_FUSION_TRANSFORMER,
-    ModelType.LSTM,
-]
+_BUILDERS: dict[ModelType, type[ForecastModel]] = {
+    ModelType.NAIVE_PERSISTENCE: NaivePersistenceModel,
+    ModelType.LINEAR_REGRESSION: LinearRegressionModel,
+    ModelType.ARIMA: ARIMAModel,
+    ModelType.VAR: VARModel,
+    ModelType.STATE_SPACE: StateSpaceModel,
+    ModelType.RANDOM_FOREST: RandomForestModel,
+    ModelType.XGBOOST: XGBoostModel,
+    ModelType.LIGHTGBM: LightGBMModel,
+}
 
 
 def build_model(model_type: ModelType) -> ForecastModel:
     """Fresh, unfit model instance for the given type."""
-    if model_type == ModelType.NAIVE_PERSISTENCE:
-        return NaivePersistenceModel()
-    if model_type == ModelType.LINEAR_REGRESSION:
-        return LinearRegressionModel()
+    builder = _BUILDERS.get(model_type)
+    if builder is not None:
+        return builder()
     return NotImplementedModel(model_type)
 
 
 def implemented_model_types() -> list[ModelType]:
-    return [ModelType.NAIVE_PERSISTENCE, ModelType.LINEAR_REGRESSION]
+    return list(_BUILDERS.keys())
 
 
 def all_model_status() -> list[dict]:

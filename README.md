@@ -81,14 +81,14 @@ at MVP depth:
   Supply/Demand/Storage/Weather/Pipeline agents.
 - **5 (quantitative platform)**: `services/quant` — a point-in-time-correctness module
   (`pit.py`, guarding against the exact EIA-style reporting-lag look-ahead bug the brief calls
-  "critical"), two real forecasting models (naive persistence, OLS linear trend) plus an honest
-  `NotImplementedModel` stub for every other model type named (ARIMA/VAR/state-space/Random
-  Forest/XGBoost/LightGBM/TFT/LSTM — `GET /quant/models` shows which), the metrics module (MAE,
-  RMSE, directional accuracy, hit rate, profit factor, Sharpe, Sortino, max drawdown, Brier
-  score), a multi-horizon forecast engine, a deterministic regime-detection engine, a
-  relative-value engine (HH-TTF netback + calendar spread), and a walk-forward backtesting
-  engine — all wrapped by four Quantitative Team agents (Forecasting/Regime
-  Detection/Relative Value/Backtesting) and exposed via `/quant/*`.
+  "critical"), eight real forecasting models — naive persistence, OLS linear trend, ARIMA, VAR,
+  a state-space (Kalman filter) model, and Random Forest/XGBoost/LightGBM — plus an honest
+  `NotImplementedModel` stub for the two model types that remain unbuilt (TFT/LSTM —
+  `GET /quant/models` shows which), the metrics module (MAE, RMSE, directional accuracy, hit
+  rate, profit factor, Sharpe, Sortino, max drawdown, Brier score), a multi-horizon forecast
+  engine, a deterministic regime-detection engine, a relative-value engine (HH-TTF netback +
+  calendar spread), and a walk-forward backtesting engine — all wrapped by four Quantitative Team
+  agents (Forecasting/Regime Detection/Relative Value/Backtesting) and exposed via `/quant/*`.
 - **6-9**: a Directional Strategy Agent, the AI Investment Committee
   (Bull/Bear/Skeptic/Data Integrity/Portfolio), the deterministic Risk Governor, the
   paper-trading engine, and the AI Trader Chat.

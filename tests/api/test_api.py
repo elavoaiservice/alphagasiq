@@ -313,7 +313,16 @@ def test_full_lifecycle_execute_then_close_then_post_trade_and_performance(clien
     assert perf_body["classification"] == "SIMULATED"
 
     quant = perf_body["quant"]
-    assert set(quant["backtested"].keys()) == {"NAIVE_PERSISTENCE", "LINEAR_REGRESSION"}
+    assert set(quant["backtested"].keys()) == {
+        "NAIVE_PERSISTENCE",
+        "LINEAR_REGRESSION",
+        "ARIMA",
+        "VAR",
+        "STATE_SPACE",
+        "RANDOM_FOREST",
+        "XGBOOST",
+        "LIGHTGBM",
+    }
     assert quant["live"]["n_forecasts_resolved"] == 1
     assert quant["live"]["directional_accuracy"] in (0.0, 1.0)
     assert "LINEAR_REGRESSION" in quant["live"]["by_model"]
@@ -329,7 +338,16 @@ def test_model_performance_endpoint_empty_before_any_close(client):
     # Backtested model performance is computed at startup (independent of any closed
     # trade); only the "live" side is legitimately empty before anything has closed.
     quant = body["quant"]
-    assert set(quant["backtested"].keys()) == {"NAIVE_PERSISTENCE", "LINEAR_REGRESSION"}
+    assert set(quant["backtested"].keys()) == {
+        "NAIVE_PERSISTENCE",
+        "LINEAR_REGRESSION",
+        "ARIMA",
+        "VAR",
+        "STATE_SPACE",
+        "RANDOM_FOREST",
+        "XGBOOST",
+        "LIGHTGBM",
+    }
     assert quant["live"]["n_forecasts_resolved"] == 0
     assert quant["live"]["directional_accuracy"] is None
     assert quant["live"]["by_model"] == {}
@@ -371,7 +389,16 @@ def test_quant_backtest_endpoint(client):
     r = client.get("/api/v1/quant/backtest")
     assert r.status_code == 200
     body = r.json()
-    assert set(body["results_by_model"].keys()) == {"NAIVE_PERSISTENCE", "LINEAR_REGRESSION"}
+    assert set(body["results_by_model"].keys()) == {
+        "NAIVE_PERSISTENCE",
+        "LINEAR_REGRESSION",
+        "ARIMA",
+        "VAR",
+        "STATE_SPACE",
+        "RANDOM_FOREST",
+        "XGBOOST",
+        "LIGHTGBM",
+    }
 
 
 def test_quant_models_endpoint_lists_every_model_type_honestly(client):
@@ -380,8 +407,14 @@ def test_quant_models_endpoint_lists_every_model_type_honestly(client):
     statuses = {s["model_type"]: s["implemented"] for s in r.json()}
     assert statuses["NAIVE_PERSISTENCE"] is True
     assert statuses["LINEAR_REGRESSION"] is True
-    assert statuses["ARIMA"] is False
-    assert statuses["XGBOOST"] is False
+    assert statuses["ARIMA"] is True
+    assert statuses["VAR"] is True
+    assert statuses["STATE_SPACE"] is True
+    assert statuses["RANDOM_FOREST"] is True
+    assert statuses["XGBOOST"] is True
+    assert statuses["LIGHTGBM"] is True
+    assert statuses["TEMPORAL_FUSION_TRANSFORMER"] is False
+    assert statuses["LSTM"] is False
 
 
 def test_org_chart_includes_quantitative_team_as_implemented(client):

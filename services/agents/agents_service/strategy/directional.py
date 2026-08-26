@@ -29,9 +29,14 @@ class DirectionalStrategyAgent(BaseAgent):
         storage_signal = 0
         if storage_forecast.market_consensus_bcf is not None:
             surprise = storage_forecast.forecast_bcf - storage_forecast.market_consensus_bcf
-            if surprise < -2:
+            # Inclusive thresholds (matching quant_service.regime's >= convention): a
+            # surprise of exactly +/-2 Bcf is still a meaningful divergence from
+            # consensus and must not be silently dropped just because it lands
+            # exactly on the boundary — a strict "<"/">" here previously did exactly
+            # that on values naturally produced by the synthetic balance generator.
+            if surprise <= -2:
                 storage_signal = 1  # tighter than expected -> bullish
-            elif surprise > 2:
+            elif surprise >= 2:
                 storage_signal = -1  # looser than expected -> bearish
 
         weather_signal = 1 if weather_impact.price_direction == "BULLISH" else (
