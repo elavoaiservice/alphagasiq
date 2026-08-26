@@ -447,3 +447,25 @@ Several follow-up hardening items from the MVP status are now closed out:
   is expected/normal for this platform's intentionally-stubbed connectors (FERC, pipeline bulletin
   boards, licensed news, live CME/ICE). `GET /admin/overview`'s `data_feed_health`/
   `stale_data_feeds` fields, `null` since Milestone 6, are now computed from this real data.
+- **Access model, Milestone 8 (AI Agent Control Center)**: a new
+  `apps/api/api_app/routers/admin_agents.py`, gated by `admin.agent_management`, exposes
+  `GET /admin/agents(/{agent_type})`, `PATCH /admin/agents/{agent_type}`, and
+  `POST /admin/agents/{agent_type}/run` (spec §39). A new `apps/api/api_app/agent_catalog.py`
+  centralizes the org-chart data (`team`/`purpose`/`business_functions`/`implemented`/
+  `administrable`) that `routers/agents.py`'s pre-Milestone-8 org-chart endpoint previously
+  defined inline, so both endpoints share one definition. `GET /admin/agents` merges that catalog
+  with each implemented agent's live `model_provider`/`model` (read straight off its real `llm`
+  provider instance), real execution statistics computed from `AgentResult`s already in
+  `AppState.agent_execution_log`, and its admin-editable operational config (`AgentConfigRow`,
+  `packages/db` — status/thresholds/notes, seeded one row per implemented agent at boot). The
+  Risk Governor is included for visibility only (no `AgentConfigRow`, no admin actions — see
+  `docs/agent-governance.md` §1). `POST /admin/agents/CHIEF_TRADING_AGENT/run` reuses the exact
+  logic behind the pre-existing `POST /agents/chief-trading/run` (extracted to
+  `AppState.run_chief_trading_cycle()` so both routes share it) and now also refuses to run while
+  the agent's own status is `PAUSED`/`DISABLED`. Every other implemented seat is composed
+  *internally* by the Chief Trading/Investment Agent's own orchestration code with no independent
+  entry point today, so running one directly honestly 409s with an explanation rather than faking
+  a result — and setting such a sub-agent's status here is recorded/visible but does not yet gate
+  its execution inside that composed cycle, a documented, deliberately-scoped limitation (see
+  `docs/agent-governance.md` §3) consistent with how every prior milestone in this stream scoped
+  its enforcement rather than attempting a full retrofit in one pass.

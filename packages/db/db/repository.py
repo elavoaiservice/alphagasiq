@@ -17,6 +17,7 @@ from schemas import (
 
 from .engine import build_engine, build_sessionmaker
 from .models import (
+    AgentConfigRow,
     ApprovalRow,
     Base,
     ChatConversationRow,
@@ -399,6 +400,19 @@ def _data_feed_event_to_dict(row: DataFeedEventRow) -> dict:
         "records_received": row.records_received,
         "latency_ms": row.latency_ms,
         "occurred_at": row.occurred_at,
+    }
+
+
+def _agent_config_to_dict(row: AgentConfigRow) -> dict:
+    return {
+        "agent_type": row.agent_type,
+        "status": row.status,
+        "confidence_threshold": row.confidence_threshold,
+        "alert_threshold": row.alert_threshold,
+        "escalation_threshold": row.escalation_threshold,
+        "notes": row.notes,
+        "updated_by": row.updated_by,
+        "updated_at": row.updated_at,
     }
 
 
@@ -904,6 +918,49 @@ class SqlAppRepository:
                 .all()
             )
         return [_data_feed_event_to_dict(r) for r in rows]
+
+    # -- agent administration (spec §39) -------------------------------------------------
+
+    async def seed_agent_configs(self, agent_types: list[str]) -> None:
+        """Idempotent: seeds one default config row per currently-implemented,
+        administrable agent type. Safe to re-run on every boot without touching an
+        admin's prior edits to an existing row."""
+        async with self.session_factory() as session:
+            existing = set((await session.execute(select(AgentConfigRow.agent_type))).scalars().all())
+            for agent_type in agent_types:
+                if agent_type not in existing:
+                    session.add(AgentConfigRow(agent_type=agent_type))
+            await session.commit()
+
+    async def list_agent_configs(self) -> list[dict]:
+        async with self.session_factory() as session:
+            rows = (
+                (await session.execute(select(AgentConfigRow).order_by(AgentConfigRow.agent_type)))
+                .scalars()
+                .all()
+            )
+        return [_agent_config_to_dict(r) for r in rows]
+
+    async def get_agent_config(self, agent_type: str) -> dict | None:
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(select(AgentConfigRow).where(AgentConfigRow.agent_type == agent_type))
+            ).scalar_one_or_none()
+        return _agent_config_to_dict(row) if row is not None else None
+
+    async def update_agent_config(self, agent_type: str, **fields) -> dict | None:
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(select(AgentConfigRow).where(AgentConfigRow.agent_type == agent_type))
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            for field, value in fields.items():
+                setattr(row, field, value)
+            row.updated_at = datetime.utcnow()
+            await session.commit()
+            await session.refresh(row)
+        return _agent_config_to_dict(row)
 
     async def list_roles(self) -> list[dict]:
         async with self.session_factory() as session:

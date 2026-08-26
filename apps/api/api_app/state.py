@@ -71,6 +71,7 @@ from schemas import (
     TradeIdea,
 )
 
+from . import agent_catalog
 from .models import Approval, ApprovalActionRecord, ApprovalState, ChatSession
 
 DEFAULT_INSTRUMENT_FALLBACK = "NG-M1"
@@ -160,6 +161,9 @@ class AppState:
             await self.repo.seed_feature_defaults()
             await self.repo.seed_system_settings_defaults()
             await self.repo.seed_data_feed_configs([p.provider_id for p in self.providers.all()])
+            await self.repo.seed_agent_configs(
+                [t for t in agent_catalog.IMPLEMENTED_AGENT_TYPES if t != "RISK_GOVERNOR"]
+            )
             await self._hydrate_from_repo()
             await self._seed_market_and_fundamentals()
             await self._run_initial_research_cycle()
@@ -387,6 +391,41 @@ class AppState:
             self.latest_backtests = {
                 name: BacktestResult.model_validate(payload) for name, payload in results_by_model.items()
             }
+
+    async def run_chief_trading_cycle(self) -> dict:
+        """The Chief Trading Agent's on-demand research cycle -- the logic behind both
+        `POST /agents/chief-trading/run` and (Milestone 8) `POST /admin/agents/
+        CHIEF_TRADING_AGENT/run`. Deliberately lighter than boot's
+        `_run_initial_research_cycle` (no pipeline/quant re-run) since this is a manual,
+        on-demand trigger of just the fundamentals -> strategy -> committee pipeline."""
+        current_price = self.market_curve[0].value if self.market_curve else 3.0
+        week_balance = sum(b.balance_bcf for b in self.balances[-7:])
+        result = await self.chief_trading_agent.run_research_cycle(
+            instrument=self.primary_instrument(),
+            current_price=current_price,
+            balances=self.balances,
+            five_year_average_bcf=self.storage_baseline["five_year_average_bcf"],
+            last_year_bcf=self.storage_baseline["year_ago_inventory_bcf"],
+            as_of=date.today(),
+            weather_kwargs=dict(
+                model="GFS", run="latest", comparison_run="previous", hdd_run=2.8, hdd_comparison=2.2, cdd_run=4.0, cdd_comparison=4.5
+            ),
+            market_consensus_bcf=round(week_balance) + 3,
+        )
+        for res in (result.supply, result.demand, result.storage, result.weather, result.strategy, result.chief):
+            if res is not None:
+                self.agent_execution_log.append(res)
+
+        new_approvals = []
+        for trade in result.trade_ideas:
+            approval = await self.submit_trade_idea(trade)
+            new_approvals.append(approval)
+
+        return {
+            "trade_ideas_generated": len(result.trade_ideas),
+            "new_approval_ids": [a.id for a in new_approvals],
+            "chief_summary": result.chief.reasoning_summary if result.chief else None,
+        }
 
     async def submit_trade_idea(self, trade: TradeIdea) -> Approval:
         self.trade_ideas[trade.trade_id] = trade

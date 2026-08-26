@@ -72,6 +72,15 @@ create a `User` or `Organization` — see `docs/access-model.md` "No Self-Regist
 | GET | `/admin/data-feeds/{provider_id}/events` | requires `admin.data_feeds`. Ingestion log (spec §35 "Errors"/"Records Received"), newest first |
 | GET | `/admin/data-feeds/dependency-map` | requires `admin.data_feeds`. The full static provider → agent → business-function dependency map (spec §37), built from `docs/agents.md` §2's real org chart |
 
+## Admin: AI Agent Control Center (Milestone 8, spec §39)
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/admin/agents` | requires `admin.agent_management`. Every `AgentType` seat merged with its catalog entry (team/purpose/business functions/`implemented`/`administrable`), live model/version info where a real instance exists, real execution statistics from `agent_execution_log`, and its admin config (status/thresholds/notes) where one exists |
+| GET | `/admin/agents/{agent_type}` | requires `admin.agent_management`. Single-agent version of the above, plus the last 20 raw executions and any recent errors |
+| PATCH | `/admin/agents/{agent_type}` | requires `admin.agent_management`. Updates status (`ACTIVE`/`PAUSED`/`DISABLED`/`TESTING`) and confidence/alert/escalation thresholds/notes. 400 for the Risk Governor (visibility only, see `docs/agent-governance.md` §1) or an unimplemented seat; 404 for an unknown `agent_type` |
+| POST | `/admin/agents/{agent_type}/run` | requires `admin.agent_management`. Only `CHIEF_TRADING_AGENT` is independently triggerable (409 for every other seat, which executes only as part of its composed research cycle — see `docs/agent-governance.md` §3); refuses with 409 if the Chief Trading Agent's own status is `PAUSED`/`DISABLED` |
+
 ## System / Observability
 
 | Method | Path | Notes |

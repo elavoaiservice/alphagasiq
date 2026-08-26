@@ -263,6 +263,20 @@ touches the database. Test-connection and manual-refresh actions call the provid
 intentionally still stubs. `GET /admin/overview`'s data-feed-health fields, `null` since Milestone
 6, are now computed from this real data.
 
+**There's now an AI Agent Control Center.** Milestone 8 adds `GET /admin/agents(/{agent_type})`,
+`PATCH /admin/agents/{agent_type}`, and `POST /admin/agents/{agent_type}/run`
+(`admin_agents.py`, gated by `admin.agent_management`) — an admin-only view of every seat in the
+platform's real multi-agent org chart (`agent_catalog.py`, centralizing what `routers/agents.py`'s
+org-chart endpoint used to define inline), merged with each implemented agent's live model/version
+info, real execution statistics from `agent_execution_log`, and an admin-editable operational
+config (status/thresholds/notes, `AgentConfigRow`). The Risk Governor appears for visibility only,
+with no admin actions. `POST .../CHIEF_TRADING_AGENT/run` reuses the exact logic behind the
+pre-existing manual-trigger endpoint and now refuses to run while paused/disabled; every other
+implemented agent is composed internally by the Chief Trading/Investment Agent's own code with no
+independent entry point, so running one directly honestly 409s rather than faking a result — and,
+stated plainly rather than hidden, pausing such a sub-agent is recorded/visible but doesn't yet
+gate its execution inside that composed cycle (see `docs/agent-governance.md` §3).
+
 **The pipeline digital twin can now be backed by a real Neo4j instance.**
 `fundamentals_service/pipeline_graph_neo4j.py` seeds the same `PipelineGraph`
 `build_default_pipeline_graph()` already builds into Neo4j via Cypher `MERGE`, then reloads it —

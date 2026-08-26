@@ -764,3 +764,34 @@ async def test_record_and_list_data_feed_events(repo):
     assert events[0]["event_type"] == "manual_refresh"  # newest first
 
     assert await repo.list_data_feed_events("no-such-provider") == []
+
+
+async def test_seed_list_get_update_agent_configs(repo):
+    await repo.seed_agent_configs(["CHIEF_TRADING_AGENT", "SUPPLY"])
+    configs = await repo.list_agent_configs()
+    assert {c["agent_type"] for c in configs} == {"CHIEF_TRADING_AGENT", "SUPPLY"}
+    for c in configs:
+        assert c["status"] == "ACTIVE"
+
+    chief = await repo.get_agent_config("CHIEF_TRADING_AGENT")
+    assert chief["agent_type"] == "CHIEF_TRADING_AGENT"
+    assert await repo.get_agent_config("NOT_A_REAL_AGENT") is None
+
+    updated = await repo.update_agent_config(
+        "SUPPLY", status="PAUSED", confidence_threshold=0.6, notes="paused for review", updated_by="u-admin-1"
+    )
+    assert updated["status"] == "PAUSED"
+    assert updated["confidence_threshold"] == 0.6
+    assert updated["notes"] == "paused for review"
+    assert updated["updated_by"] == "u-admin-1"
+
+    assert await repo.update_agent_config("NOT_A_REAL_AGENT", status="PAUSED") is None
+
+
+async def test_seed_agent_configs_is_idempotent(repo):
+    await repo.seed_agent_configs(["SUPPLY"])
+    await repo.update_agent_config("SUPPLY", notes="do not revert me")
+    await repo.seed_agent_configs(["SUPPLY", "DEMAND"])  # re-run with an added agent
+
+    assert (await repo.get_agent_config("SUPPLY"))["notes"] == "do not revert me"
+    assert await repo.get_agent_config("DEMAND") is not None

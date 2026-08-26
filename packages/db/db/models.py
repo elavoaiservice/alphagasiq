@@ -436,6 +436,26 @@ class DataFeedEventRow(Base):
     occurred_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
 
 
+class AgentConfigRow(Base):
+    """Admin-editable operational state for one implemented, LLM-driven agent seat
+    (spec §39, `docs/agent-governance.md` §2-3) -- enable/pause/disable and the
+    confidence/alert/escalation thresholds an administrator can tune. Seeded one row
+    per currently-implemented `AgentType` (`apps/api/api_app/agent_catalog.py`), minus
+    `RISK_GOVERNOR`, which has no admin-settable state here (see that module's
+    `administrable` flag and `docs/agent-governance.md` §1)."""
+
+    __tablename__ = "agent_configs"
+
+    agent_type: Mapped[str] = mapped_column(String, primary_key=True)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="ACTIVE")
+    confidence_threshold: Mapped[float | None] = mapped_column(Float, nullable=True)
+    alert_threshold: Mapped[float | None] = mapped_column(Float, nullable=True)
+    escalation_threshold: Mapped[float | None] = mapped_column(Float, nullable=True)
+    notes: Mapped[str | None] = mapped_column(String, nullable=True)
+    updated_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
 class RiskLimitsRow(Base):
     __tablename__ = "risk_limits"
 

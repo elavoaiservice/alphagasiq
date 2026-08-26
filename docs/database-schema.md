@@ -203,6 +203,12 @@ No column for chain-of-thought. `reasoning_summary` is a concise, human-auditabl
   (`test_connection`/`manual_refresh`), status (`success`/`error`), detail, records_received,
   latency_ms, occurred_at — an append-only ingestion log, one row per admin-triggered
   test-connection or manual-refresh action.
+- **`agent_configs`** (Milestone 8, spec §39) — admin-editable operational state for one
+  implemented agent seat. agent_type (primary key, an `AgentType` value), status
+  (`ACTIVE`/`PAUSED`/`DISABLED`/`TESTING`), confidence_threshold, alert_threshold,
+  escalation_threshold, notes, updated_by, updated_at. Seeded one row per currently-implemented,
+  administrable agent type at boot (idempotent — admin edits are never overwritten); the Risk
+  Governor deliberately has no row here (see `docs/agent-governance.md` §1).
 
 ## 5. TimescaleDB Specifics
 

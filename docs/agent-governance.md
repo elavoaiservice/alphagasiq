@@ -1,11 +1,11 @@
 # Agent Governance — Control Center, Versioning, Optimization & the Risk Governor Boundary
 
-> Status: design-only (target architecture). Nothing in this document is built yet — every
-> agent today is a plain Python class (`services/agents`) with a hardcoded `version` string, no
-> admin UI, and no versioning/evaluation/approval pipeline. This doc exists now (per the
-> platform's access-model specification) so the design is reviewable as a whole; it is built out
-> in Milestones 8-10, in the same reviewed/tested/committed cadence as every other milestone in
-> this codebase. Nothing here changes how `services/agents` executes today.
+> Status: Milestone 8 (§§2-3) is built; §§4-8 remain design-only (target architecture), built out
+> in Milestones 9-10 in the same reviewed/tested/committed cadence as every other milestone in
+> this codebase. Every agent is still a plain Python class (`services/agents`) with a hardcoded
+> `version` string — Milestone 8 adds an admin-only *view and operational control* of those
+> classes (enable/disable/pause/resume, thresholds, manual run), not a versioning/evaluation/
+> approval pipeline; nothing in Milestone 8 changes how `services/agents` executes today.
 
 ## 1. The one non-negotiable boundary: the Risk Governor
 
@@ -29,8 +29,11 @@ Control Center or the agent-optimization workflow described below.**
 
 ## 2. AI Agent Control Center
 
-An admin-only view of every agent, grouped by business team exactly as the platform's
-multi-agent org chart is already organized (`docs/agents.md`):
+**Implemented now** (`GET /admin/agents(/{agent_type})`, gated by `admin.agent_management`,
+`apps/api/api_app/routers/admin_agents.py`): an admin-only view of every seat in `AgentType`
+(`packages/schemas`), grouped by business team exactly as the platform's multi-agent org chart is
+already organized (`docs/agents.md`, centralized as the single-source-of-truth catalog in
+`apps/api/api_app/agent_catalog.py`):
 
 - **Leadership** — Chief Trading Agent, Chief Investment Agent
 - **Fundamental Research** — Supply, Demand, Weather, Storage, Pipeline, LNG, Power
@@ -42,25 +45,49 @@ multi-agent org chart is already organized (`docs/agents.md`):
 - **Risk** — Market Risk, Portfolio Risk, Liquidity Risk, Data Risk, Model Risk, **Risk Governor**
   (displayed for visibility only — see §1)
 
-Each agent's detail page shows: name, agent ID, purpose, business function, status, current
-version, model provider/model/prompt version, assigned tools/data sources, execution frequency,
-last/next execution, average latency, success/error rate, confidence history, forecast accuracy
-where relevant, performance score, recent decisions, dependent/downstream agents and business
-functions, recent errors, token/inference usage, and estimated operating cost.
+Each entry reports: agent type, team, one-line purpose, business function(s), an honest
+`implemented` flag (docs/agents.md §4's roster — not every seat has a real class yet), and (only
+for implemented seats) `agent_id`, `version`, `model_provider`/`model` (read from the agent's real
+`llm` provider instance — e.g. `AnthropicLLMProvider`/`claude-...` once `ANTHROPIC_API_KEY` is
+configured, `MockLLMProvider`/`mock-llm-deterministic` otherwise), execution statistics computed
+from real `AgentResult`s in `AppState.agent_execution_log` (total executions, last execution
+time/status, average latency, success/error rate), and the admin-editable operational fields
+below. The single-agent detail endpoint adds the last 20 raw executions and any recent errors.
+Fields the spec calls for that nothing yet computes (confidence history, forecast accuracy,
+performance score, token/inference usage, estimated operating cost) are simply not returned —
+this platform's honest-stub convention, not a fabricated number.
 
-Agent status values: `ACTIVE`, `PAUSED`, `DISABLED`, `DEGRADED`, `TESTING`, `FAILED`.
+Agent status values today: `ACTIVE`, `PAUSED`, `DISABLED`, `TESTING` (admin-settable). `DEGRADED`/
+`FAILED` are computed states the spec anticipates for a future health-monitoring pass — not yet
+derived here, since deriving them honestly needs the health/alerting infrastructure Milestone 10
+builds.
 
 ## 3. Agent administration
 
-Authorized administrators (permission: `admin.agent_management`) may: enable/disable/pause/resume
-an agent, change its schedule, change its approved model assignment or model configuration, edit
-its approved instructions, assign data sources/tools, change confidence/alert/escalation
-thresholds, run it manually, test it in a sandbox, compare versions, promote or roll back a
-version, and view its execution history/outputs/citations/errors/dependencies.
+**Implemented now**: authorized administrators (permission: `admin.agent_management`) may
+enable/disable/pause/resume an implemented agent and set its confidence/alert/escalation
+thresholds and notes (`PATCH /admin/agents/{agent_type}`), and run the Chief Trading Agent
+manually (`POST /admin/agents/CHIEF_TRADING_AGENT/run` — the same on-demand research cycle
+`POST /agents/chief-trading/run` already exposed, now also reachable through the admin surface
+and refusing to run while the agent's own status is `PAUSED`/`DISABLED`).
 
-**Direct untested production replacement is never permitted.** Every change to an agent's
-instructions, model, or configuration goes through the versioning flow in §4 — there is no "edit
-in place" path to a running production agent.
+**Honest limitation, stated plainly rather than hidden:** every other implemented seat (Supply,
+Demand, Storage, Weather, Directional Strategy, the five Investment Committee agents, the four
+Quantitative Team agents, Pipeline, Chief Investment Agent) is composed *internally* by the Chief
+Trading Agent's or Chief Investment Agent's own orchestration code (`services/agents`) — there is
+no independent entry point to run one in isolation today, so `POST /admin/agents/{agent_type}/run`
+for any of them returns 409 with an explanation rather than faking a run. Likewise, setting a
+sub-agent's status to `PAUSED`/`DISABLED` here is recorded and visible in the Control Center, but
+does not yet gate that sub-agent's execution inside the composed cycle — wiring per-sub-agent
+skip logic into `services/agents`' internal composition is real follow-up work, scoped out of this
+milestone the same way every prior milestone in this stream scoped its enforcement to a slice
+(e.g. Milestone 5's `require_feature` covering only `portfolio_analytics`/`risk_analytics`) rather
+than a full retrofit. The Risk Governor has no admin actions here at all — see §1.
+
+**Direct untested production replacement is never permitted.** Nothing in §2-3 lets an
+administrator edit an agent's instructions, model, or configuration in place — that flow (draft ->
+test -> evaluate -> approve -> publish -> rollback) is Milestone 9's versioning system (§4 below),
+not this one.
 
 ## 4. Agent versioning
 
