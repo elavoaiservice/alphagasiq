@@ -42,13 +42,13 @@ disabled (falling back to their mock) when credentials are absent.
 
 | Domain | Provider | Classification | MVP Status |
 |---|---|---|---|
-| Fundamentals | EIA API (Natural Gas Weekly/Monthly, Storage) | PUBLIC | **Implemented** (`services/data/app/providers/eia.py`) |
-| Weather | NOAA / National Weather Service API | PUBLIC | **Implemented** (`services/data/app/providers/noaa.py`) |
-| Regulatory | FERC public data (eLibrary/eTariff indices) | PUBLIC | Interface defined, connector stub |
-| Pipeline ops | Public pipeline bulletin-board / operational feeds (where legally accessible) | PUBLIC | Interface defined, connector stub |
-| Power | ISO/RTO public feeds (e.g. EIA-930-derived, ISO public dashboards) | PUBLIC | Interface defined, connector stub |
-| Corporate | SEC EDGAR full-text search / filings API | PUBLIC | Interface defined, connector stub |
-| News | RSS/Atom feeds | PUBLIC | **Implemented** (`services/data/app/providers/rss_news.py`) + `MockNewsProvider` |
+| Fundamentals | EIA API (Natural Gas Weekly/Monthly, Storage) | PUBLIC | **Implemented** (`services/data/data_service/providers/eia.py`) |
+| Weather | NOAA / National Weather Service API | PUBLIC | **Implemented** (`services/data/data_service/providers/noaa.py`) |
+| Regulatory | FERC public data (eLibrary/eTariff indices) | PUBLIC | Interface defined, connector stub — no single stable public JSON API to build a real connector against with confidence (eLibrary is a document-search portal, not a queryable API); see `providers/stubs.py` |
+| Pipeline ops | Public pipeline bulletin-board / operational feeds (where legally accessible) | PUBLIC | Interface defined, connector stub — no common schema across pipeline operators' bespoke EBB sites |
+| Power | ISO/RTO public feeds (EIA-930-derived hourly generation-by-fuel for PJM/CAISO/ERCOT/MISO/SPP) | PUBLIC | **Implemented** (`services/data/data_service/providers/iso_rto.py`, `ISORTOProvider`) — reuses the EIA v2 API's proven auth/request shape rather than each ISO's own bespoke market-data API |
+| Corporate | SEC EDGAR company-filings API (recent 8-K/10-K/10-Q for tracked natural-gas-relevant companies) | PUBLIC | **Implemented** (`services/data/data_service/providers/sec_edgar.py`, `SECEdgarProvider`) — no API key required, only a descriptive `User-Agent`/contact per SEC's fair-access policy |
+| News | RSS/Atom feeds | PUBLIC | **Implemented** (`services/data/data_service/providers/rss_news.py`) + `MockNewsProvider` |
 | News | Licensed commercial news providers | LICENSED | Adapter interface + `MockLicensedNewsProvider` |
 | Market data | CME (properly entitled API) | LICENSED | Adapter interface + `MockCMEProvider` (**implemented**, default in dev) |
 | Market data | ICE (properly licensed API, where available) | LICENSED | Adapter interface + `MockICEProvider` |

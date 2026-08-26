@@ -55,6 +55,10 @@ class Settings(BaseSettings):
     cme_api_id: str | None = None
     cme_api_secret: str | None = None
     news_provider_api_key: str | None = None
+    # SEC EDGAR requires no API key, only a descriptive contact per its fair-access
+    # policy (https://www.sec.gov/os/webmaster-faq#developers) — unlike every other
+    # *_api_key setting here, leaving this unset does not disable the connector.
+    sec_edgar_contact_email: str | None = None
 
     s3_endpoint_url: str | None = None
     s3_bucket: str = "alphagasiq-dev"

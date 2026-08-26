@@ -277,7 +277,7 @@ Milestone 5 (quantitative platform) is also implemented at MVP depth:
 - See "Quant/post-trade unification" above for how post-trade scoring and model-performance
   aggregation now draw on this framework rather than living as disconnected heuristics.
 
-Three follow-up hardening items from the MVP status are now closed out:
+Several follow-up hardening items from the MVP status are now closed out:
 
 - **Persistence**: `AppState` (`apps/api/api_app/state.py`) is no longer purely in-memory. A new
   `packages/db` package (`db/models.py`, `db/engine.py`, `db/repository.py`) adds an async
@@ -318,3 +318,16 @@ Three follow-up hardening items from the MVP status are now closed out:
   full mocked-IdP round trip (real PKCE verifier/challenge matching, real RS256 signature
   verification via a test keypair, and negative tests proving a nonce mismatch or wrong signing
   key is rejected).
+- **Data connectors: ISO/RTO and SEC EDGAR are now real**: `services/data/data_service/
+  providers/iso_rto.py` (`ISORTOProvider`) pulls EIA-930 hourly natural-gas-fueled generation for
+  PJM/CAISO/ERCOT/MISO/SPP via EIA's own v2 API (reusing the exact auth/request shape
+  `EIAProvider` already proves correct, rather than each ISO's own bespoke market-data API);
+  `providers/sec_edgar.py` (`SECEdgarProvider`) pulls recent 8-K/10-K/10-Q filings for a tracked
+  list of natural-gas-relevant public companies from SEC EDGAR's `submissions` API — genuinely
+  free, no API key, just a descriptive contact per SEC's fair-access policy
+  (`SEC_EDGAR_CONTACT_EMAIL`). `FERC_PUBLIC` and `PIPELINE_BULLETIN_BOARD` deliberately remain
+  `NotImplementedProvider` stubs: neither FERC eLibrary nor per-pipeline electronic bulletin
+  boards expose a single stable, well-documented public JSON API the way EIA/NOAA/SEC EDGAR do,
+  and this sandboxed environment's egress policy also blocks reaching any of these hosts directly
+  to verify request shapes live — an honest `not_configured` stub beats a plausible-looking but
+  unverified connector. See `tests/data/test_providers.py` for the new connectors' tests.

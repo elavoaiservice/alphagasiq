@@ -159,6 +159,16 @@ daemon), so `RedpandaEventBus` is tested against faithful `aiokafka` test double
 (`tests/eventbus/test_kafka_eventbus.py`) rather than a live one — everything on this side of
 that network boundary is real, unmocked code.
 
+**ISO/RTO and SEC EDGAR are now real data connectors, not stubs.** `ISORTOProvider`
+(`services/data/data_service/providers/iso_rto.py`) pulls EIA-930 hourly natural-gas-fueled
+generation for PJM/CAISO/ERCOT/MISO/SPP through EIA's own v2 API (same proven auth/request shape
+as the existing `EIAProvider`); `SECEdgarProvider` (`providers/sec_edgar.py`) pulls recent
+8-K/10-K/10-Q filings for tracked natural-gas-relevant public companies from SEC EDGAR — no API
+key needed, just a contact email per SEC's fair-access policy (`SEC_EDGAR_CONTACT_EMAIL`). FERC
+and pipeline-bulletin-board connectors deliberately stay honest `not_configured` stubs — neither
+has a single stable public JSON API to build against with confidence, and this sandbox's egress
+policy blocks verifying request shapes live against any of these hosts anyway.
+
 **The pipeline digital twin can now be backed by a real Neo4j instance.**
 `fundamentals_service/pipeline_graph_neo4j.py` seeds the same `PipelineGraph`
 `build_default_pipeline_graph()` already builds into Neo4j via Cypher `MERGE`, then reloads it —
