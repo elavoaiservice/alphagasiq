@@ -873,3 +873,78 @@ async def test_production_version_can_be_rolled_back(repo):
     v = await repo.transition_agent_version_status(v["id"], "ROLLED_BACK")
     assert v["status"] == "ROLLED_BACK"
     assert await repo.get_production_agent_version("SUPPLY") is None
+
+
+async def test_create_list_get_update_model_definitions(repo):
+    created = await repo.create_model_definition(
+        provider="AnthropicLLMProvider", model_name="claude-test", purpose="Testing"
+    )
+    assert created["status"] == "AVAILABLE"
+
+    models = await repo.list_model_definitions()
+    assert len(models) == 1
+
+    fetched = await repo.get_model_definition(created["id"])
+    assert fetched["model_name"] == "claude-test"
+    assert await repo.get_model_definition("no-such-model") is None
+
+    updated = await repo.update_model_definition_status(created["id"], "APPROVED", actor="u-admin-1")
+    assert updated["status"] == "APPROVED"
+    assert updated["updated_by"] == "u-admin-1"
+    assert updated["approved_at"] is not None
+
+    assert await repo.update_model_definition_status("no-such-model", "APPROVED") is None
+
+
+async def test_seed_model_definitions_is_idempotent_and_approved(repo):
+    await repo.seed_model_definitions([{"provider": "MockLLMProvider", "model_name": "mock-llm-deterministic"}])
+    models = await repo.list_model_definitions()
+    assert len(models) == 1
+    assert models[0]["status"] == "APPROVED"
+
+    await repo.update_model_definition_status(models[0]["id"], "DEPRECATED")
+    await repo.seed_model_definitions([{"provider": "MockLLMProvider", "model_name": "mock-llm-deterministic"}])
+    assert (await repo.list_model_definitions())[0]["status"] == "DEPRECATED"  # not reverted
+
+
+async def test_agent_version_cannot_be_approved_with_an_unapproved_model(repo):
+    v = await repo.create_agent_version(agent_type="SUPPLY", version="1.0.0", model_name="not-a-real-model")
+    v = await repo.transition_agent_version_status(v["id"], "TESTING")
+
+    with pytest.raises(ValueError):
+        await repo.transition_agent_version_status(v["id"], "APPROVED")
+
+    await repo.create_model_definition(provider="AnthropicLLMProvider", model_name="not-a-real-model")
+    with pytest.raises(ValueError):
+        await repo.transition_agent_version_status(v["id"], "APPROVED")  # exists but not APPROVED yet
+
+    models = await repo.list_model_definitions()
+    await repo.update_model_definition_status(models[0]["id"], "APPROVED")
+    v = await repo.transition_agent_version_status(v["id"], "APPROVED")
+    assert v["status"] == "APPROVED"
+
+
+async def test_record_and_list_audit_events(repo):
+    await repo.record_audit_event(
+        actor_user_id="u-admin-1",
+        action="agent.status_change",
+        resource_type="agent",
+        resource_id="SUPPLY",
+        before={"status": "ACTIVE"},
+        after={"status": "PAUSED"},
+    )
+    await repo.record_audit_event(
+        actor_user_id="u-admin-1",
+        action="risk_settings.update",
+        resource_type="risk_limits",
+        resource_id="global",
+        reason="Tightening limits ahead of earnings season",
+    )
+
+    all_events = await repo.list_audit_events()
+    assert len(all_events) == 2
+    assert all_events[0]["action"] == "risk_settings.update"  # newest first
+
+    agent_events = await repo.list_audit_events(resource_type="agent")
+    assert len(agent_events) == 1
+    assert agent_events[0]["resource_id"] == "SUPPLY"

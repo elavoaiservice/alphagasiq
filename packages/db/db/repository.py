@@ -20,6 +20,7 @@ from .models import (
     AgentConfigRow,
     AgentVersionRow,
     ApprovalRow,
+    AuditEventRow,
     Base,
     ChatConversationRow,
     ChatMessageRow,
@@ -30,6 +31,7 @@ from .models import (
     DecisionJournalRow,
     FeatureRow,
     MagicLinkTokenRow,
+    ModelDefinitionRow,
     OrganizationFeatureEntitlementRow,
     OrganizationRow,
     PermissionRow,
@@ -450,6 +452,40 @@ def _agent_version_to_dict(row: AgentVersionRow) -> dict:
         "approved_at": row.approved_at,
         "deployment_timestamp": row.deployment_timestamp,
         "notes": row.notes,
+    }
+
+
+def _model_definition_to_dict(row: ModelDefinitionRow) -> dict:
+    return {
+        "id": row.id,
+        "provider": row.provider,
+        "model_name": row.model_name,
+        "version": row.version,
+        "purpose": row.purpose,
+        "approved_agent_types": row.approved_agent_types,
+        "status": row.status,
+        "context_window": row.context_window,
+        "cost_per_1k_input_tokens": row.cost_per_1k_input_tokens,
+        "cost_per_1k_output_tokens": row.cost_per_1k_output_tokens,
+        "notes": row.notes,
+        "created_at": row.created_at,
+        "updated_by": row.updated_by,
+        "updated_at": row.updated_at,
+        "approved_at": row.approved_at,
+    }
+
+
+def _audit_event_to_dict(row: AuditEventRow) -> dict:
+    return {
+        "id": row.id,
+        "actor_user_id": row.actor_user_id,
+        "action": row.action,
+        "resource_type": row.resource_type,
+        "resource_id": row.resource_id,
+        "before": row.before,
+        "after": row.after,
+        "reason": row.reason,
+        "occurred_at": row.occurred_at,
     }
 
 
@@ -1081,7 +1117,10 @@ class SqlAppRepository:
         """Enforces the fixed DRAFT -> TESTING -> APPROVED -> PRODUCTION -> (RETIRED |
         ROLLED_BACK) lifecycle (spec §41) -- raises `ValueError` on an illegal jump so
         no step can be skipped. Promoting to `PRODUCTION` automatically retires the
-        agent_type's prior `PRODUCTION` row, if any, so at most one exists at a time."""
+        agent_type's prior `PRODUCTION` row, if any, so at most one exists at a time.
+        Also enforces spec §43's "an agent may never be configured to use a model that
+        isn't APPROVED": reaching `APPROVED` or `PRODUCTION` with a `model_name` set
+        requires a matching `ModelDefinitionRow` with `status == "APPROVED"`."""
         async with self.session_factory() as session:
             row = (
                 await session.execute(select(AgentVersionRow).where(AgentVersionRow.id == version_id))
@@ -1091,6 +1130,17 @@ class SqlAppRepository:
             legal = _AGENT_VERSION_TRANSITIONS.get(row.status, set())
             if new_status not in legal:
                 raise ValueError(f"Illegal agent version transition: {row.status} -> {new_status}")
+            if new_status in ("APPROVED", "PRODUCTION") and row.model_name is not None:
+                model = (
+                    await session.execute(
+                        select(ModelDefinitionRow).where(ModelDefinitionRow.model_name == row.model_name)
+                    )
+                ).scalar_one_or_none()
+                if model is None or model.status != "APPROVED":
+                    raise ValueError(
+                        f"Model '{row.model_name}' is not an APPROVED model definition -- an agent "
+                        "version may never be configured to use a model that isn't approved."
+                    )
             if new_status == "PRODUCTION":
                 prior_production = (
                     (
@@ -1116,6 +1166,132 @@ class SqlAppRepository:
             await session.commit()
             await session.refresh(row)
         return _agent_version_to_dict(row)
+
+    # -- model management (spec §43) -----------------------------------------------------
+
+    async def seed_model_definitions(self, models: list[dict]) -> None:
+        """Idempotent: seeds one `AVAILABLE`-then-`APPROVED` row per given
+        `{provider, model_name}` pair that doesn't already exist, so the models this
+        platform's agents are actually configured with always have a real, approved
+        definition to point at (never fabricated after the fact)."""
+        async with self.session_factory() as session:
+            existing = set((await session.execute(select(ModelDefinitionRow.model_name))).scalars().all())
+            for model in models:
+                if model["model_name"] not in existing:
+                    session.add(
+                        ModelDefinitionRow(
+                            provider=model["provider"],
+                            model_name=model["model_name"],
+                            status="APPROVED",
+                            purpose=model.get("purpose"),
+                            approved_at=datetime.utcnow(),
+                        )
+                    )
+            await session.commit()
+
+    async def create_model_definition(
+        self,
+        *,
+        provider: str,
+        model_name: str,
+        version: str | None = None,
+        purpose: str | None = None,
+        context_window: int | None = None,
+        cost_per_1k_input_tokens: float | None = None,
+        cost_per_1k_output_tokens: float | None = None,
+        notes: str | None = None,
+    ) -> dict:
+        row = ModelDefinitionRow(
+            provider=provider,
+            model_name=model_name,
+            version=version,
+            purpose=purpose,
+            context_window=context_window,
+            cost_per_1k_input_tokens=cost_per_1k_input_tokens,
+            cost_per_1k_output_tokens=cost_per_1k_output_tokens,
+            notes=notes,
+        )
+        async with self.session_factory() as session:
+            session.add(row)
+            await session.commit()
+            await session.refresh(row)
+        return _model_definition_to_dict(row)
+
+    async def list_model_definitions(self) -> list[dict]:
+        async with self.session_factory() as session:
+            rows = (
+                (await session.execute(select(ModelDefinitionRow).order_by(ModelDefinitionRow.created_at)))
+                .scalars()
+                .all()
+            )
+        return [_model_definition_to_dict(r) for r in rows]
+
+    async def get_model_definition(self, model_id: str) -> dict | None:
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(select(ModelDefinitionRow).where(ModelDefinitionRow.id == model_id))
+            ).scalar_one_or_none()
+        return _model_definition_to_dict(row) if row is not None else None
+
+    async def update_model_definition_status(
+        self, model_id: str, new_status: str, *, actor: str | None = None
+    ) -> dict | None:
+        """Status is a plain admin-editable field (not a strict lifecycle like agent
+        versions) since spec §43 lists `AVAILABLE`/`TESTING`/`APPROVED`/`DEPRECATED`/
+        `DISABLED` as states an admin moves between directly as evaluation progresses."""
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(select(ModelDefinitionRow).where(ModelDefinitionRow.id == model_id))
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            row.status = new_status
+            row.updated_by = actor
+            row.updated_at = datetime.utcnow()
+            if new_status == "APPROVED":
+                row.approved_at = datetime.utcnow()
+            await session.commit()
+            await session.refresh(row)
+        return _model_definition_to_dict(row)
+
+    # -- audit log (spec §55) -------------------------------------------------------------
+
+    async def record_audit_event(
+        self,
+        *,
+        actor_user_id: str | None,
+        action: str,
+        resource_type: str,
+        resource_id: str,
+        before: dict | None = None,
+        after: dict | None = None,
+        reason: str | None = None,
+    ) -> dict:
+        """Append-only: there is no corresponding update/delete method, ever."""
+        row = AuditEventRow(
+            actor_user_id=actor_user_id,
+            action=action,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            before=before,
+            after=after,
+            reason=reason,
+        )
+        async with self.session_factory() as session:
+            session.add(row)
+            await session.commit()
+            await session.refresh(row)
+        return _audit_event_to_dict(row)
+
+    async def list_audit_events(
+        self, *, resource_type: str | None = None, limit: int = 100
+    ) -> list[dict]:
+        query = select(AuditEventRow).order_by(AuditEventRow.occurred_at.desc()).limit(limit)
+        if resource_type is not None:
+            query = query.where(AuditEventRow.resource_type == resource_type)
+        async with self.session_factory() as session:
+            rows = (await session.execute(query)).scalars().all()
+        return [_audit_event_to_dict(r) for r in rows]
 
     async def list_roles(self) -> list[dict]:
         async with self.session_factory() as session:

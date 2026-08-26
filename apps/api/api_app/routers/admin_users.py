@@ -18,6 +18,7 @@ from pydantic import BaseModel, EmailStr, Field
 
 from .. import magic_link
 from ..account_states import AccountStatus, InvalidAccountStateTransition, validate_transition
+from ..audit import record_audit_event
 from ..auth import User
 from ..deps import AppStateDep
 from ..email_service import build_account_status_changed_email
@@ -422,6 +423,15 @@ async def change_user_status(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     updated = await state.repo.update_user_status(user_id, body.status.value)
+    await record_audit_event(
+        state,
+        actor=admin,
+        action="user.status_change",
+        resource_type="user",
+        resource_id=user_id,
+        before={"status": current_status.value},
+        after={"status": updated["status"]},
+    )
 
     if body.status in (AccountStatus.SUSPENDED, AccountStatus.ACTIVE, AccountStatus.DISABLED, AccountStatus.REVOKED):
         message = build_account_status_changed_email(

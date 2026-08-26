@@ -491,3 +491,27 @@ Several follow-up hardening items from the MVP status are now closed out:
   config back into how `services/agents` actually executes — promoting a version records the
   approved configuration for governance and future runtime wiring, it does not (yet) change what
   the agent's Python code does when it runs.
+- **Access model, Milestone 10 (model management + risk settings + audit logging + system
+  health)**: closes out the access-model spec's remaining sections. `ModelDefinitionRow`
+  (`packages/db`) and `apps/api/api_app/routers/admin_models.py` (`admin.model_management`,
+  `SUPER_ADMIN`-only) track every LLM model available for agent assignment; `SqlAppRepository.
+  transition_agent_version_status` (Milestone 9) now additionally refuses to move an
+  `AgentVersion` into `APPROVED`/`PRODUCTION` unless its `model_name` matches an `APPROVED`
+  `ModelDefinitionRow` — the "an agent may never be configured to use a model that isn't approved"
+  boundary, enforced structurally. The one LLM model every agent is actually configured with
+  (`AppState.llm.model`) is seeded `APPROVED` at boot so this is satisfiable from a fresh install.
+  A new `AuditEventRow` and `apps/api/api_app/audit.py`'s `record_audit_event()` helper back a
+  genuinely append-only audit trail (`GET /admin/audit-logs`, `admin.audit_logs`) — no update or
+  delete method exists for it anywhere. It's wired into every sensitive action this stream's docs
+  already named that has a live endpoint: agent status changes (Milestone 8), agent version
+  promotion/rollback (Milestone 9), model status changes and risk-setting changes (this milestone),
+  and admin user status changes (Milestone 2) — `before`/`after` snapshots are run through FastAPI's
+  `jsonable_encoder` first so `datetime` fields serialize cleanly into the `JSON` column. A new
+  `GET/PUT /admin/risk-settings` (`admin.risk_settings`, `SUPER_ADMIN`-only,
+  `apps/api/api_app/routers/admin_governance.py`) layers a reason-required, audit-logged admin
+  surface on top of the pre-existing `PUT /risk/limits` a `RISK_MANAGER` already uses for
+  day-to-day changes — both write the same underlying `RiskLimits`. `GET /admin/system-health`
+  rolls up live data-feed/agent/model health, the Risk Governor's status, the event-bus
+  implementation, and database connectivity from data this platform already tracks — nothing
+  fabricated, and a full graphical pipeline visualization is frontend work building on this
+  endpoint, honestly not yet built.

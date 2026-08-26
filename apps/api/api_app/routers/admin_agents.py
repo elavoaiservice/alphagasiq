@@ -24,6 +24,7 @@ from pydantic import BaseModel
 from schemas import AgentType
 
 from .. import agent_catalog
+from ..audit import record_audit_event
 from ..auth import User
 from ..deps import AppStateDep
 from ..entitlements import require_permission
@@ -143,11 +144,22 @@ async def update_agent(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"status must be one of {sorted(_ADMIN_SETTABLE_STATUSES)}",
         )
+    before = await state.repo.get_agent_config(agent_type)
     fields = {k: v for k, v in body.model_dump().items() if v is not None}
     fields["updated_by"] = admin.user_id
     config = await state.repo.update_agent_config(agent_type, **fields)
     if config is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown agent type")
+    if body.status is not None and before is not None and before["status"] != config["status"]:
+        await record_audit_event(
+            state,
+            actor=admin,
+            action="agent.status_change",
+            resource_type="agent",
+            resource_id=agent_type,
+            before=before,
+            after=config,
+        )
     return _merge_agent_view(state, agent_type, config)
 
 

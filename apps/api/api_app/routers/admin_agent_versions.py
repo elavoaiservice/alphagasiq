@@ -27,6 +27,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from .. import agent_catalog
+from ..audit import record_audit_event
 from ..auth import User
 from ..deps import AppStateDep
 from ..entitlements import require_permission
@@ -135,11 +136,22 @@ async def transition_version(
     if existing is None or existing["agent_type"] != agent_type:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown agent version")
     try:
-        return await state.repo.transition_agent_version_status(
+        updated = await state.repo.transition_agent_version_status(
             version_id, body.status, actor=admin.user_id, evaluation_results=body.evaluation_results
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    if body.status in ("PRODUCTION", "ROLLED_BACK"):
+        await record_audit_event(
+            state,
+            actor=admin,
+            action=f"agent_version.{'promote' if body.status == 'PRODUCTION' else 'rollback'}",
+            resource_type="agent_version",
+            resource_id=version_id,
+            before=existing,
+            after=updated,
+        )
+    return updated
 
 
 class OptimizationProposalRequest(BaseModel):

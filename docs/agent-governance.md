@@ -1,12 +1,14 @@
 # Agent Governance — Control Center, Versioning, Optimization & the Risk Governor Boundary
 
-> Status: Milestones 8-9 (§§2-5) are built; §§6-8 remain design-only (target architecture), built
-> out in Milestone 10 in the same reviewed/tested/committed cadence as every other milestone in
-> this codebase. Every agent is still a plain Python class (`services/agents`) with a hardcoded
-> `version` string — Milestone 8 adds an admin-only *view and operational control* of those
-> classes (enable/disable/pause/resume, thresholds, manual run) and Milestone 9 adds a real
-> versioning/evaluation/approval data model and workflow around them; neither milestone yet wires
-> a version's stored config back into how `services/agents` actually executes (see §4).
+> Status: Milestones 8-10 (§§2-8) are all built, in the same reviewed/tested/committed cadence as
+> every other milestone in this codebase. Every agent is still a plain Python class
+> (`services/agents`) with a hardcoded `version` string — Milestone 8 adds an admin-only *view and
+> operational control* of those classes (enable/disable/pause/resume, thresholds, manual run),
+> Milestone 9 adds a real versioning/evaluation/approval data model and workflow around them, and
+> Milestone 10 adds model management, admin-governed risk settings, a real append-only audit log,
+> and a system health rollup. Nothing yet wires a version's stored config back into how
+> `services/agents` actually executes (see §4) — that remains a documented, deliberately-scoped
+> limitation, not a hidden gap.
 
 ## 1. The one non-negotiable boundary: the Risk Governor
 
@@ -171,34 +173,66 @@ confidence calibration, latency, data coverage, error rate, cost, and historical
 
 ## 6. Model management & risk settings
 
-`ModelDefinition` tracks: provider, model name/version, purpose, approved agents, status,
-context window, cost, latency, token usage, performance, last evaluation, approval date. Status:
-`AVAILABLE`, `TESTING`, `APPROVED`, `DEPRECATED`, `DISABLED`. **An agent may never be configured
-to use a model that isn't `APPROVED`** — this is enforced the same way §1's Risk Governor
-boundary is: structurally, not just by admin-UI convention.
+**Implemented now**: `ModelDefinitionRow` (`packages/db`) tracks provider, model name/version,
+purpose, status, context window, and per-1k-token input/output cost behind
+`GET/POST /admin/models`, `GET /admin/models/{model_id}`, and
+`PATCH /admin/models/{model_id}/status` (`apps/api/api_app/routers/admin_models.py`, gated by
+`admin.model_management` — `SUPER_ADMIN`-only). Status: `AVAILABLE` → `TESTING` → `APPROVED` →
+(`DEPRECATED` | `DISABLED`). **An agent may never be configured to use a model that isn't
+`APPROVED`** — enforced structurally, not just by admin-UI convention:
+`SqlAppRepository.transition_agent_version_status` (Milestone 9) refuses to move an
+`AgentVersion` whose `model_name` doesn't match an `APPROVED` `ModelDefinitionRow` into `APPROVED`
+or `PRODUCTION`, raising `ValueError` (surfaced as 400) otherwise. At boot, the one LLM model
+every agent is actually configured with (`AppState.llm.model` — `mock-llm-deterministic` in dev,
+the real Anthropic model once `ANTHROPIC_API_KEY` is configured) is seeded as `APPROVED`, so the
+platform's real agents always have a real, approved model definition to point at.
 
 Risk settings (maximum position size, risk per trade, daily loss, drawdown, portfolio VaR,
-contract exposure, correlated exposure; stale-market-data threshold; abnormal-volatility
-threshold; minimum strategy confidence) are editable only by an administrator holding
-`admin.risk_settings` (currently seeded as a `SUPER_ADMIN`-only permission — see
-`docs/access-model.md` §5). Every change requires: authorized role, confirmation, a reason, an
-effective timestamp, an audit event, and the previous and new value recorded together. This is
-the same fixed permission list `admin.agent_optimization` and `admin.model_management` belong to
-— the platform's strictest, most deliberately narrow tier.
+contract exposure, correlated exposure) are editable via `GET/PUT /admin/risk-settings`
+(`apps/api/api_app/routers/admin_governance.py`, gated by `admin.risk_settings` — `SUPER_ADMIN`-
+only). Every write requires a non-empty `reason`, records an audit event with the previous and
+new value together, and stamps a fresh `effective_from` timestamp — spec §44's "authorized role,
+confirmation, a reason, an effective timestamp, an audit event, and the previous and new value
+recorded together." This sits alongside (not instead of) the pre-existing `PUT /risk/limits` a
+`RISK_MANAGER` already uses for day-to-day limit changes; both write the same underlying
+`RiskLimits`/`RiskLimitsRow`, but only this admin surface is `SUPER_ADMIN`-gated, reason-required,
+and audit-logged. **Scope boundary, stated plainly:** the stale-market-data threshold,
+abnormal-volatility threshold, and minimum-strategy-confidence fields spec §44 also lists are
+covered by System Settings' existing generic `alert_thresholds`/`data_freshness_policies` keys
+(Milestone 6) rather than new dedicated columns here — not fabricated as separate fields that
+don't yet do anything.
 
 ## 7. Audit logging
 
-Every sensitive action described in this document — agent enable/disable, version promotion/
-rollback, model approval, risk-setting change, admin user/organization changes — writes an
-append-only `AuditEvent` (who, what, when, before/after, reason where applicable). No update or
-delete API exists for this table, ever. See `docs/access-model.md` §1 for the account-model side
-of the same audit requirement.
+**Implemented now**: `AuditEventRow` (`packages/db`) is a genuinely append-only table — `id`,
+`actor_user_id`, `action`, `resource_type`, `resource_id`, `before`, `after`, `reason`,
+`occurred_at` — written only by `SqlAppRepository.record_audit_event`; **there is no
+corresponding update or delete method, in the repository or the API, ever.**
+`GET /admin/audit-logs` (optionally filtered by `resource_type`, gated by `admin.audit_logs`)
+reads it back. Wired into every sensitive action this document names that already exists as an
+API endpoint: agent status change (`PATCH /admin/agents/{agent_type}`, Milestone 8), agent version
+promotion/rollback (`POST .../versions/{version_id}/transition` reaching `PRODUCTION` or
+`ROLLED_BACK`, Milestone 9), model status change (`PATCH /admin/models/{model_id}/status`, §6
+above), risk-setting change (§6 above), and admin user status change
+(`POST /admin/users/{user_id}/status`, Milestone 2). **Scope boundary, stated plainly:** not every
+admin mutation in this codebase writes an audit event yet — organization edits and the
+Milestone 6 feature/system-setting toggles are not retrofitted here (`system_settings` already
+carries its own dedicated versioned history table since Milestone 6, which substantially serves
+the same purpose for that specific surface). Extending audit coverage to the remaining admin
+mutations is straightforward follow-up work using the exact same `record_audit_event` helper
+(`apps/api/api_app/audit.py`), not a new mechanism to build. See `docs/access-model.md` §1 for the
+account-model side of the same audit requirement.
 
 ## 8. System architecture & health view
 
-An admin-only visualization of the full pipeline — external data sources → data & intelligence
-fabric → agent teams → business functions → Investment Committee → Risk Governor → human
-oversight → paper execution/portfolio → decision journal — with live health status at each
-stage, and the agent-to-business-function mapping from §2 rendered visually (which agents feed
-Market Research, Trading & Strategy, Physical Optimization, Portfolio Management, and Risk &
-Governance).
+**Implemented now**: `GET /admin/system-health` (gated by `admin.dashboard`,
+`apps/api/api_app/routers/admin_governance.py`) rolls up live health at each stage from data
+already tracked elsewhere in this platform — data-feed health/count (Milestone 7's live
+`health_check()` snapshots), agent status breakdown (Milestone 8's `AgentConfigRow`s), model
+approval counts (§6 above), the Risk Governor's operational status and version, the configured
+event-bus implementation, and database connectivity — nothing fabricated. A full graphical
+pipeline visualization (external data sources → data & intelligence fabric → agent teams →
+business functions → Investment Committee → Risk Governor → human oversight → paper
+execution/portfolio → decision journal, rendered visually with the agent-to-business-function
+mapping from §2) is frontend work building on this endpoint's data, not yet built — this endpoint
+is the real, honest data source such a view would consume.

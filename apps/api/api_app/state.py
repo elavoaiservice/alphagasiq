@@ -94,6 +94,7 @@ class AppState:
             self.neo4j_driver = AsyncGraphDatabase.driver(settings.neo4j_uri, auth=auth)
         self.providers: ProviderRegistry = build_default_registry()
         llm = get_default_llm_provider()
+        self.llm = llm
 
         self.chief_trading_agent = ChiefTradingAgent(llm=llm)
         self.investment_committee = InvestmentCommittee(llm=llm)
@@ -163,6 +164,15 @@ class AppState:
             await self.repo.seed_data_feed_configs([p.provider_id for p in self.providers.all()])
             await self.repo.seed_agent_configs(
                 [t for t in agent_catalog.IMPLEMENTED_AGENT_TYPES if t != "RISK_GOVERNOR"]
+            )
+            await self.repo.seed_model_definitions(
+                [
+                    {
+                        "provider": type(self.llm).__name__,
+                        "model_name": self.llm.model,
+                        "purpose": "Default LLM provider for every agent in this platform.",
+                    }
+                ]
             )
             await self._seed_initial_agent_versions()
             await self._hydrate_from_repo()

@@ -495,6 +495,55 @@ class AgentVersionRow(Base):
     notes: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
+class ModelDefinitionRow(Base):
+    """One LLM model definition available for agent assignment (spec §43,
+    `docs/agent-governance.md` §6). Status: `AVAILABLE` -> `TESTING` -> `APPROVED` ->
+    (`DEPRECATED` | `DISABLED`). **An agent may never be configured to use a model that
+    isn't `APPROVED`** -- enforced structurally in
+    `SqlAppRepository.transition_agent_version_status`, which rejects moving an
+    `AgentVersion` referencing a non-`APPROVED` model to `APPROVED` or `PRODUCTION`,
+    not left to admin-UI convention."""
+
+    __tablename__ = "model_definitions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    provider: Mapped[str] = mapped_column(String, nullable=False)
+    model_name: Mapped[str] = mapped_column(String, nullable=False)
+    version: Mapped[str | None] = mapped_column(String, nullable=True)
+    purpose: Mapped[str | None] = mapped_column(String, nullable=True)
+    approved_agent_types: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="AVAILABLE")
+    context_window: Mapped[int | None] = mapped_column(nullable=True)
+    cost_per_1k_input_tokens: Mapped[float | None] = mapped_column(Float, nullable=True)
+    cost_per_1k_output_tokens: Mapped[float | None] = mapped_column(Float, nullable=True)
+    notes: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class AuditEventRow(Base):
+    """Append-only audit trail (spec §55, `docs/agent-governance.md` §7 /
+    `docs/access-model.md` §1) for sensitive actions across the platform: agent
+    enable/disable, version promotion/rollback, model approval, risk-setting change,
+    admin user/organization changes. **No update or delete API exists for this table,
+    ever** -- `SqlAppRepository` exposes only `record_audit_event`/`list_audit_events`,
+    never a mutation or removal of an existing row."""
+
+    __tablename__ = "audit_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    actor_user_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    action: Mapped[str] = mapped_column(String, nullable=False)
+    resource_type: Mapped[str] = mapped_column(String, nullable=False)
+    resource_id: Mapped[str] = mapped_column(String, nullable=False)
+    before: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    after: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
 class RiskLimitsRow(Base):
     __tablename__ = "risk_limits"
 

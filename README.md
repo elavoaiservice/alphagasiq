@@ -293,6 +293,19 @@ configuration at boot. Stated plainly: nothing yet wires a version's stored conf
 `services/agents` executes — this is a real, tested governance/versioning system sitting on top of
 today's agents, not (yet) a live control surface over their behavior.
 
+**This closes out the access-model spec.** Milestone 10 adds model management (`ModelDefinitionRow`,
+`GET/POST /admin/models`, `PATCH /admin/models/{id}/status`, gated by the `SUPER_ADMIN`-only
+`admin.model_management`) — an agent version can now only reach `APPROVED`/`PRODUCTION` if its
+model is itself an `APPROVED` model definition, enforced structurally in
+`transition_agent_version_status`, not by convention. A genuinely append-only `AuditEventRow` and
+`audit.py`'s `record_audit_event()` helper (no update/delete path exists, anywhere) back
+`GET /admin/audit-logs`, wired into agent status changes, version promotion/rollback, model status
+changes, risk-setting changes, and admin user status changes. `GET/PUT /admin/risk-settings`
+(`admin.risk_settings`, `SUPER_ADMIN`-only) layers a reason-required, audit-logged surface on top
+of the existing `RISK_MANAGER`-facing `/risk/limits` endpoint. `GET /admin/system-health` rolls up
+real data-feed/agent/model health, the Risk Governor's status, and event-bus/database connectivity
+in one place — the honest data source a fuller pipeline visualization would build on next.
+
 **The pipeline digital twin can now be backed by a real Neo4j instance.**
 `fundamentals_service/pipeline_graph_neo4j.py` seeds the same `PipelineGraph`
 `build_default_pipeline_graph()` already builds into Neo4j via Cypher `MERGE`, then reloads it —

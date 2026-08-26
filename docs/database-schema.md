@@ -219,6 +219,19 @@ No column for chain-of-thought. `reasoning_summary` is a concise, human-auditabl
   automatically retires the agent_type's prior `PRODUCTION` row, so at most one exists at a time.
   Every implemented, administrable agent gets a real `PRODUCTION` row seeded from its actual live
   configuration at boot (`AppState._seed_initial_agent_versions()`).
+- **`model_definitions`** (Milestone 10, spec §43) — one row per LLM model available for agent
+  assignment. id, provider, model_name, version, purpose, approved_agent_types (jsonb), status
+  (`AVAILABLE`/`TESTING`/`APPROVED`/`DEPRECATED`/`DISABLED`), context_window,
+  cost_per_1k_input_tokens, cost_per_1k_output_tokens, notes, created_at, updated_by, updated_at,
+  approved_at. `SqlAppRepository.transition_agent_version_status` (Milestone 9) consults this table:
+  an `AgentVersion` may only reach `APPROVED`/`PRODUCTION` with a `model_name` matching an
+  `APPROVED` row here. The one LLM model every agent is actually configured with is seeded
+  `APPROVED` at boot (`AppState.seed()`), so this constraint is satisfiable from a fresh install.
+- **`audit_events`** (Milestone 10, spec §55) — a genuinely append-only log. id, actor_user_id,
+  action, resource_type, resource_id, before (jsonb, nullable), after (jsonb, nullable), reason
+  (nullable), occurred_at. `SqlAppRepository` exposes only `record_audit_event`/
+  `list_audit_events` — there is no update or delete method for this table, in the repository or
+  the API, ever.
 
 ## 5. TimescaleDB Specifics
 

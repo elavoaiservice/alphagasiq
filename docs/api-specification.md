@@ -92,6 +92,19 @@ create a `User` or `Organization` — see `docs/access-model.md` "No Self-Regist
 | POST | `/admin/agents/{agent_type}/versions/{version_id}/transition` | requires `admin.agent_management`. Moves a version through the fixed `DRAFT → TESTING → APPROVED → PRODUCTION → (RETIRED \| ROLLED_BACK)` lifecycle; 400 on an illegal jump (e.g. straight to `PRODUCTION`). Promoting retires the agent's prior `PRODUCTION` version automatically; approving records `approved_by`/`approved_at` |
 | POST | `/admin/agents/{agent_type}/optimization/propose` | requires `admin.agent_optimization` (`SUPER_ADMIN`-only). Records a real performance-review snapshot from `agent_execution_log` plus the admin's stated problem/proposed change, then creates a `DRAFT` version through the same lifecycle above |
 
+## Admin: Model Management, Risk Settings, Audit Log, System Health (Milestone 10, spec §§43-56)
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/admin/models` | requires `admin.model_management` (`SUPER_ADMIN`-only). Every model definition |
+| POST | `/admin/models` | requires `admin.model_management`. Creates a new model definition, status `AVAILABLE` |
+| GET | `/admin/models/{model_id}` | requires `admin.model_management`. One model's full definition |
+| PATCH | `/admin/models/{model_id}/status` | requires `admin.model_management`. Updates status (`AVAILABLE`/`TESTING`/`APPROVED`/`DEPRECATED`/`DISABLED`); audit-logged |
+| GET | `/admin/risk-settings` | requires `admin.risk_settings` (`SUPER_ADMIN`-only). Current `RiskLimits` |
+| PUT | `/admin/risk-settings` | requires `admin.risk_settings`. Updates the 7 `RiskLimits` fields; requires a non-empty `reason`; records an audit event with before/after |
+| GET | `/admin/audit-logs` | requires `admin.audit_logs`. Append-only audit trail, optionally filtered by `?resource_type=`, newest first |
+| GET | `/admin/system-health` | requires `admin.dashboard`. Live rollup of data-feed/agent/model health, Risk Governor status, event-bus implementation, and database connectivity |
+
 ## System / Observability
 
 | Method | Path | Notes |
