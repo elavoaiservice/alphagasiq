@@ -1,8 +1,11 @@
 """Admin-only user/organization provisioning — the only place a `User` row can ever
-be created (docs/access-model.md "No Self-Registration"). Gated by `require_role`
-today; a DB-backed `admin.users.create`-style permission check replaces this once
-Milestone 4 wires real RBAC enforcement (the seeded `RolePermission` data this
-endpoint's `POST /admin/users` inserts into is already correct for that cutover).
+be created (docs/access-model.md "No Self-Registration"). Gated by real, DB-backed
+permission checks (`entitlements.require_permission`) as of Milestone 4 — each
+endpoint requires the exact `admin.*` permission spec §23 assigns it, resolved from
+the authenticated user's DB role(s) via the seeded `RolePermission` data (Milestone 2)
+regardless of whether they logged in via magic link, OIDC, or the dev-mode bootstrap
+grant (see `entitlements.py`'s module docstring for why no login-path special-casing
+is needed).
 """
 
 from __future__ import annotations
@@ -15,17 +18,23 @@ from pydantic import BaseModel, EmailStr, Field
 
 from .. import magic_link
 from ..account_states import AccountStatus, InvalidAccountStateTransition, validate_transition
-from ..auth import Role, User, require_role
+from ..auth import User
 from ..deps import AppStateDep
 from ..email_service import build_account_status_changed_email
+from ..entitlements import ensure_permission, require_any_permission, require_permission
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
-# Every admin endpoint in this router requires the dev-mode ADMIN role today. See the
-# module docstring for why this isn't yet `require_permission("admin.users.create")`.
-_RequireAdmin = Depends(require_role(Role.ADMIN))
+_RequireUsersView = Depends(require_permission("admin.users.view"))
+_RequireUsersCreate = Depends(require_permission("admin.users.create"))
+_RequireUsersEdit = Depends(require_permission("admin.users.edit"))
+_RequireUsersSessions = Depends(require_permission("admin.users.sessions"))
+_RequireOrganizations = Depends(require_permission("admin.organizations"))
+_RequireUsersStatusChange = Depends(
+    require_any_permission("admin.users.edit", "admin.users.suspend", "admin.users.revoke")
+)
 
 
 class OrganizationCreateRequest(BaseModel):
@@ -126,13 +135,13 @@ def _to_user_out(user: dict, *, organization_name: str | None, role_name: str | 
 
 
 @router.get("/roles", response_model=list[RoleOut])
-async def list_roles(state: AppStateDep, _admin: User = _RequireAdmin) -> list[dict]:
+async def list_roles(state: AppStateDep, _admin: User = _RequireUsersView) -> list[dict]:
     return await state.repo.list_roles()
 
 
 @router.post("/organizations", response_model=OrganizationOut, status_code=status.HTTP_201_CREATED)
 async def create_organization(
-    body: OrganizationCreateRequest, state: AppStateDep, _admin: User = _RequireAdmin
+    body: OrganizationCreateRequest, state: AppStateDep, _admin: User = _RequireOrganizations
 ) -> dict:
     if await state.repo.find_organization_by_name(body.name) is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="An organization with this name already exists")
@@ -152,12 +161,12 @@ async def create_organization(
 
 
 @router.get("/organizations", response_model=list[OrganizationOut])
-async def list_organizations(state: AppStateDep, _admin: User = _RequireAdmin) -> list[dict]:
+async def list_organizations(state: AppStateDep, _admin: User = _RequireOrganizations) -> list[dict]:
     return await state.repo.list_organizations()
 
 
 @router.post("/users", response_model=UserOut, status_code=status.HTTP_201_CREATED)
-async def create_user(body: UserCreateRequest, state: AppStateDep, admin: User = _RequireAdmin) -> UserOut:
+async def create_user(body: UserCreateRequest, state: AppStateDep, admin: User = _RequireUsersCreate) -> UserOut:
     email = str(body.business_email).lower()
     if await state.repo.get_user_by_email(email) is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A user with this email already exists")
@@ -202,7 +211,7 @@ async def create_user(body: UserCreateRequest, state: AppStateDep, admin: User =
 
 
 @router.post("/users/{user_id}/resend-invitation", response_model=UserOut)
-async def resend_invitation(user_id: str, state: AppStateDep, _admin: User = _RequireAdmin) -> UserOut:
+async def resend_invitation(user_id: str, state: AppStateDep, _admin: User = _RequireUsersEdit) -> UserOut:
     """Spec §18 "Resend Invitation" — only valid for a still-`INVITED` account.
     Generates a fresh Magic Link, invalidates every prior unused invitation link, and
     sends the new invitation email (`magic_link.issue_and_send_resend_invitation`
@@ -226,7 +235,7 @@ async def resend_invitation(user_id: str, state: AppStateDep, _admin: User = _Re
 
 
 @router.get("/users", response_model=list[UserOut])
-async def list_users(state: AppStateDep, _admin: User = _RequireAdmin) -> list[UserOut]:
+async def list_users(state: AppStateDep, _admin: User = _RequireUsersView) -> list[UserOut]:
     users = await state.repo.list_users()
     organizations = {o["id"]: o["name"] for o in await state.repo.list_organizations()}
     roles = {r["id"]: r["name"] for r in await state.repo.list_roles()}
@@ -239,7 +248,7 @@ async def list_users(state: AppStateDep, _admin: User = _RequireAdmin) -> list[U
 
 
 @router.get("/users/{user_id}", response_model=UserOut)
-async def get_user(user_id: str, state: AppStateDep, _admin: User = _RequireAdmin) -> UserOut:
+async def get_user(user_id: str, state: AppStateDep, _admin: User = _RequireUsersView) -> UserOut:
     user = await state.repo.get_user_by_id(user_id)
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
@@ -252,10 +261,23 @@ async def get_user(user_id: str, state: AppStateDep, _admin: User = _RequireAdmi
     )
 
 
+_STATUS_CHANGE_PERMISSION: dict[AccountStatus, str] = {
+    AccountStatus.REVOKED: "admin.users.revoke",
+    AccountStatus.SUSPENDED: "admin.users.suspend",
+    AccountStatus.DISABLED: "admin.users.suspend",
+}
+
+
 @router.post("/users/{user_id}/status", response_model=UserOut)
 async def change_user_status(
-    user_id: str, body: AccountStatusChangeRequest, state: AppStateDep, _admin: User = _RequireAdmin
+    user_id: str, body: AccountStatusChangeRequest, state: AppStateDep, admin: User = _RequireUsersStatusChange
 ) -> UserOut:
+    # The dependency above only confirms the caller holds *some* user-management
+    # permission; the precise permission required depends on the target status (spec
+    # §23 assigns admin.users.revoke/suspend to specific actions, distinct from the
+    # general admin.users.edit every other transition falls back to).
+    await ensure_permission(admin, state, _STATUS_CHANGE_PERMISSION.get(body.status, "admin.users.edit"))
+
     user = await state.repo.get_user_by_id(user_id)
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
@@ -284,7 +306,7 @@ async def change_user_status(
 
 
 @router.get("/users/{user_id}/sessions")
-async def list_user_sessions(user_id: str, state: AppStateDep, _admin: User = _RequireAdmin) -> list[dict]:
+async def list_user_sessions(user_id: str, state: AppStateDep, _admin: User = _RequireUsersSessions) -> list[dict]:
     """Spec §20: "Allow administrators to view active sessions without exposing
     session secrets" — a `Session` row carries no secret (the JWT itself is never
     stored), so this listing is already safe to return as-is."""
@@ -294,7 +316,9 @@ async def list_user_sessions(user_id: str, state: AppStateDep, _admin: User = _R
 
 
 @router.post("/users/{user_id}/sessions/{session_id}/revoke")
-async def revoke_user_session(user_id: str, session_id: str, state: AppStateDep, _admin: User = _RequireAdmin) -> dict:
+async def revoke_user_session(
+    user_id: str, session_id: str, state: AppStateDep, _admin: User = _RequireUsersSessions
+) -> dict:
     """Spec §20 "Admin-initiated session revocation"."""
     session = await state.repo.get_session(session_id)
     if session is None or session["user_id"] != user_id:

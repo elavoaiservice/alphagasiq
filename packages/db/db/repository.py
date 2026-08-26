@@ -22,16 +22,20 @@ from .models import (
     CommitteeDecisionRow,
     ContactInquiryRow,
     DecisionJournalRow,
+    FeatureRow,
     MagicLinkTokenRow,
+    OrganizationFeatureEntitlementRow,
     OrganizationRow,
     PermissionRow,
     PostTradeAnalysisRow,
     RiskCheckRow,
     RiskLimitsRow,
+    RoleFeatureEntitlementRow,
     RolePermissionRow,
     RoleRow,
     SessionRow,
     TradeIdeaRow,
+    UserFeatureOverrideRow,
     UserRow,
 )
 
@@ -196,6 +200,121 @@ _ROLE_PERMISSIONS: dict[str, list[str]] = {
     ],
 }
 
+# Feature catalog from docs/access-model.md §5 (spec §24), verbatim. Each entry is
+# (key, display name, security_sensitive) — a `security_sensitive` feature gets
+# deny-only user-level overrides (see `apps/api/api_app/entitlements.py`).
+_FEATURES: list[tuple[str, str, bool]] = [
+    ("market_dashboard", "Market Dashboard", False),
+    ("ng_fundamentals", "Natural Gas Fundamentals", False),
+    ("weather_intelligence", "Weather Intelligence", False),
+    ("storage_forecast", "Storage Forecast", False),
+    ("pipeline_intelligence", "Pipeline Intelligence", False),
+    ("lng_intelligence", "LNG Intelligence", False),
+    ("power_market_intelligence", "Power Market Intelligence", False),
+    ("news_intelligence", "News Intelligence", False),
+    ("ai_trade_recommendations", "AI Trade Recommendations", False),
+    ("chief_trading_agent_chat", "Chief Trading Agent Chat", True),
+    ("portfolio_analytics", "Portfolio Analytics", True),
+    ("risk_analytics", "Risk Analytics", True),
+    ("ng_digital_twin", "Natural Gas Digital Twin", False),
+    ("historical_research", "Historical Research", False),
+    ("data_export", "Data Export", True),
+    ("api_access", "API Access", True),
+    ("paper_trading", "Paper Trading", True),
+    ("experimental_features", "Experimental Features", True),
+]
+
+# Default role -> feature grants, mirroring _ROLE_PERMISSIONS' capability shape.
+# Role-level feature access is deny-by-default: a role only has a feature if it's
+# listed here (see `RoleFeatureEntitlementRow`'s docstring).
+_ROLE_FEATURES: dict[str, list[str]] = {
+    "SUPER_ADMIN": [key for key, _, _ in _FEATURES],
+    "ADMIN": [key for key, _, _ in _FEATURES],
+    "TRADER": [
+        "market_dashboard",
+        "ng_fundamentals",
+        "weather_intelligence",
+        "storage_forecast",
+        "pipeline_intelligence",
+        "lng_intelligence",
+        "power_market_intelligence",
+        "news_intelligence",
+        "ai_trade_recommendations",
+        "chief_trading_agent_chat",
+        "portfolio_analytics",
+        "ng_digital_twin",
+        "paper_trading",
+    ],
+    "RISK_MANAGER": [
+        "market_dashboard",
+        "ng_fundamentals",
+        "weather_intelligence",
+        "storage_forecast",
+        "pipeline_intelligence",
+        "lng_intelligence",
+        "power_market_intelligence",
+        "news_intelligence",
+        "ai_trade_recommendations",
+        "chief_trading_agent_chat",
+        "portfolio_analytics",
+        "risk_analytics",
+        "ng_digital_twin",
+    ],
+    "RESEARCHER": [
+        "market_dashboard",
+        "ng_fundamentals",
+        "weather_intelligence",
+        "storage_forecast",
+        "pipeline_intelligence",
+        "lng_intelligence",
+        "power_market_intelligence",
+        "news_intelligence",
+        "ai_trade_recommendations",
+        "chief_trading_agent_chat",
+        "ng_digital_twin",
+        "historical_research",
+        "data_export",
+    ],
+    "EXECUTIVE": [
+        "market_dashboard",
+        "ng_fundamentals",
+        "weather_intelligence",
+        "storage_forecast",
+        "pipeline_intelligence",
+        "lng_intelligence",
+        "power_market_intelligence",
+        "news_intelligence",
+        "ai_trade_recommendations",
+        "chief_trading_agent_chat",
+        "portfolio_analytics",
+        "risk_analytics",
+        "ng_digital_twin",
+    ],
+    "VIEWER": [
+        "market_dashboard",
+        "ng_fundamentals",
+        "weather_intelligence",
+        "storage_forecast",
+        "pipeline_intelligence",
+        "lng_intelligence",
+        "power_market_intelligence",
+        "news_intelligence",
+        "ng_digital_twin",
+    ],
+    "API_USER": [
+        "market_dashboard",
+        "ng_fundamentals",
+        "weather_intelligence",
+        "storage_forecast",
+        "pipeline_intelligence",
+        "lng_intelligence",
+        "power_market_intelligence",
+        "news_intelligence",
+        "data_export",
+        "api_access",
+    ],
+}
+
 
 def _organization_to_dict(row: OrganizationRow) -> dict:
     return {
@@ -351,6 +470,145 @@ class SqlAppRepository:
                     if (role_id, permission_id) not in existing_grants:
                         session.add(RolePermissionRow(role_id=role_id, permission_id=permission_id))
 
+            await session.commit()
+
+    async def get_permission_keys_for_role(self, role_name: str) -> set[str]:
+        """The effective permission set for one DB role — used by
+        `apps/api/api_app/entitlements.py::get_effective_permissions`."""
+        async with self.session_factory() as session:
+            role = (await session.execute(select(RoleRow).where(RoleRow.name == role_name))).scalar_one_or_none()
+            if role is None:
+                return set()
+            keys = (
+                await session.execute(
+                    select(PermissionRow.key)
+                    .join(RolePermissionRow, RolePermissionRow.permission_id == PermissionRow.id)
+                    .where(RolePermissionRow.role_id == role.id)
+                )
+            ).scalars().all()
+        return set(keys)
+
+    async def seed_feature_defaults(self) -> None:
+        """Seeds the feature catalog and each role's default feature grants (module-
+        level `_FEATURES`/`_ROLE_FEATURES` above) — the Milestone 4 counterpart to
+        `seed_rbac_defaults`. Idempotent for the same reason: safe on every boot,
+        never reverts an admin's later edit to an existing grant."""
+        async with self.session_factory() as session:
+            existing_feature_keys = set((await session.execute(select(FeatureRow.key))).scalars().all())
+            for key, name, security_sensitive in _FEATURES:
+                if key not in existing_feature_keys:
+                    session.add(FeatureRow(key=key, name=name, security_sensitive=security_sensitive))
+            await session.flush()
+
+            role_id_by_name = {r.name: r.id for r in (await session.execute(select(RoleRow))).scalars().all()}
+            feature_id_by_key = {f.key: f.id for f in (await session.execute(select(FeatureRow))).scalars().all()}
+            existing_grants = {
+                (rfe.role_id, rfe.feature_id)
+                for rfe in (await session.execute(select(RoleFeatureEntitlementRow))).scalars().all()
+            }
+
+            for role_name, feature_keys in _ROLE_FEATURES.items():
+                role_id = role_id_by_name.get(role_name)
+                if role_id is None:
+                    continue
+                for key in feature_keys:
+                    feature_id = feature_id_by_key[key]
+                    if (role_id, feature_id) not in existing_grants:
+                        session.add(RoleFeatureEntitlementRow(role_id=role_id, feature_id=feature_id, enabled=True))
+
+            await session.commit()
+
+    async def list_features(self) -> list[dict]:
+        async with self.session_factory() as session:
+            rows = (await session.execute(select(FeatureRow).order_by(FeatureRow.key))).scalars().all()
+        return [
+            {
+                "id": r.id,
+                "key": r.key,
+                "name": r.name,
+                "description": r.description,
+                "security_sensitive": r.security_sensitive,
+                "globally_enabled": r.globally_enabled,
+            }
+            for r in rows
+        ]
+
+    async def get_role_feature_keys(self, role_id: str) -> set[str]:
+        """The set of feature keys a role explicitly grants (enabled=True rows only —
+        role-level access is deny-by-default)."""
+        async with self.session_factory() as session:
+            keys = (
+                await session.execute(
+                    select(FeatureRow.key)
+                    .join(RoleFeatureEntitlementRow, RoleFeatureEntitlementRow.feature_id == FeatureRow.id)
+                    .where(RoleFeatureEntitlementRow.role_id == role_id, RoleFeatureEntitlementRow.enabled.is_(True))
+                )
+            ).scalars().all()
+        return set(keys)
+
+    async def get_organization_feature_overrides(self, organization_id: str) -> dict[str, bool]:
+        """feature_key -> enabled, for every explicit org-level row. Absence of a key
+        means the org places no restriction beyond the user's role."""
+        async with self.session_factory() as session:
+            rows = (
+                await session.execute(
+                    select(FeatureRow.key, OrganizationFeatureEntitlementRow.enabled)
+                    .join(FeatureRow, OrganizationFeatureEntitlementRow.feature_id == FeatureRow.id)
+                    .where(OrganizationFeatureEntitlementRow.organization_id == organization_id)
+                )
+            ).all()
+        return {key: enabled for key, enabled in rows}
+
+    async def get_user_feature_overrides(self, user_id: str) -> dict[str, bool]:
+        """feature_key -> enabled, for every explicit per-user override row."""
+        async with self.session_factory() as session:
+            rows = (
+                await session.execute(
+                    select(FeatureRow.key, UserFeatureOverrideRow.enabled)
+                    .join(FeatureRow, UserFeatureOverrideRow.feature_id == FeatureRow.id)
+                    .where(UserFeatureOverrideRow.user_id == user_id)
+                )
+            ).all()
+        return {key: enabled for key, enabled in rows}
+
+    async def set_organization_feature_override(self, *, organization_id: str, feature_key: str, enabled: bool) -> None:
+        async with self.session_factory() as session:
+            feature = (await session.execute(select(FeatureRow).where(FeatureRow.key == feature_key))).scalar_one_or_none()
+            if feature is None:
+                raise ValueError(f"Unknown feature key: {feature_key}")
+            existing = (
+                await session.execute(
+                    select(OrganizationFeatureEntitlementRow).where(
+                        OrganizationFeatureEntitlementRow.organization_id == organization_id,
+                        OrganizationFeatureEntitlementRow.feature_id == feature.id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing is not None:
+                existing.enabled = enabled
+            else:
+                session.add(
+                    OrganizationFeatureEntitlementRow(organization_id=organization_id, feature_id=feature.id, enabled=enabled)
+                )
+            await session.commit()
+
+    async def set_user_feature_override(self, *, user_id: str, feature_key: str, enabled: bool) -> None:
+        async with self.session_factory() as session:
+            feature = (await session.execute(select(FeatureRow).where(FeatureRow.key == feature_key))).scalar_one_or_none()
+            if feature is None:
+                raise ValueError(f"Unknown feature key: {feature_key}")
+            existing = (
+                await session.execute(
+                    select(UserFeatureOverrideRow).where(
+                        UserFeatureOverrideRow.user_id == user_id,
+                        UserFeatureOverrideRow.feature_id == feature.id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing is not None:
+                existing.enabled = enabled
+            else:
+                session.add(UserFeatureOverrideRow(user_id=user_id, feature_id=feature.id, enabled=enabled))
             await session.commit()
 
     async def list_roles(self) -> list[dict]:

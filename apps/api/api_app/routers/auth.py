@@ -12,6 +12,7 @@ from .. import magic_link
 from ..account_states import AUTHENTICATABLE_STATUSES, AccountStatus
 from ..auth import User, authenticate, create_access_token, get_current_user, map_db_role_to_dev_roles
 from ..deps import AppStateDep
+from ..entitlements import get_effective_features, get_effective_permissions
 from ..oidc import OidcNotConfigured, build_authorization_redirect_url, handle_callback, oidc_configured
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -41,6 +42,19 @@ async def login(body: LoginRequest) -> LoginResponse:
 @router.get("/me", response_model=User)
 async def me(user: User = Depends(get_current_user)) -> User:
     return user
+
+
+@router.get("/me/entitlements")
+async def my_entitlements(state: AppStateDep, user: User = Depends(get_current_user)) -> dict:
+    """The authenticated user's effective permission set and feature-entitlement map
+    (docs/access-model.md §5). This is the exact contract Milestone 5's dashboard/chat
+    integration is expected to consume for "only display functionality the
+    authenticated user is entitled to access" (spec §25) — nothing reads this
+    endpoint's output to gate anything server-side yet; every actual enforcement
+    point uses `entitlements.require_permission`/`require_feature` directly."""
+    permissions = await get_effective_permissions(user, state)
+    features = await get_effective_features(user, state)
+    return {"permissions": sorted(permissions), "features": features}
 
 
 class MagicLinkRequest(BaseModel):

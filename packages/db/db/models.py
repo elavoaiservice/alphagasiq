@@ -270,6 +270,66 @@ class SessionRow(Base):
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
 
 
+class FeatureRow(Base):
+    """A gateable unit of platform functionality (docs/access-model.md §5, spec §24) —
+    e.g. "Chief Trading Agent Chat" or "Data Export". Seeded at startup alongside the
+    RBAC data; `security_sensitive=True` features get deny-only user-level overrides
+    (a user override can never grant access beyond what role+org already allow), all
+    others get full override (can grant or deny), per spec §24's "deny-overrides for
+    security-sensitive features"."""
+
+    __tablename__ = "features"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    key: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
+    security_sensitive: Mapped[bool] = mapped_column(nullable=False, default=False)
+    globally_enabled: Mapped[bool] = mapped_column(nullable=False, default=True)
+
+
+class RoleFeatureEntitlementRow(Base):
+    """Role-level feature grant. Deny-by-default: a role only has a feature if an
+    explicit row here says `enabled=True` — there is no implicit "all roles get
+    everything" fallback."""
+
+    __tablename__ = "role_feature_entitlements"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    role_id: Mapped[str] = mapped_column(String(36), ForeignKey("roles.id"), nullable=False)
+    feature_id: Mapped[str] = mapped_column(String(36), ForeignKey("features.id"), nullable=False)
+    enabled: Mapped[bool] = mapped_column(nullable=False, default=True)
+
+
+class OrganizationFeatureEntitlementRow(Base):
+    """Organization-level feature restriction/confirmation. Allow-by-default: absence
+    of a row means the organization's plan does not additionally restrict a feature
+    the user's role already grants; an explicit `enabled=False` row is how a client's
+    plan excludes a feature regardless of role."""
+
+    __tablename__ = "organization_feature_entitlements"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    organization_id: Mapped[str] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=False)
+    feature_id: Mapped[str] = mapped_column(String(36), ForeignKey("features.id"), nullable=False)
+    enabled: Mapped[bool] = mapped_column(nullable=False, default=True)
+
+
+class UserFeatureOverrideRow(Base):
+    """Per-user feature override. For a `security_sensitive` feature this can only
+    narrow access (an `enabled=True` override is ignored if role/org already deny the
+    feature); for any other feature it can both grant and deny regardless of role/org
+    — see `apps/api/api_app/entitlements.py::get_effective_features` for the exact
+    algorithm."""
+
+    __tablename__ = "user_feature_overrides"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False)
+    feature_id: Mapped[str] = mapped_column(String(36), ForeignKey("features.id"), nullable=False)
+    enabled: Mapped[bool] = mapped_column(nullable=False, default=True)
+
+
 class RiskLimitsRow(Base):
     __tablename__ = "risk_limits"
 

@@ -1,6 +1,6 @@
 # Access Model — Accounts, Authentication, RBAC & Entitlements
 
-> Status: Milestones 1-3. This document describes the target design end-to-end (per the
+> Status: Milestones 1-4. This document describes the target design end-to-end (per the
 > platform's access-model specification) and is updated incrementally as each milestone lands.
 > Sections marked **(not yet built)** describe target behavior that ships in a later milestone —
 > they are documented now so the design is reviewable as a whole, not discovered piecemeal.
@@ -155,14 +155,15 @@ elsewhere in the codebase.
   cookie-based session transport is ever added, it must ship with the CSRF protections spec §20
   calls for; nothing today needs them because nothing today sets an auth cookie.
 
-## 4a. Role -> dev-mode `Role` bridge (interim, until Milestone 4)
+## 4a. Role -> dev-mode `Role` bridge
 
 A magic-link-authenticated user's session JWT still needs to carry *some* value every router's
-`require_role` check understands today (`apps/api/api_app/auth.py`'s 5-value `Role` enum), since
-real `require_permission(...)` enforcement against the seeded RBAC data is Milestone 4's job, not
-this one. `auth.py::map_db_role_to_dev_roles` bridges the 8 DB roles to that 5-value enum,
-mirroring the capability composition the `_DEV_USERS` fixtures already use (e.g. a DB `TRADER`
-maps to `{TRADER, RESEARCHER, VIEWER}`, the same set `trader@alphagasiq.local` carries):
+`require_role` check understands (`apps/api/api_app/auth.py`'s 5-value `Role` enum) for the
+handful of routers Milestone 4 didn't touch (trading/risk/approvals/agents — still gated by
+`require_role`, unchanged since before this milestone). `auth.py::map_db_role_to_dev_roles`
+bridges the 8 DB roles to that 5-value enum, mirroring the capability composition the
+`_DEV_USERS` fixtures already use (e.g. a DB `TRADER` maps to `{TRADER, RESEARCHER, VIEWER}`, the
+same set `trader@alphagasiq.local` carries):
 
 | DB role | Mapped dev-mode roles |
 |---|---|
@@ -176,18 +177,17 @@ maps to `{TRADER, RESEARCHER, VIEWER}`, the same set `trader@alphagasiq.local` c
 | `API_USER` | `VIEWER` |
 
 An unrecognized DB role name never raises — it falls back to `VIEWER`-only, mirroring
-`oidc.py`'s existing "unrecognized claim -> VIEWER" posture. This bridge (and the interim
-`require_role(Role.ADMIN)` check on every `/admin/*` route) is replaced, not layered on top of,
-once Milestone 4 lands.
+`oidc.py`'s existing "unrecognized claim -> VIEWER" posture. This same mapping is also the
+foundation of Milestone 4's real permission resolution below: because every `Role` enum value is
+string-identical to a real DB role name, `entitlements.py` can resolve permissions/features
+directly from `user.roles` with no per-login-path special-casing at all.
 
 ## 5. RBAC and feature entitlements
 
-**Implemented now** (Milestone 2): `Role` / `Permission` / `RolePermission` tables
-(`packages/db/db/models.py`), seeded at every boot by
-`SqlAppRepository.seed_rbac_defaults()` (idempotent — safe to re-run). The 8 fixed roles:
-`SUPER_ADMIN`, `ADMIN`, `TRADER`, `RISK_MANAGER`, `RESEARCHER`, `EXECUTIVE`, `VIEWER`,
-`API_USER`. The full permission-key list (verbatim from the platform's access-model
-specification):
+`Role` / `Permission` / `RolePermission` tables (`packages/db/db/models.py`), seeded at every
+boot by `SqlAppRepository.seed_rbac_defaults()` (idempotent). The 8 fixed roles: `SUPER_ADMIN`,
+`ADMIN`, `TRADER`, `RISK_MANAGER`, `RESEARCHER`, `EXECUTIVE`, `VIEWER`, `API_USER`. The full
+permission-key list:
 
 `dashboard.view`, `market_data.view`, `weather.view`, `storage.view`, `pipeline.view`,
 `lng.view`, `power.view`, `news.view`, `trading_recommendations.view`,
@@ -199,30 +199,58 @@ specification):
 `admin.agent_management`, `admin.agent_optimization`, `admin.model_management`,
 `admin.audit_logs`, `admin.feature_management`, `admin.risk_settings`.
 
-Each role's default grants (`packages/db/db/repository.py`'s `_ROLE_PERMISSIONS`) are a
-reviewable initial default: `SUPER_ADMIN` gets every permission; `ADMIN` gets every permission
-except the four reserved for `SUPER_ADMIN` alone (`admin.system_settings`, `admin.risk_settings`,
-`admin.agent_optimization`, `admin.model_management` — the system-level/risk/model/agent-
-optimization controls this platform keeps behind its strictest boundary, see
-`docs/risk-framework.md`); the remaining roles get a role-appropriate subset of `*.view`/
-`*.manage`/`*.execute` permissions. This mapping is not yet read by any enforcement path — it
-exists so `User.role_id` has real rows to reference, and so the eventual Milestone 4 cutover
-edits an already-correct default rather than inventing one from scratch.
+Each role's default grants (`_ROLE_PERMISSIONS` in `packages/db/db/repository.py`): `SUPER_ADMIN`
+gets every permission; `ADMIN` gets every permission except the four reserved for `SUPER_ADMIN`
+alone (`admin.system_settings`, `admin.risk_settings`, `admin.agent_optimization`,
+`admin.model_management`); the remaining roles get a role-appropriate subset of `*.view`/
+`*.manage`/`*.execute` permissions.
 
-**Not yet built (Milestone 4)**:
-- `Feature` / `RoleFeatureEntitlement` / `OrganizationFeatureEntitlement` /
-  `UserFeatureOverride`, with effective access computed as: globally enabled AND role grants it
-  AND organization grants it AND NOT explicitly denied at the user level. For
-  `security_sensitive` features, a user-level override may only ever narrow access, never grant
-  access the role/org tier doesn't already allow — a deny always wins.
-- Every enforcement point is server-side (new `require_permission(...)`/`require_feature(...)`
-  FastAPI dependencies, alongside today's `require_role`). Every `/admin/*` endpoint currently
-  enforces `require_role(Role.ADMIN)` (`apps/api/api_app/auth.py`'s 5-value dev-mode `Role` enum)
-  as an interim mechanism — not yet the DB-backed `admin.users.create`-style permission check the
-  spec calls for, since there is no session/user-identity bridge yet between a dev-mode/OIDC JWT
-  and a `UserRow` (that bridge is part of Milestone 3's session work). The frontend may hide UI
-  based on the user's effective permission set (returned by `/auth/me`), but that is UX only — it
-  grants nothing on its own.
+**Enforcement is now real** (Milestone 4): `apps/api/api_app/entitlements.py`'s
+`get_effective_permissions(user, state)` resolves a live permission set for *any* authenticated
+`User` — dev-mode, OIDC, or magic-link alike — by unioning `state.repo.get_permission_keys_for_role(role.value)`
+across every role the user carries (safe because of §4a's role/DB-name identity).
+`require_permission(key)` and `require_any_permission(*keys)` are FastAPI dependencies built on
+top of it; `ensure_permission(user, state, key)` is the same check for use mid-handler, when the
+required permission depends on the request body (e.g. a status-change endpoint whose needed
+permission varies by target status). Every `/admin/*` route (`admin_users.py`) is now gated by
+the real permission the access-model spec assigns it (`admin.users.create`, `admin.organizations`,
+`admin.users.suspend`/`admin.users.revoke`/`admin.users.edit` depending on the target status,
+etc.) instead of the placeholder `require_role(Role.ADMIN)` check — verified not to regress
+existing authorization outcomes for the `_DEV_USERS` fixtures (`ADMIN`'s DB-role permission set
+still covers every admin action those tests exercise; `TRADER`/`RISK_MANAGER`/etc. still get 403).
+`GET /auth/me/entitlements` exposes a user's effective permissions + feature map for the frontend
+to consume (Milestone 5's job — nothing reads this endpoint's output to gate anything server-side
+today; every real enforcement point calls `entitlements.py` directly).
+
+### Feature entitlements
+
+`Feature` / `RoleFeatureEntitlement` / `OrganizationFeatureEntitlement` / `UserFeatureOverride`
+tables, seeded by `SqlAppRepository.seed_feature_defaults()` with the 18 features from spec §24
+(Market Dashboard, Natural Gas Fundamentals, Weather/Storage/Pipeline/LNG/Power/News
+Intelligence, AI Trade Recommendations, Chief Trading Agent Chat, Portfolio Analytics, Risk
+Analytics, Natural Gas Digital Twin, Historical Research, Data Export, API Access, Paper Trading,
+Experimental Features) and each role's default grants. `entitlements.py::get_effective_features`
+computes, per feature:
+
+```
+effective = globally_enabled AND role_grants AND org_grants AND NOT user_denied
+```
+
+Role-level access is deny-by-default (a role only has a feature if an explicit
+`RoleFeatureEntitlementRow` says so); organization-level is allow-by-default (an org row only
+ever *restricts* below what the role already grants — a client's plan excluding "Experimental
+Features" regardless of role, say). The `security_sensitive` flag (set on
+`chief_trading_agent_chat`, `portfolio_analytics`, `risk_analytics`, `data_export`, `api_access`,
+`paper_trading`, `experimental_features`) governs how a per-user override behaves: for a
+non-sensitive feature, a `UserFeatureOverride` can freely grant or deny regardless of role/org;
+for a `security_sensitive` one, an override can only narrow access — an `enabled=True` override
+can never grant a sensitive feature that role/org don't already allow. This is spec §24's
+"deny-overrides for security-sensitive features" implemented exactly.
+
+`require_feature(key)` (a FastAPI dependency, same shape as `require_permission`) exists now but
+isn't wired to any user-facing route yet — that's Milestone 5's job (dashboard/chat integration,
+spec §25 "Only display functionality the authenticated user is entitled to access... both UI and
+backend APIs must enforce entitlements").
 
 ## 6. Chief Trading Agent chat authorization **(not yet built — Milestone 5)**
 

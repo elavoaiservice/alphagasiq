@@ -161,7 +161,16 @@ No column for chain-of-thought. `reasoning_summary` is a concise, human-auditabl
 - **`permissions`** — id, key (unique), description. Seeded with the full permission-key list
   from `docs/access-model.md` §5.
 - **`role_permissions`** — id, role_id (FK), permission_id (FK). Each seeded role's default
-  grants; not yet read by any enforcement path (Milestone 4).
+  grants, now read by every `/admin/*` endpoint's `require_permission(...)` check (Milestone 4).
+- **`features`** / **`role_feature_entitlements`** / **`organization_feature_entitlements`** /
+  **`user_feature_overrides`** (Milestone 4) — the feature-entitlement model from spec §24.
+  `features`: id, key (unique), name, description, security_sensitive, globally_enabled.
+  `role_feature_entitlements`: id, role_id (FK), feature_id (FK), enabled (deny-by-default: a
+  role only has a feature via an explicit `enabled=True` row). `organization_feature_entitlements`:
+  id, organization_id (FK), feature_id (FK), enabled (allow-by-default: only an explicit
+  `enabled=False` row restricts). `user_feature_overrides`: id, user_id (FK), feature_id (FK),
+  enabled (deny-only for `security_sensitive` features, full override otherwise — see
+  `apps/api/api_app/entitlements.py`).
 - **`magic_link_tokens`** (Milestone 3) — id, user_id (FK), token_hash (unique, sha256 — the raw
   token is never stored), purpose (`INITIAL_INVITATION`/`LOGIN`/`ACCOUNT_RECOVERY`), created_at,
   expires_at, consumed_at, revoked_at, requested_ip, user_agent.

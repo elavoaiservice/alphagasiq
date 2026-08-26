@@ -378,3 +378,18 @@ Several follow-up hardening items from the MVP status are now closed out:
   has to authenticate the first administrator before any `UserRow` exists to create more; see
   `docs/access-model.md` §3 "Bootstrap credentials" for the full reasoning. `apps/api/api_app/
   rate_limit.py` adds an in-memory sliding-window limiter for the magic-link request endpoint.
+- **Access model, Milestone 4 (real RBAC + feature entitlements)**: `apps/api/api_app/
+  entitlements.py` resolves a live effective-permission set for any authenticated `User` —
+  dev-mode, OIDC, or magic-link alike — by unioning `RolePermission` grants across every role the
+  user carries (safe because every dev-mode `Role` enum value is string-identical to a real DB
+  role name — see `docs/access-model.md` §4a). `require_permission(...)`/`require_any_permission(...)`
+  (FastAPI dependencies) and `ensure_permission(...)` (a plain-function check for mid-handler use)
+  replace `admin_users.py`'s placeholder `require_role(Role.ADMIN)` with the exact `admin.*`
+  permission the access-model spec assigns each action — verified not to regress any Milestone
+  2/3 authorization test. `packages/db` adds `FeatureRow`/`RoleFeatureEntitlementRow`/
+  `OrganizationFeatureEntitlementRow`/`UserFeatureOverrideRow` (seeded by
+  `SqlAppRepository.seed_feature_defaults()`, 18 features from spec §24); `entitlements.py::
+  get_effective_features` computes `globally_enabled AND role_grants AND org_grants AND NOT
+  user_denied`, with `security_sensitive` features getting deny-only user overrides. `GET /auth/
+  me/entitlements` exposes both for Milestone 5's dashboard/chat integration to consume;
+  `require_feature(...)` exists but isn't wired to a user-facing route yet.

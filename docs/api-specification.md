@@ -17,6 +17,7 @@ All mutating endpoints require RBAC role checks (`ADMIN`, `TRADER`, `RISK_MANAGE
 | POST | `/auth/logout` | revokes the caller's `Session` row if the token carries one (no-op for a dev-mode/OIDC token) |
 | GET | `/auth/sessions` | the caller's own session history |
 | GET | `/auth/me` | current user + roles |
+| GET | `/auth/me/entitlements` | the caller's effective permission set + feature-entitlement map (Milestone 4's `apps/api/api_app/entitlements.py`), for Milestone 5's frontend to consume |
 | GET | `/auth/mode` | `{"oidc_configured": bool}` — whether real SSO is available on this deployment |
 | GET | `/auth/oidc/login` | redirects to the configured IdP's authorization endpoint (PKCE); `501` if OIDC isn't configured |
 | GET | `/auth/oidc/callback` | IdP redirect target; validates the ID token (JWKS signature, issuer, audience, nonce), maps claims to a `Role` set, and redirects to the frontend (`/platform#access_token=...`) with this platform's own session JWT in the URL fragment |
@@ -29,24 +30,24 @@ All mutating endpoints require RBAC role checks (`ADMIN`, `TRADER`, `RISK_MANAGE
 
 ## Admin: Users & Organizations (Milestone 2)
 
-Every endpoint below requires the dev-mode `ADMIN` role (`require_role(Role.ADMIN)`) — this is
-the interim enforcement mechanism until Milestone 4 wires real `admin.users.*`/`admin.organizations`
-permission checks against the seeded `RolePermission` data. There is no endpoint anywhere that
-lets an unauthenticated or non-admin caller create a `User` or `Organization` — see
-`docs/access-model.md` "No Self-Registration."
+Every endpoint below is gated by a real, DB-backed permission check
+(`entitlements.require_permission`/`require_any_permission`, Milestone 4) resolved from the
+caller's effective permission set — not the placeholder `require_role(Role.ADMIN)` check earlier
+milestones used. There is no endpoint anywhere that lets an unauthenticated or non-admin caller
+create a `User` or `Organization` — see `docs/access-model.md` "No Self-Registration."
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/admin/roles` | the 8 seeded roles (`SUPER_ADMIN`, `ADMIN`, `TRADER`, `RISK_MANAGER`, `RESEARCHER`, `EXECUTIVE`, `VIEWER`, `API_USER`) |
-| POST | `/admin/organizations` | create an organization; `409` if the name already exists |
-| GET | `/admin/organizations` | list organizations |
-| POST | `/admin/users` | admin-create a user — looks up the organization by `company_name` (creating it inline if it doesn't exist, per spec §14), always creates the user in `INVITED` status regardless of what's requested, `409` on a duplicate (case-insensitive) email, `400` on an unrecognized role |
-| GET | `/admin/users` | list users, with `organization_name`/`role_name` resolved for display |
-| GET | `/admin/users/{user_id}` | single user; `404` if not found |
-| POST | `/admin/users/{user_id}/status` | transition a user's account status (`apps/api/api_app/account_states.py`'s state machine — e.g. `ACTIVE`→`SUSPENDED`→`ACTIVE`, or any status→`REVOKED`, which is terminal); `400` on an illegal transition (e.g. `INVITED`→`ACTIVE`, which only ever happens via magic-link activation, never an admin action). Sends an account-status-change email for `SUSPENDED`/`ACTIVE`/`DISABLED`/`REVOKED` |
-| POST | `/admin/users/{user_id}/resend-invitation` | spec §18 — only valid while `INVITED`; invalidates all prior unused invitation links and sends a fresh one; `400` once the account is no longer `INVITED` |
-| GET | `/admin/users/{user_id}/sessions` | a user's active/past sessions |
-| POST | `/admin/users/{user_id}/sessions/{session_id}/revoke` | admin-initiated session revocation (spec §20) |
+| GET | `/admin/roles` | requires `admin.users.view`. The 8 seeded roles (`SUPER_ADMIN`, `ADMIN`, `TRADER`, `RISK_MANAGER`, `RESEARCHER`, `EXECUTIVE`, `VIEWER`, `API_USER`) |
+| POST | `/admin/organizations` | requires `admin.organizations`. Create an organization; `409` if the name already exists |
+| GET | `/admin/organizations` | requires `admin.organizations`. List organizations |
+| POST | `/admin/users` | requires `admin.users.create`. Looks up the organization by `company_name` (creating it inline if it doesn't exist, per spec §14), always creates the user in `INVITED` status regardless of what's requested, `409` on a duplicate (case-insensitive) email, `400` on an unrecognized role |
+| GET | `/admin/users` | requires `admin.users.view`. List users, with `organization_name`/`role_name` resolved for display |
+| GET | `/admin/users/{user_id}` | requires `admin.users.view`. Single user; `404` if not found |
+| POST | `/admin/users/{user_id}/status` | requires `admin.users.suspend` (target `SUSPENDED`/`DISABLED`), `admin.users.revoke` (target `REVOKED`), or `admin.users.edit` (any other target). Transitions a user's account status (`apps/api/api_app/account_states.py`'s state machine); `400` on an illegal transition (e.g. `INVITED`→`ACTIVE`, which only ever happens via magic-link activation, never an admin action). Sends an account-status-change email for `SUSPENDED`/`ACTIVE`/`DISABLED`/`REVOKED` |
+| POST | `/admin/users/{user_id}/resend-invitation` | requires `admin.users.edit`. Spec §18 — only valid while `INVITED`; invalidates all prior unused invitation links and sends a fresh one; `400` once the account is no longer `INVITED` |
+| GET | `/admin/users/{user_id}/sessions` | requires `admin.users.sessions`. A user's active/past sessions |
+| POST | `/admin/users/{user_id}/sessions/{session_id}/revoke` | requires `admin.users.sessions`. Admin-initiated session revocation (spec §20) |
 
 ## System / Observability
 

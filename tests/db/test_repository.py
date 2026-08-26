@@ -516,3 +516,71 @@ async def test_session_create_get_list_and_revoke(repo):
     await repo.touch_session(session["id"])
     touched = await repo.get_session(session["id"])
     assert touched["last_seen_at"] >= session["last_seen_at"]
+
+
+async def test_seed_feature_defaults_creates_the_full_catalog_and_role_grants(repo):
+    await repo.seed_rbac_defaults()
+    await repo.seed_feature_defaults()
+
+    features = await repo.list_features()
+    assert len(features) == 18
+    keys = {f["key"] for f in features}
+    assert "chief_trading_agent_chat" in keys
+    assert "paper_trading" in keys
+
+    sensitive = {f["key"] for f in features if f["security_sensitive"]}
+    assert "chief_trading_agent_chat" in sensitive
+    assert "market_dashboard" not in sensitive
+
+    trader_role = await repo.get_role_by_name("TRADER")
+    trader_features = await repo.get_role_feature_keys(trader_role["id"])
+    assert "paper_trading" in trader_features
+    assert "risk_analytics" not in trader_features
+
+
+async def test_seed_feature_defaults_is_idempotent(repo):
+    await repo.seed_rbac_defaults()
+    await repo.seed_feature_defaults()
+    first = await repo.list_features()
+    await repo.seed_feature_defaults()
+    second = await repo.list_features()
+    assert len(first) == len(second) == 18
+
+
+async def test_organization_and_user_feature_overrides_round_trip(repo):
+    await repo.seed_rbac_defaults()
+    await repo.seed_feature_defaults()
+    role = await repo.get_role_by_name("VIEWER")
+    org = await repo.create_organization(name="Feature Override Test Co")
+    user = await repo.create_user(
+        first_name="Override",
+        last_name="Test",
+        email="override.test@example.com",
+        organization_id=org["id"],
+        role_id=role["id"],
+        status="ACTIVE",
+    )
+
+    assert await repo.get_organization_feature_overrides(org["id"]) == {}
+    assert await repo.get_user_feature_overrides(user["id"]) == {}
+
+    await repo.set_organization_feature_override(organization_id=org["id"], feature_key="data_export", enabled=False)
+    assert await repo.get_organization_feature_overrides(org["id"]) == {"data_export": False}
+
+    await repo.set_user_feature_override(user_id=user["id"], feature_key="data_export", enabled=True)
+    assert await repo.get_user_feature_overrides(user["id"]) == {"data_export": True}
+
+    # Setting again updates in place rather than duplicating a row.
+    await repo.set_user_feature_override(user_id=user["id"], feature_key="data_export", enabled=False)
+    assert await repo.get_user_feature_overrides(user["id"]) == {"data_export": False}
+
+    with pytest.raises(ValueError):
+        await repo.set_user_feature_override(user_id=user["id"], feature_key="not-a-real-feature", enabled=True)
+
+
+async def test_get_permission_keys_for_role(repo):
+    await repo.seed_rbac_defaults()
+    trader_permissions = await repo.get_permission_keys_for_role("TRADER")
+    assert "chief_agent.chat" in trader_permissions
+    assert "admin.users.create" not in trader_permissions
+    assert await repo.get_permission_keys_for_role("NOT_A_REAL_ROLE") == set()

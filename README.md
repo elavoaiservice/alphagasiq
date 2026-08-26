@@ -211,6 +211,19 @@ session-listing/revocation endpoints round out spec §20. The dev-mode password 
 permanently** (not removed) as the platform's fixed bootstrap/break-glass credential — see
 `docs/access-model.md` §3 for why a "no self-registration, no passwords" platform still needs one.
 
+**RBAC permission checks and feature entitlements are now real, not a role-name placeholder.**
+Milestone 4's `apps/api/api_app/entitlements.py` resolves a live effective-permission set for any
+authenticated user (dev-mode, OIDC, or magic-link) from the seeded `RolePermission` data, and
+`admin_users.py`'s endpoints now require the exact `admin.*` permission the access-model spec
+assigns each action (`admin.users.create`, `admin.organizations`, `admin.users.suspend`/
+`admin.users.revoke` depending on target status, etc.) instead of a placeholder role check —
+verified not to change any existing authorization outcome. `Feature`/`RoleFeatureEntitlement`/
+`OrganizationFeatureEntitlement`/`UserFeatureOverride` tables (`packages/db`) seed 18 features
+with deny-by-default role grants, allow-by-default org restrictions, and deny-only user overrides
+for `security_sensitive` features (Chief Trading Agent Chat, Portfolio/Risk Analytics, Data
+Export, API Access, Paper Trading, Experimental Features). `GET /auth/me/entitlements` exposes
+both for Milestone 5's dashboard/chat integration to consume next.
+
 **The pipeline digital twin can now be backed by a real Neo4j instance.**
 `fundamentals_service/pipeline_graph_neo4j.py` seeds the same `PipelineGraph`
 `build_default_pipeline_graph()` already builds into Neo4j via Cypher `MERGE`, then reloads it —
