@@ -9,12 +9,15 @@ from schemas import RiskLimits
 
 from ..auth import Role, User, require_role
 from ..deps import AppStateDep
+from ..entitlements import require_feature
 
 router = APIRouter(prefix="/risk", tags=["risk"])
 
+_RequireRiskAnalytics = Depends(require_feature("risk_analytics"))
+
 
 @router.get("/portfolio")
-async def portfolio_risk(state: AppStateDep):
+async def portfolio_risk(state: AppStateDep, _user=_RequireRiskAnalytics):
     summary = state.portfolio_risk_summary()
     return {
         "gross_exposure": summary.gross_exposure,

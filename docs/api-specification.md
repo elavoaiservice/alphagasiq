@@ -117,7 +117,7 @@ create a `User` or `Organization` — see `docs/access-model.md` "No Self-Regist
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/risk/portfolio` | current exposure/greeks/VaR/ES/drawdown |
+| GET | `/risk/portfolio` | requires the `risk_analytics` feature entitlement (Milestone 5, spec §25/§28). Current exposure/greeks/VaR/ES/drawdown |
 | GET | `/risk/limits` | configured limits |
 | PUT | `/risk/limits` | update limits (RISK_MANAGER/ADMIN) |
 | POST | `/risk/scenarios/{scenario_id}/run` | run a stress scenario |
@@ -134,9 +134,9 @@ create a `User` or `Organization` — see `docs/access-model.md` "No Self-Regist
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/portfolio/positions` | current paper positions |
-| GET | `/portfolio/pnl` | daily/realized/unrealized P&L |
-| GET | `/paper-orders` | simulated order/fill history |
+| GET | `/portfolio/positions` | requires the `portfolio_analytics` feature entitlement (Milestone 5). Current paper positions |
+| GET | `/portfolio/pnl` | requires `portfolio_analytics`. Daily/realized/unrealized P&L |
+| GET | `/portfolio/paper-orders` | requires `portfolio_analytics`. Simulated order/fill history |
 
 ## Decision Journal / Post-Trade
 
@@ -150,9 +150,11 @@ create a `User` or `Organization` — see `docs/access-model.md` "No Self-Regist
 
 | Method | Path | Notes |
 |---|---|---|
-| POST | `/chat/sessions` | create a chat session |
-| POST | `/chat/sessions/{id}/messages` | send a message; returns assistant reply with citations |
+| POST | `/chat/sessions` | create a chat session — left open to anonymous exploration (an empty conversation exposes nothing) |
+| POST | `/chat/sessions/{id}/messages` | requires the `chief_agent.chat` permission (Milestone 5, spec §26/§28); each topic is further gated per-tool inside `ChatAgent.ask()` by its own required permission (e.g. a portfolio/scenario question needs `portfolio.view`) — an ungranted permission is declined without the tool ever touching real data or an LLM call being made. Send a message; returns assistant reply with citations |
 | GET | `/chat/sessions/{id}` | full transcript |
+| GET | `/chat/conversations` | requires `admin.audit_logs`. Admin visibility into persisted chat usage metadata (spec §29), optionally filtered by `user_id` |
+| GET | `/chat/conversations/{id}/messages` | requires `admin.audit_logs`. Full persisted message history for one conversation |
 | WS | `/ws/chat/{id}` | streaming token delivery |
 
 All list endpoints support `limit`/`cursor` pagination. All responses embed

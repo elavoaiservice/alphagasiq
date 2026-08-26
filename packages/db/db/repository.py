@@ -19,6 +19,8 @@ from .engine import build_engine, build_sessionmaker
 from .models import (
     ApprovalRow,
     Base,
+    ChatConversationRow,
+    ChatMessageRow,
     CommitteeDecisionRow,
     ContactInquiryRow,
     DecisionJournalRow,
@@ -895,6 +897,112 @@ class SqlAppRepository:
                 return
             row.last_seen_at = datetime.utcnow()
             await session.commit()
+
+    # -- chat conversations (spec §29) -------------------------------------------------
+
+    async def create_chat_conversation(self, *, conversation_id: str, user_id: str, organization_id: str | None) -> dict:
+        row = ChatConversationRow(id=conversation_id, user_id=user_id, organization_id=organization_id)
+        async with self.session_factory() as session:
+            session.add(row)
+            await session.commit()
+        return {"id": row.id, "user_id": row.user_id, "organization_id": row.organization_id, "created_at": row.created_at}
+
+    async def save_chat_message(
+        self,
+        *,
+        conversation_id: str,
+        role: str,
+        content: str,
+        citations: list | None = None,
+        freshness: dict | None = None,
+        tool_used: str | None = None,
+        model: str | None = None,
+        latency_ms: float | None = None,
+        permissions_context: dict | None = None,
+    ) -> dict:
+        """Persists one chat turn. Deliberately has no field for a private
+        chain-of-thought — only what a `ChatMessage` API response already exposes,
+        plus metadata about how it was produced (spec §29)."""
+        row = ChatMessageRow(
+            conversation_id=conversation_id,
+            role=role,
+            content=content,
+            citations=citations or [],
+            freshness=freshness or {},
+            tool_used=tool_used,
+            model=model,
+            latency_ms=latency_ms,
+            permissions_context=permissions_context or {},
+        )
+        async with self.session_factory() as session:
+            session.add(row)
+            await session.commit()
+            await session.refresh(row)
+        return {
+            "id": row.id,
+            "conversation_id": row.conversation_id,
+            "role": row.role,
+            "content": row.content,
+            "citations": row.citations,
+            "freshness": row.freshness,
+            "tool_used": row.tool_used,
+            "model": row.model,
+            "latency_ms": row.latency_ms,
+            "permissions_context": row.permissions_context,
+            "created_at": row.created_at,
+        }
+
+    async def get_chat_conversation(self, conversation_id: str) -> dict | None:
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(select(ChatConversationRow).where(ChatConversationRow.id == conversation_id))
+            ).scalar_one_or_none()
+        if row is None:
+            return None
+        return {"id": row.id, "user_id": row.user_id, "organization_id": row.organization_id, "created_at": row.created_at}
+
+    async def list_chat_messages(self, conversation_id: str) -> list[dict]:
+        async with self.session_factory() as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(ChatMessageRow)
+                        .where(ChatMessageRow.conversation_id == conversation_id)
+                        .order_by(ChatMessageRow.created_at)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        return [
+            {
+                "id": r.id,
+                "conversation_id": r.conversation_id,
+                "role": r.role,
+                "content": r.content,
+                "citations": r.citations,
+                "freshness": r.freshness,
+                "tool_used": r.tool_used,
+                "model": r.model,
+                "latency_ms": r.latency_ms,
+                "permissions_context": r.permissions_context,
+                "created_at": r.created_at,
+            }
+            for r in rows
+        ]
+
+    async def list_chat_conversations(self, *, user_id: str | None = None) -> list[dict]:
+        """Admin-visibility listing (spec §29: "Support administrator access to chat
+        usage metadata according to role and policy") — filterable by user."""
+        async with self.session_factory() as session:
+            stmt = select(ChatConversationRow).order_by(ChatConversationRow.created_at.desc())
+            if user_id is not None:
+                stmt = stmt.where(ChatConversationRow.user_id == user_id)
+            rows = (await session.execute(stmt)).scalars().all()
+        return [
+            {"id": r.id, "user_id": r.user_id, "organization_id": r.organization_id, "created_at": r.created_at}
+            for r in rows
+        ]
 
     # -- writes ---------------------------------------------------------------------
 

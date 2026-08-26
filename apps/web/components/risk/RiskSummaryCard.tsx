@@ -1,4 +1,8 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import { apiGet } from "@/lib/api-client";
+import { useAuth } from "@/lib/auth-context";
 
 interface PortfolioRisk {
   gross_exposure: number;
@@ -11,8 +15,33 @@ interface PortfolioRisk {
   trading_halted: boolean;
 }
 
-export async function RiskSummaryCard() {
-  const risk = await apiGet<PortfolioRisk>("/risk/portfolio").catch(() => null);
+export function RiskSummaryCard() {
+  const { token } = useAuth();
+  const [risk, setRisk] = useState<PortfolioRisk | null>(null);
+
+  useEffect(() => {
+    // Risk Analytics requires the `risk_analytics` feature entitlement as of
+    // Milestone 5 (docs/access-model.md §5) -- without a session token there is
+    // nothing to fetch, so this stays a client component (a Server Component has no
+    // access to the browser-held session token from apps/web/lib/auth-context.tsx).
+    if (!token) {
+      setRisk(null);
+      return;
+    }
+    apiGet<PortfolioRisk>("/risk/portfolio", token)
+      .then(setRisk)
+      .catch(() => setRisk(null));
+  }, [token]);
+
+  if (!token) {
+    return (
+      <div className="panel">
+        <div className="panel-title">Risk</div>
+        <div className="text-xs text-terminal-muted">Sign in to an entitled account to view risk analytics.</div>
+      </div>
+    );
+  }
+
   if (!risk) {
     return (
       <div className="panel">

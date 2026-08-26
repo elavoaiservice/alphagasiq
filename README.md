@@ -224,6 +224,20 @@ for `security_sensitive` features (Chief Trading Agent Chat, Portfolio/Risk Anal
 Export, API Access, Paper Trading, Experimental Features). `GET /auth/me/entitlements` exposes
 both for Milestone 5's dashboard/chat integration to consume next.
 
+**Chief Trading Agent Chat is now permission-gated, and the dashboard enforces entitlements
+server-side, not just in the UI.** `POST /chat/sessions/{id}/messages` requires the
+`chief_agent.chat` permission; underneath that, `ChatAgent.ask()` checks a per-topic permission
+before dispatching to any tool (e.g. a portfolio/scenario question needs `portfolio.view`,
+matching spec §28's own worked example) — a declined topic never touches real platform data or
+calls the LLM. Chat conversations now persist (`ChatConversationRow`/`ChatMessageRow`) behind the
+existing session/message API contract, with admin-only visibility via `GET /chat/conversations`.
+`GET /portfolio/*` and `GET /risk/portfolio` now require the `portfolio_analytics`/
+`risk_analytics` feature entitlements from Milestone 4 — the two areas the access-model spec
+calls out by example, not a full retrofit of every dashboard endpoint. This also caught and fixed
+a real bug: a magic-link `SUPER_ADMIN`/`EXECUTIVE`/`API_USER` session was resolving entitlements
+from the route-gating role bridge instead of their actual DB role, silently under/mis-granting
+permissions — see `docs/access-model.md` §5.
+
 **The pipeline digital twin can now be backed by a real Neo4j instance.**
 `fundamentals_service/pipeline_graph_neo4j.py` seeds the same `PipelineGraph`
 `build_default_pipeline_graph()` already builds into Neo4j via Cypher `MERGE`, then reloads it —

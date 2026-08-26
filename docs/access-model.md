@@ -1,6 +1,6 @@
 # Access Model — Accounts, Authentication, RBAC & Entitlements
 
-> Status: Milestones 1-4. This document describes the target design end-to-end (per the
+> Status: Milestones 1-5. This document describes the target design end-to-end (per the
 > platform's access-model specification) and is updated incrementally as each milestone lands.
 > Sections marked **(not yet built)** describe target behavior that ships in a later milestone —
 > they are documented now so the design is reviewable as a whole, not discovered piecemeal.
@@ -207,9 +207,18 @@ alone (`admin.system_settings`, `admin.risk_settings`, `admin.agent_optimization
 
 **Enforcement is now real** (Milestone 4): `apps/api/api_app/entitlements.py`'s
 `get_effective_permissions(user, state)` resolves a live permission set for *any* authenticated
-`User` — dev-mode, OIDC, or magic-link alike — by unioning `state.repo.get_permission_keys_for_role(role.value)`
-across every role the user carries (safe because of §4a's role/DB-name identity).
-`require_permission(key)` and `require_any_permission(*keys)` are FastAPI dependencies built on
+`User`. A magic-link user resolves permissions from their **real `UserRow.role_id`** — not from
+`user.roles`. That distinction matters and was a real bug caught during Milestone 5 development:
+`user.roles` for a magic-link session is `map_db_role_to_dev_roles(...)`'s *bridged-down* 5-value
+set (§4a), built for `require_role` route gating — resolving permissions from it instead of the
+real role would silently under-grant a `SUPER_ADMIN` (missing all four `SUPER_ADMIN`-only
+permissions, since bridging maps them onto `ADMIN`-equivalent roles that don't carry those four)
+and mis-grant `EXECUTIVE`/`API_USER` (bridged to bare `VIEWER`, discarding their real, broader
+grants). Fixed by resolving from `state.repo.get_user_by_id(user.user_id)`'s `role_id` whenever a
+real `UserRow` exists, falling back to unioning `user.roles`' DB-role grants only for dev-mode/
+OIDC users who have no backing row at all — see
+`tests/api/test_entitlements.py::test_magic_link_super_admin_gets_the_real_super_admin_only_permissions`
+and its `EXECUTIVE` counterpart. `require_permission(key)` and `require_any_permission(*keys)` are FastAPI dependencies built on
 top of it; `ensure_permission(user, state, key)` is the same check for use mid-handler, when the
 required permission depends on the request body (e.g. a status-change endpoint whose needed
 permission varies by target status). Every `/admin/*` route (`admin_users.py`) is now gated by
@@ -252,11 +261,51 @@ isn't wired to any user-facing route yet — that's Milestone 5's job (dashboard
 spec §25 "Only display functionality the authenticated user is entitled to access... both UI and
 backend APIs must enforce entitlements").
 
-## 6. Chief Trading Agent chat authorization **(not yet built — Milestone 5)**
+## 6. Chief Trading Agent chat authorization
 
-`ChatAgent.ask()` will check the requesting user's effective permissions/entitlements *before*
-invoking each tool (e.g. a portfolio question requires `portfolio.view`), never after and never
-delegated to the LLM itself — the model cannot talk its way past a permission it doesn't have.
+**Implemented now** (Milestone 5, spec §§25-29): `POST /chat/sessions/{id}/messages` requires the
+`chief_agent.chat` permission (spec §26) — an unauthenticated or unentitled caller is rejected
+before ever reaching `ChatAgent.ask()`. `POST /chat/sessions` itself stays open to anonymous
+exploration (an empty conversation exposes nothing); the real gate is on sending a message.
+
+Underneath that baseline gate, `ChatAgent.ask()` (`apps/api/api_app/chat_agent.py`) checks the
+requesting user's effective permissions *before* invoking each tool — never after, and never
+delegated to the LLM itself (the model cannot talk its way past a permission it doesn't have,
+since it is never given the chance to). Each chat topic maps to the permission it needs
+(`_TOOL_PERMISSIONS`, e.g. a portfolio/scenario question requires `portfolio.view`, matching spec
+§28's own example "User without portfolio access: Cannot retrieve restricted portfolio data");
+an ungranted permission short-circuits straight to a declined-access message without the real
+tool ever touching `AppState`'s data, and without an LLM call being made at all. This is the
+second, narrower authorization layer for roles that hold `chief_agent.chat` but not every
+underlying data permission — defense in depth on top of the baseline gate, not a replacement for
+it. See `tests/api/test_chat_agent.py` for unit coverage proving a declined topic never reaches
+either `AppState` or the LLM.
+
+Chat conversations are now durably persisted (spec §29): `ChatConversationRow`/`ChatMessageRow`
+(`packages/db`) write through behind the existing in-memory `ChatSession`/`ChatMessage` response
+contract (same pattern as `AppState`'s other durable objects) — user ID, organization ID,
+timestamps, the message content, citations, freshness, which tool was used, which model produced
+the reply, latency, and a permissions-context snapshot (roles + which permission was checked +
+whether it was granted). No private chain-of-thought is ever persisted — there isn't one to begin
+with, since the tool layer returns retrieved facts, not a reasoning transcript. `GET /chat/
+conversations` / `GET /chat/conversations/{id}/messages` (gated by `admin.audit_logs`) give
+administrators the visibility spec §29 calls for.
+
+### Dashboard entitlement enforcement (spec §25)
+
+`GET /auth/me/entitlements` (Milestone 4) is the read model; Milestone 5 wires real backend
+enforcement for the two areas spec §25/§28 explicitly calls out by example: `GET /portfolio/*`
+now requires the `portfolio_analytics` feature (`require_feature`), and `GET /risk/portfolio` now
+requires `risk_analytics`. Both frontend consumers (`PositionsPanel.tsx`, `RiskSummaryCard.tsx`)
+were updated to pass the session token — `RiskSummaryCard` in particular had to move from a
+Server Component to a client component, since a Server Component has no access to the
+browser-held session token `lib/auth-context.tsx` manages.
+
+This is a deliberately scoped slice, not a full retrofit of every dashboard-adjacent endpoint
+(market/fundamentals/news/quant/journal remain open, as they always have been in this codebase) —
+extending `require_feature` to the rest of the dashboard's read endpoints is straightforward
+follow-up work using the same mechanism, not a new one to build. A full admin-configurable
+per-organization/per-user override UI for these entitlements is Milestone 6's job.
 
 ## 7. Administration **(not yet built — Milestones 6-10)**
 

@@ -187,9 +187,17 @@ def test_trade_idea_lifecycle_and_explainability(client):
 
 
 def test_risk_portfolio_endpoint(client):
-    r = client.get("/api/v1/risk/portfolio")
+    # Requires the `risk_analytics` feature entitlement as of Milestone 5's dashboard
+    # integration (spec §25/§28) -- unauthenticated is no longer sufficient. TRADER
+    # doesn't carry `risk_analytics` (RISK_MANAGER/EXECUTIVE/ADMIN do), so use ADMIN.
+    r = client.get("/api/v1/risk/portfolio", headers=_admin_headers(client))
     assert r.status_code == 200
     assert "var_95" in r.json()
+
+
+def test_risk_portfolio_endpoint_requires_auth(client):
+    r = client.get("/api/v1/risk/portfolio")
+    assert r.status_code == 401
 
 
 def test_risk_limits_update_requires_role(client):
@@ -252,32 +260,70 @@ def test_approvals_action_requires_auth(client):
     assert r.status_code == 401
 
 
+def _trader_headers(client) -> dict:
+    login = client.post(
+        "/api/v1/auth/login", json={"email": "trader@alphagasiq.local", "password": "trader-dev-password"}
+    )
+    return {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+
 def test_chat_session_and_message(client):
-    session = client.post("/api/v1/chat/sessions")
+    # Sending a chat message requires `chief_agent.chat` as of Milestone 5's chat
+    # authorization (spec §26/§28) -- session creation itself stays open to
+    # anonymous exploration (see test below), but an actual exchange needs it.
+    headers = _trader_headers(client)
+    session = client.post("/api/v1/chat/sessions", headers=headers)
     assert session.status_code == 200
     session_id = session.json()["id"]
 
-    reply = client.post(f"/api/v1/chat/sessions/{session_id}/messages", json={"content": "Why are we bullish?"})
+    reply = client.post(
+        f"/api/v1/chat/sessions/{session_id}/messages", json={"content": "Why are we bullish?"}, headers=headers
+    )
     assert reply.status_code == 200
     body = reply.json()
     assert body["role"] == "assistant"
     assert isinstance(body["content"], str) and len(body["content"]) > 0
 
 
-def test_chat_scenario_question_runs_real_scenario(client):
+def test_chat_session_creation_stays_open_to_anonymous_exploration(client):
+    """An empty conversation exposes nothing, so starting one is left open --
+    unlike `send_message`, which requires `chief_agent.chat`."""
+    session = client.post("/api/v1/chat/sessions")
+    assert session.status_code == 200
+
+
+def test_chat_message_requires_chief_agent_chat_permission(client):
     session = client.post("/api/v1/chat/sessions").json()
+    reply = client.post(
+        f"/api/v1/chat/sessions/{session['id']}/messages", json={"content": "Why are we bullish?"}
+    )
+    assert reply.status_code == 401
+
+
+def test_chat_scenario_question_runs_real_scenario(client):
+    # Portfolio/scenario questions require `portfolio.view` on top of the baseline
+    # `chief_agent.chat` (spec §28) -- TRADER has both.
+    headers = _trader_headers(client)
+    session = client.post("/api/v1/chat/sessions", headers=headers).json()
     reply = client.post(
         f"/api/v1/chat/sessions/{session['id']}/messages",
         json={"content": "Run a scenario where Freeport LNG goes offline"},
+        headers=headers,
     )
     assert reply.status_code == 200
     assert "Freeport" in reply.json()["content"] or "LNG" in reply.json()["content"]
 
 
 def test_portfolio_positions_endpoint(client):
-    r = client.get("/api/v1/portfolio/positions")
+    # Requires the `portfolio_analytics` feature entitlement as of Milestone 5.
+    r = client.get("/api/v1/portfolio/positions", headers=_trader_headers(client))
     assert r.status_code == 200
     assert isinstance(r.json(), list)
+
+
+def test_portfolio_positions_endpoint_requires_auth(client):
+    r = client.get("/api/v1/portfolio/positions")
+    assert r.status_code == 401
 
 
 def _admin_headers(client) -> dict:
@@ -325,7 +371,7 @@ def test_full_lifecycle_execute_then_close_then_post_trade_and_performance(clien
     assert approve.status_code == 200
     assert approve.json()["state"] == "EXECUTED_SIMULATION"
 
-    positions = client.get("/api/v1/portfolio/positions").json()
+    positions = client.get("/api/v1/portfolio/positions", headers=headers).json()
     position = next(p for p in positions if p["instrument"] == trades[0]["instrument"])
     assert position["quantity"] != 0
     # Entry price recorded on the trade idea should closely match the actual paper

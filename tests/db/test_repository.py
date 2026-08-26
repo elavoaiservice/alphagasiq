@@ -578,6 +578,39 @@ async def test_organization_and_user_feature_overrides_round_trip(repo):
         await repo.set_user_feature_override(user_id=user["id"], feature_key="not-a-real-feature", enabled=True)
 
 
+async def test_chat_conversation_and_message_persistence(repo):
+    conversation = await repo.create_chat_conversation(
+        conversation_id="11111111-1111-1111-1111-111111111111", user_id="u-trader-1", organization_id=None
+    )
+    assert conversation["id"] == "11111111-1111-1111-1111-111111111111"
+
+    fetched = await repo.get_chat_conversation(conversation["id"])
+    assert fetched == conversation
+    assert await repo.get_chat_conversation("does-not-exist") is None
+
+    await repo.save_chat_message(conversation_id=conversation["id"], role="user", content="Why are we bullish?")
+    await repo.save_chat_message(
+        conversation_id=conversation["id"],
+        role="assistant",
+        content="Because of storage draws.",
+        citations=[{"source": "trade_idea", "reference": "abc"}],
+        freshness={"trade_created_at": "2024-01-01T00:00:00"},
+        tool_used="why_bias",
+        model="mock-llm",
+        latency_ms=12.5,
+        permissions_context={"roles": ["TRADER"], "permission_required": "trading_recommendations.view", "access_granted": True},
+    )
+
+    messages = await repo.list_chat_messages(conversation["id"])
+    assert [m["role"] for m in messages] == ["user", "assistant"]
+    assert messages[1]["tool_used"] == "why_bias"
+    assert messages[1]["permissions_context"]["access_granted"] is True
+
+    conversations = await repo.list_chat_conversations(user_id="u-trader-1")
+    assert [c["id"] for c in conversations] == [conversation["id"]]
+    assert await repo.list_chat_conversations(user_id="nobody") == []
+
+
 async def test_get_permission_keys_for_role(repo):
     await repo.seed_rbac_defaults()
     trader_permissions = await repo.get_permission_keys_for_role("TRADER")

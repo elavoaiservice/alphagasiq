@@ -6,11 +6,19 @@ tool-use loop, so the chat is fully useful even when `ANTHROPIC_API_KEY` is not 
 (`MockLLMProvider` cannot itself invoke tools). When a real Claude key is configured,
 the retrieved facts are handed to the LLM to phrase into prose; the underlying numbers
 always come from `AppState`, never from the model.
+
+Milestone 5 (docs/access-model.md §6, spec §§26-28) adds server-side tool
+authorization: `ask()` now takes the requesting `User` and checks their effective
+permissions *before* invoking a tool — never after, and never delegated to the LLM
+(which cannot be trusted to enforce access control on itself). `_TOOL_PERMISSIONS`
+maps each topic to the permission it requires; an ungranted permission short-circuits
+straight to a declined-access message without ever touching `AppState`'s real data.
 """
 
 from __future__ import annotations
 
 import re
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
@@ -19,6 +27,8 @@ from agent_sdk import LLMMessage, LLMProvider
 from risk_service.metrics import PositionSnapshot
 from risk_service.scenarios import get_scenario, run_scenario
 
+from .auth import User
+from .entitlements import get_effective_permissions
 from .state import AppState
 
 
@@ -27,48 +37,133 @@ class ToolResult:
         self.content = content
         self.citations = citations
         self.freshness = freshness
+        # Populated by `ChatAgent.ask()` after dispatch — never set by an individual
+        # tool method, so no existing internal call site needs to change.
+        self.tool_used: str | None = None
+        self.model: str | None = None
+        self.latency_ms: float | None = None
+        self.permission_required: str | None = None
+        self.access_granted: bool = True
+
+
+# Each chat topic's required permission (spec §28 "Chat Authorization" — e.g. a
+# question that reads portfolio positions/P&L requires `portfolio.view`, matching
+# the spec's own example: "User without portfolio access: Cannot retrieve restricted
+# portfolio data"). `VIEWER` (and therefore an anonymous/unauthenticated caller, who
+# is treated as VIEWER — see `auth.py::_ANONYMOUS_USER`) has every permission below
+# except `portfolio.view`, so general market-intelligence questions stay open exactly
+# as before this milestone while portfolio/scenario questions now require it.
+_TOOL_PERMISSIONS: dict[str, str] = {
+    "why_bias": "trading_recommendations.view",
+    "what_invalidates": "trading_recommendations.view",
+    "most_disagreeing_agent": "trading_recommendations.view",
+    "hdd_sensitivity": "weather.view",
+    "weather_run_delta": "weather.view",
+    "run_named_scenario": "portfolio.view",
+    "show_evidence": "trading_recommendations.view",
+    "compare_forecast_vs_consensus": "storage.view",
+    "top_risks": "portfolio.view",
+    "what_changed": "dashboard.view",
+    "todays_move": "news.view",
+    "general_status": "dashboard.view",
+}
 
 
 class ChatAgent:
     def __init__(self, llm: LLMProvider):
         self.llm = llm
 
-    async def ask(self, question: str, state: AppState) -> ToolResult:
-        q = question.lower()
-
+    def _route(self, q: str) -> str:
         if "invalidate" in q:
-            result = self._what_invalidates(q, state)
+            return "what_invalidates"
         elif "disagree" in q:
-            result = self._most_disagreeing_agent(state)
+            return "most_disagreeing_agent"
         elif "sensitiv" in q and "hdd" in q:
-            result = self._hdd_sensitivity(q, state)
+            return "hdd_sensitivity"
         elif "ecmwf" in q or ("weather" in q and ("run" in q or "model" in q)):
-            result = self._weather_run_delta(state)
+            return "weather_run_delta"
         elif "scenario" in q or "freeport" in q or "offline" in q:
-            result = self._run_named_scenario(q, state)
+            return "run_named_scenario"
         elif "evidence" in q or "data point" in q or "show every" in q:
-            result = self._show_evidence(q, state)
+            return "show_evidence"
         elif "consensus" in q and ("eia" in q or "storage" in q):
-            result = self._compare_forecast_vs_consensus(state)
+            return "compare_forecast_vs_consensus"
         elif "largest risk" in q or "biggest risk" in q or "risk in the portfolio" in q:
-            result = self._top_risks(state)
+            return "top_risks"
         elif "what changed" in q or "last six hours" in q or "recent" in q:
-            result = self._what_changed(q, state)
+            return "what_changed"
         elif "caused today" in q or "today's move" in q or "why did" in q and "move" in q:
-            result = self._todays_move(state)
+            return "todays_move"
         elif "why are we" in q or "why bullish" in q or "why bearish" in q or "argue" in q or "arguments against" in q:
-            result = self._why_bias(q, state)
+            return "why_bias"
         else:
-            result = self._general_status(state)
+            return "general_status"
 
-        prompt = (
-            "You are the AlphaGasIQ AI Trader Chat assistant. Using ONLY the facts below "
-            "(never invent numbers), answer the trader's question concisely and professionally.\n\n"
-            f"Question: {question}\n\nFacts:\n{result.content}"
-        )
-        llm_response = await self.llm.complete([LLMMessage(role="user", content=prompt)], max_tokens=400)
-        content = result.content if "MOCK LLM RESPONSE" in llm_response.content else llm_response.content
-        return ToolResult(content=content, citations=result.citations, freshness=result.freshness)
+    def _dispatch(self, topic: str, q: str, state: AppState) -> ToolResult:
+        if topic == "what_invalidates":
+            return self._what_invalidates(q, state)
+        elif topic == "most_disagreeing_agent":
+            return self._most_disagreeing_agent(state)
+        elif topic == "hdd_sensitivity":
+            return self._hdd_sensitivity(q, state)
+        elif topic == "weather_run_delta":
+            return self._weather_run_delta(state)
+        elif topic == "run_named_scenario":
+            return self._run_named_scenario(q, state)
+        elif topic == "show_evidence":
+            return self._show_evidence(q, state)
+        elif topic == "compare_forecast_vs_consensus":
+            return self._compare_forecast_vs_consensus(state)
+        elif topic == "top_risks":
+            return self._top_risks(state)
+        elif topic == "what_changed":
+            return self._what_changed(q, state)
+        elif topic == "todays_move":
+            return self._todays_move(state)
+        elif topic == "why_bias":
+            return self._why_bias(q, state)
+        else:
+            return self._general_status(state)
+
+    async def ask(self, question: str, state: AppState, user: User) -> ToolResult:
+        q = question.lower()
+        topic = self._route(q)
+        required_permission = _TOOL_PERMISSIONS[topic]
+
+        start = time.perf_counter()
+        permissions = await get_effective_permissions(user, state)
+        access_granted = required_permission in permissions
+
+        if not access_granted:
+            # Declined before any tool ever touches AppState's real data — this *is*
+            # the server-side enforcement point spec §28 requires; the LLM is never
+            # consulted and never gets a chance to talk its way past it.
+            result = ToolResult(
+                f"I can't share that — it requires the '{required_permission}' permission, which "
+                "your account doesn't currently have. Contact your administrator if you believe "
+                "this is incorrect.",
+                [],
+                {},
+            )
+            model_used = None
+        else:
+            result = self._dispatch(topic, q, state)
+            prompt = (
+                "You are the AlphaGasIQ AI Trader Chat assistant. Using ONLY the facts below "
+                "(never invent numbers), answer the trader's question concisely and professionally.\n\n"
+                f"Question: {question}\n\nFacts:\n{result.content}"
+            )
+            llm_response = await self.llm.complete([LLMMessage(role="user", content=prompt)], max_tokens=400)
+            content = result.content if "MOCK LLM RESPONSE" in llm_response.content else llm_response.content
+            model_used = llm_response.model
+            result = ToolResult(content=content, citations=result.citations, freshness=result.freshness)
+
+        result.tool_used = topic
+        result.model = model_used
+        result.latency_ms = (time.perf_counter() - start) * 1000
+        result.permission_required = required_permission
+        result.access_granted = access_granted
+        return result
 
     # -- tools -------------------------------------------------------------
 

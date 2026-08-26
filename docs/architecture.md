@@ -393,3 +393,22 @@ Several follow-up hardening items from the MVP status are now closed out:
   user_denied`, with `security_sensitive` features getting deny-only user overrides. `GET /auth/
   me/entitlements` exposes both for Milestone 5's dashboard/chat integration to consume;
   `require_feature(...)` exists but isn't wired to a user-facing route yet.
+- **Access model, Milestone 5 (chat authorization + dashboard entitlement enforcement)**:
+  `POST /chat/sessions/{id}/messages` now requires `chief_agent.chat` (spec §26); session
+  creation stays open to anonymous exploration. `apps/api/api_app/chat_agent.py::ChatAgent.ask`
+  additionally checks a per-topic permission (`_TOOL_PERMISSIONS`) before dispatching to any
+  tool — a portfolio/scenario question requires `portfolio.view`, matching spec §28's own
+  example; a declined topic never touches `AppState` or calls the LLM. Chat conversations now
+  persist to `ChatConversationRow`/`ChatMessageRow` (`packages/db`) behind the existing
+  in-memory `ChatSession`/`ChatMessage` contract, with `GET /chat/conversations(/{id}/messages)`
+  giving `admin.audit_logs`-holders visibility (spec §29). `GET /portfolio/*` and
+  `GET /risk/portfolio` now require the `portfolio_analytics`/`risk_analytics` feature
+  entitlements (`require_feature`) — a deliberately scoped slice of spec §25's "both UI and
+  backend must enforce entitlements," covering the two areas the spec calls out by example
+  rather than a full retrofit of every dashboard endpoint. `RiskSummaryCard.tsx` moved from a
+  Server Component to a client component to reach the browser-held session token; `PositionsPanel.tsx`'s
+  data fetch was updated to send it. Also fixes a real bug caught during this milestone's
+  development: `entitlements.py`'s permission/feature resolution now reads a magic-link user's
+  *actual* `UserRow.role_id`, not the route-gating `map_db_role_to_dev_roles` bridge — the bridge
+  was silently under/mis-granting `SUPER_ADMIN`/`EXECUTIVE`/`API_USER` magic-link sessions (see
+  `docs/access-model.md` §5 for the full explanation and its regression tests).

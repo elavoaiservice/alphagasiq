@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { apiPost } from "@/lib/api-client";
+import { useAuth } from "@/lib/auth-context";
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -19,6 +20,7 @@ const SUGGESTIONS = [
 ];
 
 export function ChatPanel() {
+  const { token } = useAuth();
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -26,25 +28,39 @@ export function ChatPanel() {
 
   async function ensureSession(): Promise<string> {
     if (sessionId) return sessionId;
-    const session = await apiPost<{ id: string }>("/chat/sessions");
+    const session = await apiPost<{ id: string }>("/chat/sessions", undefined, token ?? undefined);
     setSessionId(session.id);
     return session.id;
   }
 
   async function send(content: string) {
     if (!content.trim()) return;
+    // Chief Trading Agent Chat requires the `chief_agent.chat` permission
+    // (docs/access-model.md §6, spec §26) -- enforced server-side regardless, but
+    // failing fast here avoids a confusing generic error for a signed-out visitor.
+    if (!token) {
+      setMessages((prev) => [
+        ...prev,
+        { role: "user", content },
+        { role: "assistant", content: "Sign in to an entitled account to use the Chief Trading Agent Chat." },
+      ]);
+      setInput("");
+      return;
+    }
     setLoading(true);
     setMessages((prev) => [...prev, { role: "user", content }]);
     setInput("");
     try {
       const id = await ensureSession();
-      const reply = await apiPost<ChatMessage>(`/chat/sessions/${id}/messages`, { content });
+      const reply = await apiPost<ChatMessage>(`/chat/sessions/${id}/messages`, { content }, token);
       setMessages((prev) => [...prev, reply]);
-    } catch {
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: "Unable to reach the AI Trader Chat backend right now." },
-      ]);
+    } catch (err) {
+      const status = err instanceof Error ? err.message : "";
+      const content =
+        status.includes("403") || status.includes("401")
+          ? "Your account isn't entitled to the Chief Trading Agent Chat. Contact your administrator if you believe this is incorrect."
+          : "Unable to reach the AI Trader Chat backend right now.";
+      setMessages((prev) => [...prev, { role: "assistant", content }]);
     } finally {
       setLoading(false);
     }

@@ -178,6 +178,14 @@ No column for chain-of-thought. `reasoning_summary` is a concise, human-auditabl
   ip_address, user_agent, last_seen_at. Only magic-link-issued JWTs carry a `sid` claim pointing
   at one of these rows (`apps/api/api_app/auth.py`) — dev-mode/OIDC sessions remain stateless and
   have no row here.
+- **`chat_conversations`** / **`chat_messages`** (Milestone 5, spec §29) — persisted Chief
+  Trading Agent Chat history behind the existing in-memory `ChatSession`/`ChatMessage` response
+  contract (`chat_conversations.id` is the same UUID the API already returns as a session id).
+  `chat_conversations`: id, user_id, organization_id (FK, nullable), created_at.
+  `chat_messages`: id, conversation_id (FK), role, content, citations (jsonb), freshness (jsonb),
+  tool_used, model, latency_ms, permissions_context (jsonb — roles + which permission was checked
+  + whether it was granted), created_at. No column exists for a chain-of-thought — there isn't
+  one to persist, since the tool layer returns retrieved facts, not a reasoning transcript.
 
 ## 5. TimescaleDB Specifics
 

@@ -2,6 +2,8 @@ from .engine import build_engine, build_sessionmaker
 from .models import (
     ApprovalRow,
     Base,
+    ChatConversationRow,
+    ChatMessageRow,
     CommitteeDecisionRow,
     ContactInquiryRow,
     DecisionJournalRow,
@@ -46,5 +48,7 @@ __all__ = [
     "RoleFeatureEntitlementRow",
     "OrganizationFeatureEntitlementRow",
     "UserFeatureOverrideRow",
+    "ChatConversationRow",
+    "ChatMessageRow",
     "SqlAppRepository",
 ]

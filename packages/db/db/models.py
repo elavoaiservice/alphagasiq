@@ -330,6 +330,42 @@ class UserFeatureOverrideRow(Base):
     enabled: Mapped[bool] = mapped_column(nullable=False, default=True)
 
 
+class ChatConversationRow(Base):
+    """A persisted Chief Trading Agent Chat conversation (docs/access-model.md §6,
+    spec §29). `id` is shared with the in-memory `ChatSession.id` the router already
+    returns — this table is a write-through durability layer behind that existing
+    response contract, not a replacement for it (mirrors how `AppState`'s other
+    in-memory dicts write through to `SqlAppRepository` — see `state.py`)."""
+
+    __tablename__ = "chat_conversations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, nullable=False)
+    organization_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class ChatMessageRow(Base):
+    """One turn of a `ChatConversationRow`. Deliberately has no column for a private
+    chain-of-thought — only the user's message, the assistant's final response, and
+    metadata about how that response was produced (spec §29: "Do not persist private
+    chain-of-thought")."""
+
+    __tablename__ = "chat_messages"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    conversation_id: Mapped[str] = mapped_column(String(36), ForeignKey("chat_conversations.id"), nullable=False)
+    role: Mapped[str] = mapped_column(String, nullable=False)
+    content: Mapped[str] = mapped_column(String, nullable=False)
+    citations: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    freshness: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    tool_used: Mapped[str | None] = mapped_column(String, nullable=True)
+    model: Mapped[str | None] = mapped_column(String, nullable=True)
+    latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    permissions_context: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
 class RiskLimitsRow(Base):
     __tablename__ = "risk_limits"
 

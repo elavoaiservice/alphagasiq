@@ -138,3 +138,60 @@ def test_status_change_permission_is_granular_by_target_status(client):
         f"/api/v1/admin/users/{created['id']}/status", json={"status": "REVOKED"}, headers=admin_headers
     )
     assert revoke.status_code == 200
+
+
+def _activate_via_magic_link(client, email: str, role: str) -> dict:
+    """Creates a real DB user (via the admin API) with the given role, activates it
+    by extracting the magic-link token from the console email provider (exactly what
+    a real user does by clicking the link), and returns {"headers": ..., "user": ...}."""
+    import re
+
+    admin_headers = _admin_headers(client)
+    created = client.post(
+        "/api/v1/admin/users",
+        json={
+            "first_name": "Real",
+            "last_name": "User",
+            "business_email": email,
+            "company_name": f"Org for {email}",
+            "role": role,
+        },
+        headers=admin_headers,
+    ).json()
+
+    from api_app import state as state_module
+
+    sent = state_module._state.email_provider.sent
+    token = re.search(r"token=([A-Za-z0-9_-]+)", sent[-1].text_body).group(1)
+    verify = client.get(f"/api/v1/auth/magic-link/verify?token={token}", follow_redirects=False)
+    session_token = verify.headers["location"].split("access_token=", 1)[1]
+    return {"headers": {"Authorization": f"Bearer {session_token}"}, "user": created}
+
+
+def test_magic_link_super_admin_gets_the_real_super_admin_only_permissions(client):
+    """Regression test for a real bug caught during Milestone 5 development: a
+    magic-link SUPER_ADMIN user's permissions must come from their actual DB role,
+    not from `auth.py::map_db_role_to_dev_roles`'s route-gating bridge (which
+    collapses SUPER_ADMIN down onto ADMIN/TRADER/RISK_MANAGER/RESEARCHER/VIEWER for
+    `require_role` purposes and would otherwise silently omit the four permissions
+    reserved for SUPER_ADMIN alone)."""
+    session = _activate_via_magic_link(client, "realsuperadmin@realcompany.com", "SUPER_ADMIN")
+    r = client.get("/api/v1/auth/me/entitlements", headers=session["headers"])
+    permissions = set(r.json()["permissions"])
+    assert "admin.system_settings" in permissions
+    assert "admin.risk_settings" in permissions
+    assert "admin.agent_optimization" in permissions
+    assert "admin.model_management" in permissions
+
+
+def test_magic_link_executive_gets_executive_permissions_not_bridged_viewer_only(client):
+    """Same bug, different symptom: an EXECUTIVE magic-link user's `roles` claim is
+    bridged down to `[VIEWER]` for route-gating purposes, but their entitlements must
+    still reflect the real EXECUTIVE role, not bare VIEWER."""
+    session = _activate_via_magic_link(client, "realexecutive@realcompany.com", "EXECUTIVE")
+    r = client.get("/api/v1/auth/me/entitlements", headers=session["headers"])
+    permissions = set(r.json()["permissions"])
+    # EXECUTIVE grants portfolio.view and risk.view; bare VIEWER (what the bridge
+    # would incorrectly resolve to) grants neither.
+    assert "portfolio.view" in permissions
+    assert "risk.view" in permissions

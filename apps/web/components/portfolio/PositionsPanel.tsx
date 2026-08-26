@@ -25,18 +25,26 @@ export function PositionsPanel() {
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
-  async function refresh() {
+  async function refresh(currentToken: string | null) {
+    // Portfolio Analytics requires the `portfolio_analytics` feature entitlement as
+    // of Milestone 5 (docs/access-model.md §5) -- without a token there is nothing
+    // this panel can show.
+    if (!currentToken) {
+      setPositions([]);
+      setTrades([]);
+      return;
+    }
     const [posRes, tradesRes] = await Promise.all([
-      fetch(`${API_BASE}/portfolio/positions`),
+      fetch(`${API_BASE}/portfolio/positions`, { headers: { Authorization: `Bearer ${currentToken}` } }),
       fetch(`${API_BASE}/trade-ideas`),
     ]);
-    setPositions(await posRes.json());
+    setPositions(posRes.ok ? await posRes.json() : []);
     setTrades(await tradesRes.json());
   }
 
   useEffect(() => {
-    refresh();
-  }, []);
+    refresh(token);
+  }, [token]);
 
   async function closePosition(instrument: string) {
     const trade = trades.find((t) => t.instrument === instrument);
@@ -57,7 +65,7 @@ export function PositionsPanel() {
         token
       );
       setMessage(`Closed. Outcome: ${res.post_trade_analysis.quadrant}`);
-      await refresh();
+      await refresh(token);
     } catch {
       setMessage("Close failed.");
     } finally {
