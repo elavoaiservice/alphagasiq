@@ -12,8 +12,25 @@ export async function apiGet<T>(path: string, token?: string): Promise<T> {
 }
 
 export async function apiPost<T>(path: string, body?: unknown, token?: string): Promise<T> {
+  return apiMutate<T>("POST", path, body, token);
+}
+
+export async function apiPut<T>(path: string, body?: unknown, token?: string): Promise<T> {
+  return apiMutate<T>("PUT", path, body, token);
+}
+
+export async function apiPatch<T>(path: string, body?: unknown, token?: string): Promise<T> {
+  return apiMutate<T>("PATCH", path, body, token);
+}
+
+async function apiMutate<T>(
+  method: "POST" | "PUT" | "PATCH",
+  path: string,
+  body: unknown,
+  token?: string
+): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
-    method: "POST",
+    method,
     headers: {
       "Content-Type": "application/json",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -22,7 +39,13 @@ export async function apiPost<T>(path: string, body?: unknown, token?: string): 
     cache: "no-store",
   });
   if (!res.ok) {
-    throw new Error(`POST ${path} failed: ${res.status}`);
+    let detail = "";
+    try {
+      detail = (await res.json())?.detail ?? "";
+    } catch {
+      // response body wasn't JSON -- fall through with the bare status
+    }
+    throw new Error(`${method} ${path} failed: ${res.status}${detail ? ` — ${detail}` : ""}`);
   }
   return res.json() as Promise<T>;
 }

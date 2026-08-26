@@ -306,6 +306,19 @@ of the existing `RISK_MANAGER`-facing `/risk/limits` endpoint. `GET /admin/syste
 real data-feed/agent/model health, the Risk Governor's status, and event-bus/database connectivity
 in one place — the honest data source a fuller pipeline visualization would build on next.
 
+**Milestones 7-10 now have a real admin frontend, not just backend APIs.**
+`apps/web/app/platform/admin/{data-feeds,agents,agents/[agentType],models,risk-settings,
+audit-log,system-health}` give an administrator a UI for every one of those milestones' endpoints
+— data-feed config/test-connection/refresh/ingestion-log, the Agent Control Center (status
+toggles, manual Chief Trading Agent run) and per-agent version lifecycle (draft → transition →
+promote/rollback, plus the SUPER_ADMIN-only optimization-proposal form), model status management,
+reason-required risk-setting changes, the append-only audit log, and the system-health rollup.
+`api-client.ts` gained `apiPut`/`apiPatch` helpers (surfacing the API's error `detail` in thrown
+errors) alongside the existing `apiGet`/`apiPost`, replacing the raw `fetch()` calls earlier admin
+pages had to write inline. Verified end-to-end against the live API and a headless browser (no
+console/runtime errors; real data rendering, real state changes, and the expected 403-with-friendly-
+message on the two SUPER_ADMIN-only pages when logged in as a plain ADMIN) — not just `next build`.
+
 **The pipeline digital twin can now be backed by a real Neo4j instance.**
 `fundamentals_service/pipeline_graph_neo4j.py` seeds the same `PipelineGraph`
 `build_default_pipeline_graph()` already builds into Neo4j via Cypher `MERGE`, then reloads it —

@@ -13,6 +13,8 @@ interface Overview {
   chief_trading_agent_queries: number;
   paper_trading_activity: { open_positions: number; total_fills: number };
   agent_execution_health: { total_executions_logged: number };
+  data_feed_health: { total_feeds: number; healthy: number; degraded_or_unavailable: number; not_configured: number };
+  stale_data_feeds: number;
   not_yet_available: string[];
 }
 
@@ -52,11 +54,13 @@ export default function AdminOverviewPage() {
         <Stat label="Chief Trading Agent Queries" value={overview.chief_trading_agent_queries} />
         <Stat label="Open Paper Positions" value={overview.paper_trading_activity.open_positions} />
         <Stat label="Paper Fills" value={overview.paper_trading_activity.total_fills} />
+        <Stat label="Healthy Data Feeds" value={`${overview.data_feed_health.healthy}/${overview.data_feed_health.total_feeds}`} />
+        <Stat label="Stale Data Feeds" value={overview.stale_data_feeds} />
       </div>
       {overview.not_yet_available.length > 0 && (
         <div className="text-[11px] text-terminal-muted border-t border-terminal-border pt-2">
-          Not yet available: {overview.not_yet_available.join(", ")} — these land with the Data Feed
-          Administration, Agent Control Center, and Audit Logging milestones.
+          Not yet available: {overview.not_yet_available.join(", ")} — these require live
+          health-monitoring infrastructure beyond this platform&apos;s current scope.
         </div>
       )}
     </div>

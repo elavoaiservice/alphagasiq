@@ -10,6 +10,12 @@ const NAV = [
   { href: "/platform/admin/organizations", label: "Organizations" },
   { href: "/platform/admin/features", label: "Features" },
   { href: "/platform/admin/settings", label: "System Settings" },
+  { href: "/platform/admin/data-feeds", label: "Data Feeds" },
+  { href: "/platform/admin/agents", label: "Agents" },
+  { href: "/platform/admin/models", label: "Models" },
+  { href: "/platform/admin/risk-settings", label: "Risk Settings" },
+  { href: "/platform/admin/audit-log", label: "Audit Log" },
+  { href: "/platform/admin/system-health", label: "System Health" },
 ];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
