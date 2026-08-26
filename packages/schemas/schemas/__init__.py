@@ -26,7 +26,7 @@ from .risk import RiskCheckResult, RiskLimits, RiskRuleOutcome
 from .news import NewsEvent
 from .weather import WeatherDemandImpact
 from .fundamentals import GasBalanceDaily, StorageForecast
-from .events import DomainEvent, EventType
+from .events import DomainEvent, EventType, topic_for_event_type
 from .post_trade import PostTradeAnalysis
 from .quant import BacktestResult, ForecastHorizon, ModelType, PriceForecast, RegimeResult, RelativeValueSignal
 
@@ -60,6 +60,7 @@ __all__ = [
     "StorageForecast",
     "DomainEvent",
     "EventType",
+    "topic_for_event_type",
     "PostTradeAnalysis",
     "BacktestResult",
     "ForecastHorizon",

@@ -15,6 +15,12 @@ async def _lifespan(app: FastAPI):
     state = await get_app_state()
     yield
     await state.repo.dispose()
+    # Only RedpandaEventBus (EVENT_BUS_IMPL=redpanda) needs an explicit stop — it owns
+    # background consumer tasks and a real network connection; InMemoryEventBus has
+    # neither.
+    stop = getattr(state.event_bus, "stop", None)
+    if stop is not None:
+        await stop()
 
 
 def create_app() -> FastAPI:

@@ -1,5 +1,5 @@
 from .base_agent import AgentOutcome, BaseAgent
-from .eventbus import EventBus, InMemoryEventBus
+from .eventbus import EventBus, InMemoryEventBus, build_event_bus
 from .llm import LLMMessage, LLMProvider, LLMResponse, MockLLMProvider, get_default_llm_provider
 
 __all__ = [
@@ -8,6 +8,7 @@ __all__ = [
     "get_default_llm_provider",
     "EventBus",
     "InMemoryEventBus",
+    "build_event_bus",
     "LLMMessage",
     "LLMProvider",
     "LLMResponse",

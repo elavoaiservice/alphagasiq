@@ -44,3 +44,18 @@ class InMemoryEventBus(EventBus):
 
     def subscribe(self, event_type: str, handler: Handler) -> None:
         self._handlers[event_type].append(handler)
+
+
+def build_event_bus(*, impl: str, kafka_bootstrap_servers: str) -> EventBus:
+    """Selects the `EventBus` implementation from `config.Settings.event_bus_impl`.
+
+    `impl="memory"` (the default in every local/dev/test environment) returns
+    `InMemoryEventBus` with zero extra dependencies. `impl="redpanda"` lazily imports
+    `RedpandaEventBus` (needs `aiokafka`) so nothing that only ever runs with the
+    in-memory bus is forced to have that dependency installed.
+    """
+    if impl == "redpanda":
+        from .eventbus_kafka import RedpandaEventBus
+
+        return RedpandaEventBus(kafka_bootstrap_servers)
+    return InMemoryEventBus()

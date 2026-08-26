@@ -3,7 +3,7 @@ name = "alphagasiq-agent-sdk"
 version = "0.1.0"
 description = "Base agent runtime, LLM provider abstraction, and event bus for AlphaGasIQ"
 requires-python = ">=3.11"
-dependencies = ["alphagasiq-schemas", "pydantic>=2.6"]
+dependencies = ["alphagasiq-schemas", "pydantic>=2.6", "aiokafka>=0.11"]
 
 [tool.setuptools.packages.find]
 include = ["agent_sdk*"]

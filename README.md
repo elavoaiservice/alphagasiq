@@ -138,3 +138,23 @@ set; every default dev/docker environment leaves them unset, so the dev-mode pas
 above keeps working unchanged (`GET /auth/mode` reports which mode is active). See
 `docs/architecture.md` §8 and `tests/api/test_oidc.py` for the full mocked-IdP round trip,
 including a real PKCE verifier/challenge and RS256 signature check.
+
+**Six more quant models are now real, not stubs.** `services/quant` implements ARIMA, VAR, a
+state-space (Kalman filter) model, and Random Forest/XGBoost/LightGBM alongside the original
+naive persistence and OLS linear trend — `GET /quant/models` now reports 8 of the 10 named model
+types as implemented; only the two deep-learning types (TFT, LSTM) remain `NotImplementedModel`
+stubs. See "Milestone 5 (quantitative platform)" above for the details, including the
+walk-forward-backtesting performance tuning these six models needed (tree-model `n_jobs=1`,
+tuned `n_estimators`, and the automatic research cycle's coarser `step_days`) and the real,
+pre-existing threshold bug this work surfaced and fixed in `DirectionalStrategyAgent`.
+
+**The event bus is real, not unused scaffolding.** `RedpandaEventBus`
+(`packages/agent-sdk/agent_sdk/eventbus_kafka.py`, `aiokafka`-based) implements the same
+`EventBus` interface as `InMemoryEventBus` and activates via `EVENT_BUS_IMPL=redpanda` (matching
+docker-compose's `redpanda` service) — and `AppState` now actually publishes `DomainEvent`s
+(`TRADE_IDEA_CREATED`, `RISK_LIMIT_BREACHED`, `TRADE_APPROVED`/`TRADE_REJECTED`,
+`POSITION_UPDATED`) through whichever bus it was built with, closing the gap where the bus
+existed but nothing published to it. No live broker is reachable in this dev sandbox (no Docker
+daemon), so `RedpandaEventBus` is tested against faithful `aiokafka` test doubles
+(`tests/eventbus/test_kafka_eventbus.py`) rather than a live one — everything on this side of
+that network boundary is real, unmocked code.

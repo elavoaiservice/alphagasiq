@@ -28,6 +28,16 @@ class EventType(str, Enum):
     POSITION_UPDATED = "POSITION_UPDATED"
 
 
+def topic_for_event_type(event_type: EventType | str) -> str:
+    """Kafka/Redpanda topic name for an `EventType` — a pure function (rather than a
+    `DomainEvent` method only) so a subscriber can compute the topic to consume from
+    given only the `event_type` string `EventBus.subscribe()` takes, without needing a
+    constructed event instance."""
+    value = event_type.value if isinstance(event_type, EventType) else event_type
+    domain = value.split("_")[0].lower()
+    return f"{domain}.{value.lower()}"
+
+
 class DomainEvent(BaseModel):
     event_id: UUID = Field(default_factory=uuid4)
     event_type: EventType
@@ -39,5 +49,4 @@ class DomainEvent(BaseModel):
     lineage_ids: list[str] = Field(default_factory=list)
 
     def topic(self) -> str:
-        domain = self.event_type.value.split("_")[0].lower()
-        return f"{domain}.{self.event_type.value.lower()}"
+        return topic_for_event_type(self.event_type)

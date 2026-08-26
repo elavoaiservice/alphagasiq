@@ -14,7 +14,7 @@ import asyncio
 from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
 
-from agent_sdk import InMemoryEventBus, get_default_llm_provider
+from agent_sdk import build_event_bus, get_default_llm_provider
 from agents_service import (
     BacktestingAgent,
     ChiefInvestmentAgent,
@@ -51,6 +51,8 @@ from schemas import (
     AgentResult,
     BacktestResult,
     DataClassification,
+    DomainEvent,
+    EventType,
     ForecastHorizon,
     InvestmentCommitteeDecision,
     ModelType,
@@ -77,7 +79,9 @@ class AppState:
         settings = get_settings()
         self.settings = settings
         self.repo = SqlAppRepository(settings.database_url)
-        self.event_bus = InMemoryEventBus()
+        self.event_bus = build_event_bus(
+            impl=settings.event_bus_impl, kafka_bootstrap_servers=settings.kafka_bootstrap_servers
+        )
         self.providers: ProviderRegistry = build_default_registry()
         llm = get_default_llm_provider()
 
@@ -177,7 +181,9 @@ class AppState:
         """Write-through hook for routers that mutate an `Approval` in place (e.g.
         `POST /approvals/{id}/action`) after looking it up from `state.approvals` —
         the dict already holds the same object by reference, so only the durable copy
-        needs updating here."""
+        needs updating here. Also the single choke point every approval state
+        transition passes through, so it doubles as where TRADE_APPROVED/
+        TRADE_REJECTED domain events are published."""
         await self.repo.save_approval(
             approval_id=approval.id,
             trade_id=approval.trade_id,
@@ -185,6 +191,24 @@ class AppState:
             actions=[a.model_dump(mode="json") for a in approval.actions],
             updated_at=approval.updated_at,
         )
+        event_type = {
+            # EXECUTED_SIMULATION is included because a normal APPROVE action moves
+            # straight from APPROVED_FOR_PAPER_TRADING to EXECUTED_SIMULATION within
+            # the same request (routers/approvals.py) before persist_approval() is
+            # ever called on it — so the transient APPROVED_FOR_PAPER_TRADING state
+            # never reaches here to publish from on its own.
+            ApprovalState.APPROVED_FOR_PAPER_TRADING: EventType.TRADE_APPROVED,
+            ApprovalState.EXECUTED_SIMULATION: EventType.TRADE_APPROVED,
+            ApprovalState.REJECTED: EventType.TRADE_REJECTED,
+        }.get(approval.state)
+        if event_type is not None:
+            await self.event_bus.publish(
+                DomainEvent(
+                    event_type=event_type,
+                    source_service="api.state",
+                    payload={"trade_id": str(approval.trade_id), "approval_id": str(approval.id)},
+                )
+            )
 
     async def set_risk_limits(self, limits: RiskLimits) -> None:
         self.risk_limits = limits
@@ -343,6 +367,18 @@ class AppState:
         if self.latest_forecast is not None and self.latest_forecast.instrument == trade.instrument:
             self.trade_forecasts[trade.trade_id] = self.latest_forecast
         await self.repo.save_trade_idea(trade, self.trade_forecasts.get(trade.trade_id))
+        await self.event_bus.publish(
+            DomainEvent(
+                event_type=EventType.TRADE_IDEA_CREATED,
+                source_service="api.state",
+                payload={
+                    "trade_id": str(trade.trade_id),
+                    "instrument": trade.instrument,
+                    "strategy": trade.strategy,
+                    "direction": trade.direction.value,
+                },
+            )
+        )
 
         decision = await self.investment_committee.deliberate(
             trade=trade,
@@ -369,6 +405,18 @@ class AppState:
         risk_check = self.risk_governor.evaluate_fail_closed(ctx)
         self.risk_checks[trade.trade_id] = risk_check
         await self.repo.save_risk_check(trade.trade_id, risk_check)
+        if risk_check.verdict != RiskVerdict.ALLOW:
+            await self.event_bus.publish(
+                DomainEvent(
+                    event_type=EventType.RISK_LIMIT_BREACHED,
+                    source_service="risk_service.governor",
+                    payload={
+                        "trade_id": str(trade.trade_id),
+                        "verdict": risk_check.verdict.value,
+                        "blocking_rule": risk_check.blocking_rule.rule if risk_check.blocking_rule else None,
+                    },
+                )
+            )
 
         cia_result = await self.chief_investment_agent.run(
             committee_decision=decision, risk_verdict=risk_check.verdict
@@ -439,6 +487,20 @@ class AppState:
         fills = await self.paper_adapter.submit_order(close_order, market_price)
         exit_fill_price = fills[0].fill_price if fills else market_price
         closed_at = datetime.now(timezone.utc)
+        await self.event_bus.publish(
+            DomainEvent(
+                event_type=EventType.POSITION_UPDATED,
+                source_service="paper_execution_service",
+                payload={
+                    "instrument": trade.instrument,
+                    "trade_id": str(trade_id),
+                    "quantity": self.paper_adapter.portfolio.positions.get(trade.instrument).quantity
+                    if trade.instrument in self.paper_adapter.portfolio.positions
+                    else 0,
+                    "exit_price": exit_fill_price,
+                },
+            )
+        )
 
         committee = self.committee_decisions[trade_id]
         risk_check = self.risk_checks[trade_id]

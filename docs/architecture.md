@@ -106,11 +106,22 @@ Temporal workflows drive multi-step, stateful processes (e.g. "ingest EIA releas
 balance → recompute storage forecast → notify Storage Agent → possibly trigger Strategy Team")
 where retries, backoff, and human-in-the-loop signals matter more than raw event fan-out.
 
-In the MVP (Milestones 1-2), the event bus is implemented behind an `EventBus` interface
-(`packages/agent-sdk/eventbus.py`) with an in-process/Redis pub-sub implementation so the stack
-boots with `docker compose up` without requiring a full Kafka cluster; a Redpanda-backed
-implementation is provided and becomes the default once `EVENT_BUS_IMPL=redpanda` is set. This
-keeps local dev cheap while preserving the production interface.
+The event bus sits behind an `EventBus` interface (`packages/agent-sdk/agent_sdk/eventbus.py`):
+`InMemoryEventBus` (the default, `EVENT_BUS_IMPL=memory`) is a pure in-process pub-sub so the
+stack boots with `docker compose up`/pytest without requiring a broker at all, and
+`RedpandaEventBus` (`agent_sdk/eventbus_kafka.py`, `EVENT_BUS_IMPL=redpanda`) is a real
+`aiokafka`-based implementation — works against Redpanda (docker-compose's dev broker, itself
+Kafka-API-compatible) or any real Kafka cluster, with no code difference between the two. Both
+implement the exact same interface, selected via `agent_sdk.build_event_bus()`, so `AppState`
+never needs to know which one it has. `AppState` now actually publishes real `DomainEvent`s
+through whichever bus it was built with at every trade-lifecycle transition this platform already
+has — `TRADE_IDEA_CREATED`, `RISK_LIMIT_BREACHED`, `TRADE_APPROVED`/`TRADE_REJECTED`,
+`POSITION_UPDATED` — rather than the bus existing as unused scaffolding. `RedpandaEventBus` is
+tested against faithful `aiokafka` test doubles (`tests/eventbus/test_kafka_eventbus.py`) rather
+than a live broker — this sandboxed dev environment has no Docker daemon to run one — but nothing
+on this side of that network boundary (topic derivation, JSON (de)serialization via the exact
+serializer/deserializer callables passed to the real `aiokafka` classes, one-consumer-task-per-
+topic subscribe semantics) is mocked.
 
 ## 5. Technology Stack
 
@@ -184,8 +195,10 @@ Implementation proceeds in the 11 milestones defined in the product brief (repo/
 ingestion → fundamentals → agents → quant → strategy/committee → risk → paper execution → chat →
 pipeline twin → post-trade learning). Each milestone ships with tests, docs updates, and a
 logical commit; later milestones intentionally stub interfaces defined earlier (e.g. the
-`LiveBrokerExecutionAdapter`, Neo4j-backed pipeline graph, Kafka-backed `EventBus`) rather than
-building them speculatively ahead of need.
+`LiveBrokerExecutionAdapter` — deliberately never built without independent model validation,
+legal/compliance review, and explicit human + risk sign-off, since this platform never routes
+live orders) rather than building them speculatively ahead of need. The Kafka-backed `EventBus`
+(`RedpandaEventBus`) is no longer one of those stubs — see "Event-Driven Architecture" above.
 
 Milestones 10 and 11 are now implemented at MVP depth alongside 1-9:
 
