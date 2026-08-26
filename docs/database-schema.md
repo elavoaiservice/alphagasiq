@@ -209,6 +209,16 @@ No column for chain-of-thought. `reasoning_summary` is a concise, human-auditabl
   escalation_threshold, notes, updated_by, updated_at. Seeded one row per currently-implemented,
   administrable agent type at boot (idempotent — admin edits are never overwritten); the Risk
   Governor deliberately has no row here (see `docs/agent-governance.md` §1).
+- **`agent_versions`** (Milestone 9, spec §§40-41) — one row per agent configuration version, never
+  mutated after creation. id, agent_type, version, model_provider, model_name, system_instructions,
+  tool_configuration (jsonb), data_sources (jsonb), execution_settings (jsonb), thresholds (jsonb),
+  status (`DRAFT`/`TESTING`/`APPROVED`/`PRODUCTION`/`RETIRED`/`ROLLED_BACK`), created_by, created_at,
+  evaluation_results (jsonb, nullable), approved_by, approved_at, deployment_timestamp, notes.
+  `SqlAppRepository.transition_agent_version_status` enforces the fixed lifecycle against a
+  transition table — no status jump may skip a step. Promoting a version to `PRODUCTION`
+  automatically retires the agent_type's prior `PRODUCTION` row, so at most one exists at a time.
+  Every implemented, administrable agent gets a real `PRODUCTION` row seeded from its actual live
+  configuration at boot (`AppState._seed_initial_agent_versions()`).
 
 ## 5. TimescaleDB Specifics
 

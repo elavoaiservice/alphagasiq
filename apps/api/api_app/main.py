@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .routers import (
+    admin_agent_versions,
     admin_agents,
     admin_console,
     admin_data_feeds,
@@ -79,6 +80,8 @@ def create_app() -> FastAPI:
         admin_console.router,
         admin_data_feeds.router,
         admin_agents.router,
+        admin_agent_versions.router,
+        admin_agent_versions.optimization_router,
     ):
         api.include_router(router)
 

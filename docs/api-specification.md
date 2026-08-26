@@ -81,6 +81,17 @@ create a `User` or `Organization` — see `docs/access-model.md` "No Self-Regist
 | PATCH | `/admin/agents/{agent_type}` | requires `admin.agent_management`. Updates status (`ACTIVE`/`PAUSED`/`DISABLED`/`TESTING`) and confidence/alert/escalation thresholds/notes. 400 for the Risk Governor (visibility only, see `docs/agent-governance.md` §1) or an unimplemented seat; 404 for an unknown `agent_type` |
 | POST | `/admin/agents/{agent_type}/run` | requires `admin.agent_management`. Only `CHIEF_TRADING_AGENT` is independently triggerable (409 for every other seat, which executes only as part of its composed research cycle — see `docs/agent-governance.md` §3); refuses with 409 if the Chief Trading Agent's own status is `PAUSED`/`DISABLED` |
 
+## Admin: Agent Versioning + Optimization (Milestone 9, spec §§40-42)
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/admin/agents/{agent_type}/versions` | requires `admin.agent_management`. All versions for one agent, newest first |
+| POST | `/admin/agents/{agent_type}/versions` | requires `admin.agent_management`. Creates a new `DRAFT` version — never edits an existing one |
+| GET | `/admin/agents/{agent_type}/versions/production` | requires `admin.agent_management`. The agent's current `PRODUCTION` version; 404 if none exists |
+| GET | `/admin/agents/{agent_type}/versions/{version_id}` | requires `admin.agent_management`. One version's full config |
+| POST | `/admin/agents/{agent_type}/versions/{version_id}/transition` | requires `admin.agent_management`. Moves a version through the fixed `DRAFT → TESTING → APPROVED → PRODUCTION → (RETIRED \| ROLLED_BACK)` lifecycle; 400 on an illegal jump (e.g. straight to `PRODUCTION`). Promoting retires the agent's prior `PRODUCTION` version automatically; approving records `approved_by`/`approved_at` |
+| POST | `/admin/agents/{agent_type}/optimization/propose` | requires `admin.agent_optimization` (`SUPER_ADMIN`-only). Records a real performance-review snapshot from `agent_execution_log` plus the admin's stated problem/proposed change, then creates a `DRAFT` version through the same lifecycle above |
+
 ## System / Observability
 
 | Method | Path | Notes |

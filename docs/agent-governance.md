@@ -1,11 +1,12 @@
 # Agent Governance — Control Center, Versioning, Optimization & the Risk Governor Boundary
 
-> Status: Milestone 8 (§§2-3) is built; §§4-8 remain design-only (target architecture), built out
-> in Milestones 9-10 in the same reviewed/tested/committed cadence as every other milestone in
+> Status: Milestones 8-9 (§§2-5) are built; §§6-8 remain design-only (target architecture), built
+> out in Milestone 10 in the same reviewed/tested/committed cadence as every other milestone in
 > this codebase. Every agent is still a plain Python class (`services/agents`) with a hardcoded
 > `version` string — Milestone 8 adds an admin-only *view and operational control* of those
-> classes (enable/disable/pause/resume, thresholds, manual run), not a versioning/evaluation/
-> approval pipeline; nothing in Milestone 8 changes how `services/agents` executes today.
+> classes (enable/disable/pause/resume, thresholds, manual run) and Milestone 9 adds a real
+> versioning/evaluation/approval data model and workflow around them; neither milestone yet wires
+> a version's stored config back into how `services/agents` actually executes (see §4).
 
 ## 1. The one non-negotiable boundary: the Risk Governor
 
@@ -91,20 +92,39 @@ not this one.
 
 ## 4. Agent versioning
 
-`AgentVersion`: `id`, `agent_id`, `version`, `model_provider`, `model_name`,
+**Implemented now** (`AgentVersionRow`, `packages/db`; `GET/POST /admin/agents/{agent_type}/
+versions`, `GET .../versions/production`, `GET .../versions/{version_id}`, `POST .../versions/
+{version_id}/transition`, `apps/api/api_app/routers/admin_agent_versions.py`, gated by
+`admin.agent_management`): `id`, `agent_type`, `version`, `model_provider`, `model_name`,
 `system_instructions`, `tool_configuration`, `data_sources`, `execution_settings`, `thresholds`,
-`created_by`, `created_at`, `status`, `evaluation_results`, `deployment_timestamp`, `notes`.
+`created_by`, `created_at`, `status`, `evaluation_results`, `approved_by`, `approved_at`,
+`deployment_timestamp`, `notes`.
 
-Status: `DRAFT` → `TESTING` → `APPROVED` → `PRODUCTION` → (`RETIRED` | `ROLLED_BACK`).
+Status: `DRAFT` → `TESTING` → `APPROVED` → `PRODUCTION` → (`RETIRED` | `ROLLED_BACK`), enforced by
+`SqlAppRepository.transition_agent_version_status` against a fixed transition table
+(`_AGENT_VERSION_TRANSITIONS`) — an illegal jump (e.g. `DRAFT` straight to `PRODUCTION`) raises
+`ValueError`, surfaced as a 400. `TESTING` may also go back to `DRAFT` (send a version back for
+rework). Approving a version (`POST .../transition {"status": "APPROVED", "evaluation_results":
+{...}}`) records `approved_by`/`approved_at` against the calling administrator — this is the
+"explicit approval action recorded against an identified administrator" step 8/9 requires.
 
 **A production agent definition is never overwritten.** Every change — including a prompt edit —
-creates a new `AgentVersion` row. "Promoting a version" means the runtime starts reading its
-model/prompt/thresholds from the `PRODUCTION`-status row; it does not mean the agent's Python
-class is regenerated or replaced. The prompt/instruction editor (draft → version comparison →
-test → evaluation → approval → publish → rollback) carries a standing warning: *"Changes to agent
-instructions may materially affect market intelligence and trading recommendations. All
-modifications must be tested and approved before production deployment."* No prompt change may
-automatically bypass evaluation — there is no "publish directly to production" affordance.
+creates a new `AgentVersion` row; nothing ever mutates an existing one. "Promoting a version"
+(transitioning to `PRODUCTION`) automatically retires the agent_type's prior `PRODUCTION` row (at
+most one exists at a time) and stamps `deployment_timestamp` — it does **not** mean the agent's
+Python class is regenerated or replaced; wiring a per-agent runtime read of its `PRODUCTION` row
+into `services/agents` (so an agent's actual `_execute()` would use the stored
+`system_instructions`/`model_name`) is real follow-up work, honestly not yet done — see the note
+in `packages/db/db/models.py`'s `AgentVersionRow` docstring. No prompt change may automatically
+bypass evaluation — there is no "publish directly to production" affordance; every promotion must
+pass through `TESTING` and `APPROVED` first, and the API enforces this server-side, not just in
+a UI's button states.
+
+At boot, every implemented, administrable agent is given a real `PRODUCTION` version snapshotted
+from its actual live configuration (`AppState._seed_initial_agent_versions()` — version string
+and `model_provider`/`model_name` read straight off the agent's real `llm` provider instance, run
+through the same DRAFT→TESTING→APPROVED→PRODUCTION lifecycle rather than inserted directly), so
+the versioning system starts populated with the truth rather than empty.
 
 ## 5. Agent Optimization Center
 
@@ -125,6 +145,18 @@ Fixed workflow, always in this order:
 10. Controlled Deployment
 11. Post-Deployment Monitoring
 12. Rollback if Needed
+
+**Implemented now**: `POST /admin/agents/{agent_type}/optimization/propose`
+(`admin_agent_versions.optimization_router`, gated by `admin.agent_optimization` —
+`SUPER_ADMIN`-only, a stricter permission than plain version creation) covers steps 1-4 in one
+call — it computes a real performance-review snapshot (total executions, success rate, average
+latency) from `AppState.agent_execution_log`, requires the admin to state a problem identification
+and proposed change (no automated LLM-generated proposal yet — stated as a scope boundary, not
+hidden), and creates a new `DRAFT` `AgentVersion` recording all of it in `notes`. Steps 5-12 (test,
+evaluate, compare, review, approve, deploy, monitor, roll back) reuse the exact same
+`POST .../versions/{version_id}/transition` endpoint every other version uses — there is no
+separate, less-gated path for an optimization-proposed version to reach production faster than a
+manually-drafted one.
 
 Steps 1-7 can be assisted by tooling (including an LLM proposing a candidate change), but step 8
 ("Human Review") is a hard gate — no step past it executes without an explicit approval action

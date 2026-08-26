@@ -277,6 +277,22 @@ independent entry point, so running one directly honestly 409s rather than fakin
 stated plainly rather than hidden, pausing such a sub-agent is recorded/visible but doesn't yet
 gate its execution inside that composed cycle (see `docs/agent-governance.md` §3).
 
+**Agents now have a real versioning + optimization workflow.** Milestone 9 adds `AgentVersionRow`
+(`packages/db`) and `admin_agent_versions.py`: `GET/POST /admin/agents/{agent_type}/versions`,
+`GET .../versions/production(/{version_id})`, and `POST .../versions/{version_id}/transition`
+(gated by `admin.agent_management`), plus `POST .../optimization/propose` (gated by the stricter,
+`SUPER_ADMIN`-only `admin.agent_optimization`). The fixed lifecycle `DRAFT → TESTING → APPROVED →
+PRODUCTION → (RETIRED | ROLLED_BACK)` is enforced server-side — no status jump can skip a step, so
+no prompt/model change can bypass evaluation. Promoting a version auto-retires the agent's prior
+production version; a production agent definition is never overwritten, only ever superseded by a
+new row. `optimization/propose` records a real performance-review snapshot from
+`agent_execution_log` alongside the admin's stated problem/proposed change, then creates a `DRAFT`
+version through that same lifecycle — no optimization-specific fast path to production. Every
+implemented agent starts with a real `PRODUCTION` version snapshotted from its actual live
+configuration at boot. Stated plainly: nothing yet wires a version's stored config back into how
+`services/agents` executes — this is a real, tested governance/versioning system sitting on top of
+today's agents, not (yet) a live control surface over their behavior.
+
 **The pipeline digital twin can now be backed by a real Neo4j instance.**
 `fundamentals_service/pipeline_graph_neo4j.py` seeds the same `PipelineGraph`
 `build_default_pipeline_graph()` already builds into Neo4j via Cypher `MERGE`, then reloads it —

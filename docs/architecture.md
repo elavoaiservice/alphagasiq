@@ -469,3 +469,25 @@ Several follow-up hardening items from the MVP status are now closed out:
   its execution inside that composed cycle, a documented, deliberately-scoped limitation (see
   `docs/agent-governance.md` §3) consistent with how every prior milestone in this stream scoped
   its enforcement rather than attempting a full retrofit in one pass.
+- **Access model, Milestone 9 (agent versioning + prompt editor + optimization workflow)**: a new
+  `AgentVersionRow` (`packages/db`) and `apps/api/api_app/routers/admin_agent_versions.py` expose
+  `GET/POST /admin/agents/{agent_type}/versions`, `GET .../versions/production`,
+  `GET .../versions/{version_id}`, and `POST .../versions/{version_id}/transition` (gated by
+  `admin.agent_management`), plus `POST /admin/agents/{agent_type}/optimization/propose` (gated by
+  the stricter, `SUPER_ADMIN`-only `admin.agent_optimization`) (spec §§40-42). The status lifecycle
+  `DRAFT → TESTING → APPROVED → PRODUCTION → (RETIRED | ROLLED_BACK)` is enforced server-side by
+  `SqlAppRepository.transition_agent_version_status` against a fixed transition table — an illegal
+  jump (e.g. straight to `PRODUCTION`) is rejected with 400, so no prompt/model change can bypass
+  evaluation. Promoting a version auto-retires the agent_type's prior `PRODUCTION` row; approving
+  one records `approved_by`/`approved_at` against the calling administrator. A production agent
+  definition is never overwritten — every change creates a new row. `optimization/propose` computes
+  a real performance-review snapshot from `agent_execution_log`, requires the admin to state a
+  problem/proposed change (no automated LLM-authored proposal yet, a stated scope boundary), and
+  creates a `DRAFT` version through the exact same lifecycle every other version uses — there is no
+  optimization-specific fast path to production. At boot, every implemented, administrable agent is
+  given a real `PRODUCTION` version snapshotted from its actual live configuration
+  (`AppState._seed_initial_agent_versions()`), so the system starts populated with the truth. As
+  documented plainly in `AgentVersionRow`'s own docstring: nothing yet wires a version's stored
+  config back into how `services/agents` actually executes — promoting a version records the
+  approved configuration for governance and future runtime wiring, it does not (yet) change what
+  the agent's Python code does when it runs.

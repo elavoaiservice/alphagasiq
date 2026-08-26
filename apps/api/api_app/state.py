@@ -164,10 +164,38 @@ class AppState:
             await self.repo.seed_agent_configs(
                 [t for t in agent_catalog.IMPLEMENTED_AGENT_TYPES if t != "RISK_GOVERNOR"]
             )
+            await self._seed_initial_agent_versions()
             await self._hydrate_from_repo()
             await self._seed_market_and_fundamentals()
             await self._run_initial_research_cycle()
             self._seeded = True
+
+    async def _seed_initial_agent_versions(self) -> None:
+        """Milestone 9: gives every implemented, administrable agent a real `PRODUCTION`
+        `AgentVersionRow` snapshot of its actual live configuration at boot, rather than
+        starting the versioning system empty. Idempotent -- only runs for an agent_type
+        that doesn't already have a `PRODUCTION` version (an admin's own version history
+        is never touched). The version's `model_provider`/`model_name` are read straight
+        off the agent's real `llm` provider instance, exactly like the Milestone 8
+        Control Center does -- never fabricated."""
+        for agent_type in agent_catalog.IMPLEMENTED_AGENT_TYPES:
+            if agent_type == "RISK_GOVERNOR":
+                continue
+            if await self.repo.get_production_agent_version(agent_type) is not None:
+                continue
+            instance = agent_catalog.resolve_agent_instance(self, agent_type)
+            if instance is None:
+                continue
+            draft = await self.repo.create_agent_version(
+                agent_type=agent_type,
+                version=instance.version,
+                model_provider=type(instance.llm).__name__,
+                model_name=getattr(instance.llm, "model", None),
+                created_by=None,
+                notes="Initial production version, snapshotted from the live agent at boot.",
+            )
+            for next_status in ("TESTING", "APPROVED", "PRODUCTION"):
+                draft = await self.repo.transition_agent_version_status(draft["id"], next_status, actor=None)
 
     async def _hydrate_from_repo(self) -> None:
         """Reloads every durable trading object left over from a previous process

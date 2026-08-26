@@ -795,3 +795,81 @@ async def test_seed_agent_configs_is_idempotent(repo):
 
     assert (await repo.get_agent_config("SUPPLY"))["notes"] == "do not revert me"
     assert await repo.get_agent_config("DEMAND") is not None
+
+
+async def test_create_list_get_agent_version(repo):
+    created = await repo.create_agent_version(
+        agent_type="SUPPLY",
+        version="0.2.0-draft1",
+        model_provider="AnthropicLLMProvider",
+        model_name="claude-test",
+        system_instructions="Summarize supply fundamentals.",
+        created_by="u-admin-1",
+        notes="Initial draft",
+    )
+    assert created["status"] == "DRAFT"
+    assert created["agent_type"] == "SUPPLY"
+    assert created["tool_configuration"] == {}
+    assert created["data_sources"] == []
+
+    versions = await repo.list_agent_versions("SUPPLY")
+    assert len(versions) == 1
+    assert versions[0]["id"] == created["id"]
+
+    fetched = await repo.get_agent_version(created["id"])
+    assert fetched["system_instructions"] == "Summarize supply fundamentals."
+    assert await repo.get_agent_version("no-such-version") is None
+
+
+async def test_agent_version_lifecycle_cannot_skip_steps(repo):
+    v = await repo.create_agent_version(agent_type="SUPPLY", version="0.2.0-draft1")
+    assert v["status"] == "DRAFT"
+
+    with pytest.raises(ValueError):
+        await repo.transition_agent_version_status(v["id"], "PRODUCTION")  # DRAFT -> PRODUCTION is illegal
+
+    v = await repo.transition_agent_version_status(v["id"], "TESTING")
+    assert v["status"] == "TESTING"
+
+    v = await repo.transition_agent_version_status(
+        v["id"], "APPROVED", actor="u-admin-1", evaluation_results={"accuracy": 0.8}
+    )
+    assert v["status"] == "APPROVED"
+    assert v["approved_by"] == "u-admin-1"
+    assert v["approved_at"] is not None
+    assert v["evaluation_results"] == {"accuracy": 0.8}
+
+    v = await repo.transition_agent_version_status(v["id"], "PRODUCTION")
+    assert v["status"] == "PRODUCTION"
+    assert v["deployment_timestamp"] is not None
+
+    assert await repo.transition_agent_version_status("no-such-version", "TESTING") is None
+
+
+async def test_promoting_a_new_production_version_retires_the_prior_one(repo):
+    v1 = await repo.create_agent_version(agent_type="SUPPLY", version="1.0.0")
+    for step in ("TESTING", "APPROVED", "PRODUCTION"):
+        v1 = await repo.transition_agent_version_status(v1["id"], step)
+    assert v1["status"] == "PRODUCTION"
+
+    v2 = await repo.create_agent_version(agent_type="SUPPLY", version="1.1.0")
+    for step in ("TESTING", "APPROVED", "PRODUCTION"):
+        v2 = await repo.transition_agent_version_status(v2["id"], step)
+    assert v2["status"] == "PRODUCTION"
+
+    v1_reloaded = await repo.get_agent_version(v1["id"])
+    assert v1_reloaded["status"] == "RETIRED"
+
+    production = await repo.get_production_agent_version("SUPPLY")
+    assert production["id"] == v2["id"]
+    assert await repo.get_production_agent_version("NOT_A_REAL_AGENT") is None
+
+
+async def test_production_version_can_be_rolled_back(repo):
+    v = await repo.create_agent_version(agent_type="SUPPLY", version="1.0.0")
+    for step in ("TESTING", "APPROVED", "PRODUCTION"):
+        v = await repo.transition_agent_version_status(v["id"], step)
+
+    v = await repo.transition_agent_version_status(v["id"], "ROLLED_BACK")
+    assert v["status"] == "ROLLED_BACK"
+    assert await repo.get_production_agent_version("SUPPLY") is None

@@ -18,6 +18,7 @@ from schemas import (
 from .engine import build_engine, build_sessionmaker
 from .models import (
     AgentConfigRow,
+    AgentVersionRow,
     ApprovalRow,
     Base,
     ChatConversationRow,
@@ -349,6 +350,19 @@ _SYSTEM_SETTINGS_DEFAULTS: dict[str, object] = {
     "chat_defaults": {},
 }
 
+# Legal `AgentVersionRow.status` transitions (spec §41) -- no step may be skipped, so a
+# prompt/model change can never automatically reach PRODUCTION without passing through
+# TESTING and APPROVED first. TESTING -> DRAFT lets a reviewer send a version back for
+# rework rather than only forward or discard.
+_AGENT_VERSION_TRANSITIONS: dict[str, set[str]] = {
+    "DRAFT": {"TESTING", "RETIRED"},
+    "TESTING": {"APPROVED", "DRAFT", "RETIRED"},
+    "APPROVED": {"PRODUCTION", "RETIRED"},
+    "PRODUCTION": {"RETIRED", "ROLLED_BACK"},
+    "RETIRED": set(),
+    "ROLLED_BACK": set(),
+}
+
 
 def _organization_to_dict(row: OrganizationRow) -> dict:
     return {
@@ -413,6 +427,29 @@ def _agent_config_to_dict(row: AgentConfigRow) -> dict:
         "notes": row.notes,
         "updated_by": row.updated_by,
         "updated_at": row.updated_at,
+    }
+
+
+def _agent_version_to_dict(row: AgentVersionRow) -> dict:
+    return {
+        "id": row.id,
+        "agent_type": row.agent_type,
+        "version": row.version,
+        "model_provider": row.model_provider,
+        "model_name": row.model_name,
+        "system_instructions": row.system_instructions,
+        "tool_configuration": row.tool_configuration,
+        "data_sources": row.data_sources,
+        "execution_settings": row.execution_settings,
+        "thresholds": row.thresholds,
+        "status": row.status,
+        "created_by": row.created_by,
+        "created_at": row.created_at,
+        "evaluation_results": row.evaluation_results,
+        "approved_by": row.approved_by,
+        "approved_at": row.approved_at,
+        "deployment_timestamp": row.deployment_timestamp,
+        "notes": row.notes,
     }
 
 
@@ -961,6 +998,124 @@ class SqlAppRepository:
             await session.commit()
             await session.refresh(row)
         return _agent_config_to_dict(row)
+
+    # -- agent versioning (spec §§40-41) -------------------------------------------------
+
+    async def create_agent_version(
+        self,
+        *,
+        agent_type: str,
+        version: str,
+        model_provider: str | None = None,
+        model_name: str | None = None,
+        system_instructions: str | None = None,
+        tool_configuration: dict | None = None,
+        data_sources: list | None = None,
+        execution_settings: dict | None = None,
+        thresholds: dict | None = None,
+        created_by: str | None = None,
+        notes: str | None = None,
+    ) -> dict:
+        """Always creates a new `DRAFT` row -- an agent's approved configuration is
+        never edited in place (spec §41)."""
+        row = AgentVersionRow(
+            agent_type=agent_type,
+            version=version,
+            model_provider=model_provider,
+            model_name=model_name,
+            system_instructions=system_instructions,
+            tool_configuration=tool_configuration or {},
+            data_sources=data_sources or [],
+            execution_settings=execution_settings or {},
+            thresholds=thresholds or {},
+            created_by=created_by,
+            notes=notes,
+        )
+        async with self.session_factory() as session:
+            session.add(row)
+            await session.commit()
+            await session.refresh(row)
+        return _agent_version_to_dict(row)
+
+    async def list_agent_versions(self, agent_type: str) -> list[dict]:
+        async with self.session_factory() as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(AgentVersionRow)
+                        .where(AgentVersionRow.agent_type == agent_type)
+                        .order_by(AgentVersionRow.created_at.desc())
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        return [_agent_version_to_dict(r) for r in rows]
+
+    async def get_agent_version(self, version_id: str) -> dict | None:
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(select(AgentVersionRow).where(AgentVersionRow.id == version_id))
+            ).scalar_one_or_none()
+        return _agent_version_to_dict(row) if row is not None else None
+
+    async def get_production_agent_version(self, agent_type: str) -> dict | None:
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(
+                    select(AgentVersionRow).where(
+                        AgentVersionRow.agent_type == agent_type, AgentVersionRow.status == "PRODUCTION"
+                    )
+                )
+            ).scalar_one_or_none()
+        return _agent_version_to_dict(row) if row is not None else None
+
+    async def transition_agent_version_status(
+        self,
+        version_id: str,
+        new_status: str,
+        *,
+        actor: str | None = None,
+        evaluation_results: dict | None = None,
+    ) -> dict | None:
+        """Enforces the fixed DRAFT -> TESTING -> APPROVED -> PRODUCTION -> (RETIRED |
+        ROLLED_BACK) lifecycle (spec §41) -- raises `ValueError` on an illegal jump so
+        no step can be skipped. Promoting to `PRODUCTION` automatically retires the
+        agent_type's prior `PRODUCTION` row, if any, so at most one exists at a time."""
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(select(AgentVersionRow).where(AgentVersionRow.id == version_id))
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            legal = _AGENT_VERSION_TRANSITIONS.get(row.status, set())
+            if new_status not in legal:
+                raise ValueError(f"Illegal agent version transition: {row.status} -> {new_status}")
+            if new_status == "PRODUCTION":
+                prior_production = (
+                    (
+                        await session.execute(
+                            select(AgentVersionRow).where(
+                                AgentVersionRow.agent_type == row.agent_type,
+                                AgentVersionRow.status == "PRODUCTION",
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                for prior in prior_production:
+                    prior.status = "RETIRED"
+                row.deployment_timestamp = datetime.utcnow()
+            if new_status == "APPROVED":
+                row.approved_by = actor
+                row.approved_at = datetime.utcnow()
+            if evaluation_results is not None:
+                row.evaluation_results = evaluation_results
+            row.status = new_status
+            await session.commit()
+            await session.refresh(row)
+        return _agent_version_to_dict(row)
 
     async def list_roles(self) -> list[dict]:
         async with self.session_factory() as session:

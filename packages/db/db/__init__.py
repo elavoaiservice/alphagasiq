@@ -1,6 +1,7 @@
 from .engine import build_engine, build_sessionmaker
 from .models import (
     AgentConfigRow,
+    AgentVersionRow,
     ApprovalRow,
     Base,
     ChatConversationRow,
@@ -32,6 +33,7 @@ from .repository import SqlAppRepository
 
 __all__ = [
     "AgentConfigRow",
+    "AgentVersionRow",
     "Base",
     "build_engine",
     "build_sessionmaker",

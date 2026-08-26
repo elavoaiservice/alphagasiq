@@ -456,6 +456,45 @@ class AgentConfigRow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
 
 
+class AgentVersionRow(Base):
+    """One version of an agent's configuration (spec §§40-41, `docs/agent-governance.md`
+    §4) -- model/prompt/tool/threshold config, its lifecycle status, and evaluation
+    results. **A production agent definition is never overwritten**: every change to an
+    agent's instructions, model, or thresholds creates a new row here rather than
+    mutating an existing one, and promoting a version never means the agent's Python
+    class is regenerated or replaced -- it means the runtime *would* read its config
+    from the `PRODUCTION`-status row (wiring that read path per-agent into
+    `services/agents` is real follow-up work, tracked honestly rather than assumed).
+
+    Status lifecycle (enforced in `repository.py`, never skippable):
+    DRAFT -> TESTING -> APPROVED -> PRODUCTION -> (RETIRED | ROLLED_BACK). No transition
+    may skip a step -- "no prompt change may automatically bypass evaluation" (spec
+    §41). Promoting a new PRODUCTION version automatically retires the agent's prior
+    PRODUCTION row, so at most one PRODUCTION version per agent_type exists at a time.
+    """
+
+    __tablename__ = "agent_versions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    agent_type: Mapped[str] = mapped_column(String, nullable=False)
+    version: Mapped[str] = mapped_column(String, nullable=False)
+    model_provider: Mapped[str | None] = mapped_column(String, nullable=True)
+    model_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    system_instructions: Mapped[str | None] = mapped_column(String, nullable=True)
+    tool_configuration: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    data_sources: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    execution_settings: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    thresholds: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="DRAFT")
+    created_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    evaluation_results: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    approved_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    deployment_timestamp: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    notes: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
 class RiskLimitsRow(Base):
     __tablename__ = "risk_limits"
 
