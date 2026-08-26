@@ -11,8 +11,11 @@ All mutating endpoints require RBAC role checks (`ADMIN`, `TRADER`, `RISK_MANAGE
 
 | Method | Path | Notes |
 |---|---|---|
-| POST | `/auth/login` | dev-mode credential login, returns JWT (kept for local development only through Milestone 2; removed once Milestone 3 wires real magic-link issuance — see `docs/access-model.md`) |
-| POST | `/auth/magic-link/request` | `{email}` — **always** returns the same generic `{"message": "If an authorized AlphaGasIQ account exists for this email, a secure sign-in link has been sent."}` regardless of whether the email matches a user, to prevent account enumeration. No token issuance or email dispatch yet (Milestone 1 placeholder; real behavior lands in Milestone 3) |
+| POST | `/auth/login` | dev-mode/bootstrap credential login (`_DEV_USERS`), returns JWT — kept permanently as the platform's break-glass/bootstrap mechanism, not a real-user login path; see `docs/access-model.md` §3 "Bootstrap credentials" |
+| POST | `/auth/magic-link/request` | `{email}` — **always** returns the same generic `{"detail": "If an authorized AlphaGasIQ account exists for this email, a secure sign-in link has been sent."}` regardless of whether the email matches a user, its account status, or rate-limiting, to prevent account enumeration. Rate-limited per email and per IP (5 req / 15 min default). An eligible `ACTIVE` user gets a login link; an eligible `INVITED` user gets a fresh invitation link instead |
+| GET | `/auth/magic-link/verify?token=...` | Validates a magic-link token (hash lookup, expiry, single-use, revocation, account eligibility), marks it consumed, activates an `INVITED` account, creates a `Session`, and redirects to `/platform#access_token=...` |
+| POST | `/auth/logout` | revokes the caller's `Session` row if the token carries one (no-op for a dev-mode/OIDC token) |
+| GET | `/auth/sessions` | the caller's own session history |
 | GET | `/auth/me` | current user + roles |
 | GET | `/auth/mode` | `{"oidc_configured": bool}` — whether real SSO is available on this deployment |
 | GET | `/auth/oidc/login` | redirects to the configured IdP's authorization endpoint (PKCE); `501` if OIDC isn't configured |
@@ -40,7 +43,10 @@ lets an unauthenticated or non-admin caller create a `User` or `Organization` �
 | POST | `/admin/users` | admin-create a user — looks up the organization by `company_name` (creating it inline if it doesn't exist, per spec §14), always creates the user in `INVITED` status regardless of what's requested, `409` on a duplicate (case-insensitive) email, `400` on an unrecognized role |
 | GET | `/admin/users` | list users, with `organization_name`/`role_name` resolved for display |
 | GET | `/admin/users/{user_id}` | single user; `404` if not found |
-| POST | `/admin/users/{user_id}/status` | transition a user's account status (`apps/api/api_app/account_states.py`'s state machine — e.g. `ACTIVE`→`SUSPENDED`→`ACTIVE`, or any status→`REVOKED`, which is terminal); `400` on an illegal transition (e.g. `INVITED`→`ACTIVE`, which only ever happens via magic-link activation in Milestone 3, never an admin action) |
+| POST | `/admin/users/{user_id}/status` | transition a user's account status (`apps/api/api_app/account_states.py`'s state machine — e.g. `ACTIVE`→`SUSPENDED`→`ACTIVE`, or any status→`REVOKED`, which is terminal); `400` on an illegal transition (e.g. `INVITED`→`ACTIVE`, which only ever happens via magic-link activation, never an admin action). Sends an account-status-change email for `SUSPENDED`/`ACTIVE`/`DISABLED`/`REVOKED` |
+| POST | `/admin/users/{user_id}/resend-invitation` | spec §18 — only valid while `INVITED`; invalidates all prior unused invitation links and sends a fresh one; `400` once the account is no longer `INVITED` |
+| GET | `/admin/users/{user_id}/sessions` | a user's active/past sessions |
+| POST | `/admin/users/{user_id}/sessions/{session_id}/revoke` | admin-initiated session revocation (spec §20) |
 
 ## System / Observability
 

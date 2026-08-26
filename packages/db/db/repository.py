@@ -22,6 +22,7 @@ from .models import (
     CommitteeDecisionRow,
     ContactInquiryRow,
     DecisionJournalRow,
+    MagicLinkTokenRow,
     OrganizationRow,
     PermissionRow,
     PostTradeAnalysisRow,
@@ -29,6 +30,7 @@ from .models import (
     RiskLimitsRow,
     RolePermissionRow,
     RoleRow,
+    SessionRow,
     TradeIdeaRow,
     UserRow,
 )
@@ -242,6 +244,34 @@ def _user_to_dict(row: UserRow) -> dict:
         "updated_at": row.updated_at,
         "activated_at": row.activated_at,
         "last_login_at": row.last_login_at,
+    }
+
+
+def _magic_link_token_to_dict(row: MagicLinkTokenRow) -> dict:
+    return {
+        "id": row.id,
+        "user_id": row.user_id,
+        "token_hash": row.token_hash,
+        "purpose": row.purpose,
+        "created_at": row.created_at,
+        "expires_at": row.expires_at,
+        "consumed_at": row.consumed_at,
+        "revoked_at": row.revoked_at,
+        "requested_ip": row.requested_ip,
+        "user_agent": row.user_agent,
+    }
+
+
+def _session_to_dict(row: SessionRow) -> dict:
+    return {
+        "id": row.id,
+        "user_id": row.user_id,
+        "created_at": row.created_at,
+        "expires_at": row.expires_at,
+        "revoked_at": row.revoked_at,
+        "ip_address": row.ip_address,
+        "user_agent": row.user_agent,
+        "last_seen_at": row.last_seen_at,
     }
 
 
@@ -465,6 +495,148 @@ class SqlAppRepository:
             await session.commit()
             await session.refresh(row)
         return _user_to_dict(row)
+
+    async def mark_user_activated(self, user_id: str) -> dict | None:
+        """Promotes an `INVITED` user to `ACTIVE` and stamps `activated_at`/
+        `last_login_at` — called only from a successful magic-link verification
+        (`GET /auth/magic-link/verify`), never by any admin-facing endpoint (see
+        docs/access-model.md §2: INVITED->ACTIVE only ever happens this way)."""
+        now = datetime.utcnow()
+        async with self.session_factory() as session:
+            row = (await session.execute(select(UserRow).where(UserRow.id == user_id))).scalar_one_or_none()
+            if row is None:
+                return None
+            row.status = "ACTIVE"
+            row.activated_at = row.activated_at or now
+            row.last_login_at = now
+            row.updated_at = now
+            await session.commit()
+            await session.refresh(row)
+        return _user_to_dict(row)
+
+    async def record_user_login(self, user_id: str) -> None:
+        async with self.session_factory() as session:
+            row = (await session.execute(select(UserRow).where(UserRow.id == user_id))).scalar_one_or_none()
+            if row is None:
+                return
+            row.last_login_at = datetime.utcnow()
+            await session.commit()
+
+    # -- magic link tokens ------------------------------------------------------------
+
+    async def create_magic_link_token(
+        self,
+        *,
+        user_id: str,
+        token_hash: str,
+        purpose: str,
+        expires_at: datetime,
+        requested_ip: str | None = None,
+        user_agent: str | None = None,
+    ) -> dict:
+        row = MagicLinkTokenRow(
+            user_id=user_id,
+            token_hash=token_hash,
+            purpose=purpose,
+            expires_at=_naive_utc(expires_at),
+            requested_ip=requested_ip,
+            user_agent=user_agent,
+        )
+        async with self.session_factory() as session:
+            session.add(row)
+            await session.commit()
+            await session.refresh(row)
+        return _magic_link_token_to_dict(row)
+
+    async def get_magic_link_token_by_hash(self, token_hash: str) -> dict | None:
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(select(MagicLinkTokenRow).where(MagicLinkTokenRow.token_hash == token_hash))
+            ).scalar_one_or_none()
+        return _magic_link_token_to_dict(row) if row is not None else None
+
+    async def consume_magic_link_token(self, token_id: str) -> dict | None:
+        """Marks a token consumed. Applying this exactly once (verified by the caller
+        checking `consumed_at is None` before calling) is what makes the token
+        single-use — spec §19's "Immediate invalidation after use"."""
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(select(MagicLinkTokenRow).where(MagicLinkTokenRow.id == token_id))
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            row.consumed_at = datetime.utcnow()
+            await session.commit()
+            await session.refresh(row)
+        return _magic_link_token_to_dict(row)
+
+    async def revoke_unconsumed_magic_link_tokens_for_user(self, user_id: str, *, purpose: str | None = None) -> int:
+        """Invalidates every outstanding (unconsumed, unrevoked) token for a user —
+        used both by "Resend Invitation" (spec §18: "Invalidate all prior unused
+        invitation links") and defensively whenever a fresh token is issued for the
+        same purpose, so an old email link can never be used alongside a new one."""
+        async with self.session_factory() as session:
+            stmt = select(MagicLinkTokenRow).where(
+                MagicLinkTokenRow.user_id == user_id,
+                MagicLinkTokenRow.consumed_at.is_(None),
+                MagicLinkTokenRow.revoked_at.is_(None),
+            )
+            if purpose is not None:
+                stmt = stmt.where(MagicLinkTokenRow.purpose == purpose)
+            rows = (await session.execute(stmt)).scalars().all()
+            now = datetime.utcnow()
+            for row in rows:
+                row.revoked_at = now
+            await session.commit()
+        return len(rows)
+
+    # -- sessions -----------------------------------------------------------------
+
+    async def create_session(
+        self, *, user_id: str, expires_at: datetime, ip_address: str | None = None, user_agent: str | None = None
+    ) -> dict:
+        row = SessionRow(user_id=user_id, expires_at=_naive_utc(expires_at), ip_address=ip_address, user_agent=user_agent)
+        async with self.session_factory() as session:
+            session.add(row)
+            await session.commit()
+            await session.refresh(row)
+        return _session_to_dict(row)
+
+    async def get_session(self, session_id: str) -> dict | None:
+        async with self.session_factory() as session:
+            row = (await session.execute(select(SessionRow).where(SessionRow.id == session_id))).scalar_one_or_none()
+        return _session_to_dict(row) if row is not None else None
+
+    async def list_sessions_for_user(self, user_id: str) -> list[dict]:
+        async with self.session_factory() as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(SessionRow).where(SessionRow.user_id == user_id).order_by(SessionRow.created_at.desc())
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        return [_session_to_dict(r) for r in rows]
+
+    async def revoke_session(self, session_id: str) -> dict | None:
+        async with self.session_factory() as session:
+            row = (await session.execute(select(SessionRow).where(SessionRow.id == session_id))).scalar_one_or_none()
+            if row is None:
+                return None
+            row.revoked_at = datetime.utcnow()
+            await session.commit()
+            await session.refresh(row)
+        return _session_to_dict(row)
+
+    async def touch_session(self, session_id: str) -> None:
+        async with self.session_factory() as session:
+            row = (await session.execute(select(SessionRow).where(SessionRow.id == session_id))).scalar_one_or_none()
+            if row is None:
+                return
+            row.last_seen_at = datetime.utcnow()
+            await session.commit()
 
     # -- writes ---------------------------------------------------------------------
 

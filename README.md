@@ -198,6 +198,19 @@ machine (`INVITED`/`ACTIVE`/`SUSPENDED`/`DISABLED`/`EXPIRED`/`LOCKED`/`REVOKED`)
 happens via magic-link activation (Milestone 3), never an admin action. See
 `docs/access-model.md`.
 
+**Magic-link authentication, sessions, and the invitation email flow are now real, not
+placeholders.** Milestone 3 adds an `EmailProvider` abstraction (`apps/api/api_app/
+email_service.py`) defaulting to a console/log-only provider everywhere (real `SMTPEmailProvider`
+is config-gated by `SMTP_HOST`, same pattern as OIDC/Neo4j), `MagicLinkTokenRow`/`SessionRow`
+(`packages/db`), and a fully real `/auth/magic-link/request` + `GET /auth/magic-link/verify` pair:
+a hashed-at-rest, single-use, 15-minute token that activates an `INVITED` user and creates a
+revocable `Session`. Session revocation rides a `sid` JWT claim kept deliberately separate from
+`sub` (which stays the real `user_id`), so it never disturbs the dev-mode/OIDC login paths, which
+carry no `sid` and decode exactly as before. `POST /auth/logout`, `GET /auth/sessions`, and admin
+session-listing/revocation endpoints round out spec §20. The dev-mode password login is **kept
+permanently** (not removed) as the platform's fixed bootstrap/break-glass credential — see
+`docs/access-model.md` §3 for why a "no self-registration, no passwords" platform still needs one.
+
 **The pipeline digital twin can now be backed by a real Neo4j instance.**
 `fundamentals_service/pipeline_graph_neo4j.py` seeds the same `PipelineGraph`
 `build_default_pipeline_graph()` already builds into Neo4j via Cypher `MERGE`, then reloads it —

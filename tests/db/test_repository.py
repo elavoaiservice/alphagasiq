@@ -9,7 +9,7 @@ sees everything the first one wrote, i.e. state survives a process restart.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from db import SqlAppRepository
@@ -416,3 +416,103 @@ async def test_update_user_status_persists_and_missing_user_returns_none(repo):
     assert (await repo.get_user_by_id(user["id"]))["status"] == "REVOKED"
 
     assert await repo.update_user_status("no-such-user-id", "REVOKED") is None
+
+
+async def test_mark_user_activated_promotes_status_and_stamps_timestamps(repo):
+    await repo.seed_rbac_defaults()
+    role = await repo.get_role_by_name("TRADER")
+    org = await repo.create_organization(name="Activation Test Co")
+    user = await repo.create_user(
+        first_name="Casey",
+        last_name="Kim",
+        email="casey.kim@activationtest.example",
+        organization_id=org["id"],
+        role_id=role["id"],
+        status="INVITED",
+    )
+    assert user["activated_at"] is None
+
+    activated = await repo.mark_user_activated(user["id"])
+    assert activated["status"] == "ACTIVE"
+    assert activated["activated_at"] is not None
+    assert activated["last_login_at"] is not None
+
+
+async def _make_test_user(repo, email: str) -> dict:
+    await repo.seed_rbac_defaults()
+    role = await repo.get_role_by_name("VIEWER")
+    org = await repo.create_organization(name=f"Org for {email}")
+    return await repo.create_user(
+        first_name="Test",
+        last_name="User",
+        email=email,
+        organization_id=org["id"],
+        role_id=role["id"],
+        status="INVITED",
+    )
+
+
+async def test_magic_link_token_create_lookup_and_consume(repo):
+    user = await _make_test_user(repo, "tokentest@example.com")
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=15)
+    token = await repo.create_magic_link_token(
+        user_id=user["id"],
+        token_hash="a" * 64,
+        purpose="INITIAL_INVITATION",
+        expires_at=expires_at,
+        requested_ip="127.0.0.1",
+        user_agent="pytest",
+    )
+    assert token["consumed_at"] is None
+    assert token["revoked_at"] is None
+
+    found = await repo.get_magic_link_token_by_hash("a" * 64)
+    assert found["id"] == token["id"]
+    assert await repo.get_magic_link_token_by_hash("does-not-exist") is None
+
+    consumed = await repo.consume_magic_link_token(token["id"])
+    assert consumed["consumed_at"] is not None
+    assert await repo.consume_magic_link_token("no-such-id") is None
+
+
+async def test_revoke_unconsumed_magic_link_tokens_for_user_only_touches_matching_purpose(repo):
+    user = await _make_test_user(repo, "revoketest@example.com")
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=15)
+    invitation = await repo.create_magic_link_token(
+        user_id=user["id"], token_hash="b" * 64, purpose="INITIAL_INVITATION", expires_at=expires_at
+    )
+    login = await repo.create_magic_link_token(
+        user_id=user["id"], token_hash="c" * 64, purpose="LOGIN", expires_at=expires_at
+    )
+
+    revoked_count = await repo.revoke_unconsumed_magic_link_tokens_for_user(user["id"], purpose="INITIAL_INVITATION")
+    assert revoked_count == 1
+
+    invitation_after = await repo.get_magic_link_token_by_hash("b" * 64)
+    login_after = await repo.get_magic_link_token_by_hash("c" * 64)
+    assert invitation_after["id"] == invitation["id"] and invitation_after["revoked_at"] is not None
+    assert login_after["id"] == login["id"] and login_after["revoked_at"] is None
+
+
+async def test_session_create_get_list_and_revoke(repo):
+    user = await _make_test_user(repo, "sessiontest@example.com")
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=8)
+    session = await repo.create_session(
+        user_id=user["id"], expires_at=expires_at, ip_address="10.0.0.1", user_agent="pytest-agent"
+    )
+    assert session["revoked_at"] is None
+
+    fetched = await repo.get_session(session["id"])
+    assert fetched == session
+    assert await repo.get_session("no-such-session") is None
+
+    listed = await repo.list_sessions_for_user(user["id"])
+    assert [s["id"] for s in listed] == [session["id"]]
+
+    revoked = await repo.revoke_session(session["id"])
+    assert revoked["revoked_at"] is not None
+    assert await repo.revoke_session("no-such-session") is None
+
+    await repo.touch_session(session["id"])
+    touched = await repo.get_session(session["id"])
+    assert touched["last_seen_at"] >= session["last_seen_at"]

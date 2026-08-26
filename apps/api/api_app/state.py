@@ -104,6 +104,15 @@ class AppState:
         self.backtesting_agent = BacktestingAgent(llm=llm)
         self.risk_governor = RiskGovernor()
 
+        from .email_service import get_email_provider
+        from .rate_limit import SlidingWindowRateLimiter
+
+        self.email_provider = get_email_provider()
+        self.magic_link_rate_limiter = SlidingWindowRateLimiter(
+            max_requests=settings.magic_link_rate_limit_max_requests,
+            window_seconds=settings.magic_link_rate_limit_window_seconds,
+        )
+
         self.risk_limits: RiskLimits = default_risk_limits()
         self.trading_halted: bool = False
         self.current_daily_loss: float = 0.0
@@ -744,3 +753,7 @@ def reset_app_state() -> None:
     """Test-only hook."""
     global _state
     _state = None
+
+    from .email_service import reset_console_email_provider
+
+    reset_console_email_provider()

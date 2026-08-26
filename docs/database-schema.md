@@ -162,6 +162,13 @@ No column for chain-of-thought. `reasoning_summary` is a concise, human-auditabl
   from `docs/access-model.md` §5.
 - **`role_permissions`** — id, role_id (FK), permission_id (FK). Each seeded role's default
   grants; not yet read by any enforcement path (Milestone 4).
+- **`magic_link_tokens`** (Milestone 3) — id, user_id (FK), token_hash (unique, sha256 — the raw
+  token is never stored), purpose (`INITIAL_INVITATION`/`LOGIN`/`ACCOUNT_RECOVERY`), created_at,
+  expires_at, consumed_at, revoked_at, requested_ip, user_agent.
+- **`sessions`** (Milestone 3) — id, user_id (FK), created_at, expires_at, revoked_at,
+  ip_address, user_agent, last_seen_at. Only magic-link-issued JWTs carry a `sid` claim pointing
+  at one of these rows (`apps/api/api_app/auth.py`) — dev-mode/OIDC sessions remain stateless and
+  have no row here.
 
 ## 5. TimescaleDB Specifics
 

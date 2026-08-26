@@ -363,3 +363,18 @@ Several follow-up hardening items from the MVP status are now closed out:
   endpoint is gated by today's dev-mode `require_role(Role.ADMIN)` as an interim mechanism; the
   DB-backed `admin.users.create`-style permission check the spec calls for lands in Milestone 4
   once there's a session/user-identity bridge between a JWT and a `UserRow` (Milestone 3).
+- **Access model, Milestone 3 (email service, real magic-link auth, sessions)**:
+  `apps/api/api_app/email_service.py` adds an `EmailProvider` abstraction — `ConsoleEmailProvider`
+  (default everywhere, logs instead of sending — the platform's usual honest-stub pattern) and a
+  real `SMTPEmailProvider`, config-gated by `SMTP_HOST` exactly like OIDC/Neo4j/redpanda. `/auth/
+  magic-link/request` and a new `GET /auth/magic-link/verify` are now real: `MagicLinkTokenRow`/
+  `SessionRow` (`packages/db`) back single-use, hashed-at-rest tokens and revocable sessions.
+  Sessions ride a `sid` JWT claim (not `sub`, which stays the stable `user_id`) — `auth.py`'s
+  `decode_access_token` only touches the DB when `sid` is present, so dev-mode/OIDC tokens are
+  byte-for-byte unaffected. `auth.py::map_db_role_to_dev_roles` bridges the 8 seeded DB roles to
+  today's 5-value dev-mode `Role` enum until Milestone 4's real permission enforcement lands. The
+  dev-mode password grant (`_DEV_USERS`) is **not** removed as earlier planning assumed — it's
+  kept permanently as the platform's fixed bootstrap/break-glass credential set, since something
+  has to authenticate the first administrator before any `UserRow` exists to create more; see
+  `docs/access-model.md` §3 "Bootstrap credentials" for the full reasoning. `apps/api/api_app/
+  rate_limit.py` adds an in-memory sliding-window limiter for the magic-link request endpoint.

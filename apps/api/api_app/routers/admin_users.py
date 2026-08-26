@@ -7,14 +7,19 @@ endpoint's `POST /admin/users` inserts into is already correct for that cutover)
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr, Field
 
+from .. import magic_link
 from ..account_states import AccountStatus, InvalidAccountStateTransition, validate_transition
 from ..auth import Role, User, require_role
 from ..deps import AppStateDep
+from ..email_service import build_account_status_changed_email
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -192,7 +197,32 @@ async def create_user(body: UserCreateRequest, state: AppStateDep, admin: User =
         expiration_at=body.expiration_at,
         created_by=admin.user_id,
     )
+    await magic_link.issue_and_send_initial_invitation(state, user=user)
     return _to_user_out(user, organization_name=organization["name"], role_name=role["name"])
+
+
+@router.post("/users/{user_id}/resend-invitation", response_model=UserOut)
+async def resend_invitation(user_id: str, state: AppStateDep, _admin: User = _RequireAdmin) -> UserOut:
+    """Spec §18 "Resend Invitation" — only valid for a still-`INVITED` account.
+    Generates a fresh Magic Link, invalidates every prior unused invitation link, and
+    sends the new invitation email (`magic_link.issue_and_send_resend_invitation`
+    handles all three)."""
+    user = await state.repo.get_user_by_id(user_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    if user["status"] != AccountStatus.INVITED.value:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invitation can only be resent for a user in INVITED status",
+        )
+    await magic_link.issue_and_send_resend_invitation(state, user=user)
+    organization = await state.repo.get_organization(user["organization_id"])
+    role = await state.repo.get_role_by_id(user["role_id"])
+    return _to_user_out(
+        user,
+        organization_name=organization["name"] if organization else None,
+        role_name=role["name"] if role else None,
+    )
 
 
 @router.get("/users", response_model=list[UserOut])
@@ -237,6 +267,13 @@ async def change_user_status(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     updated = await state.repo.update_user_status(user_id, body.status.value)
+
+    if body.status in (AccountStatus.SUSPENDED, AccountStatus.ACTIVE, AccountStatus.DISABLED, AccountStatus.REVOKED):
+        message = build_account_status_changed_email(
+            first_name=updated["first_name"], email=updated["email"], new_status=body.status.value
+        )
+        await state.email_provider.send(message)
+
     organization = await state.repo.get_organization(updated["organization_id"])
     role = await state.repo.get_role_by_id(updated["role_id"])
     return _to_user_out(
@@ -244,3 +281,23 @@ async def change_user_status(
         organization_name=organization["name"] if organization else None,
         role_name=role["name"] if role else None,
     )
+
+
+@router.get("/users/{user_id}/sessions")
+async def list_user_sessions(user_id: str, state: AppStateDep, _admin: User = _RequireAdmin) -> list[dict]:
+    """Spec §20: "Allow administrators to view active sessions without exposing
+    session secrets" — a `Session` row carries no secret (the JWT itself is never
+    stored), so this listing is already safe to return as-is."""
+    if await state.repo.get_user_by_id(user_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return await state.repo.list_sessions_for_user(user_id)
+
+
+@router.post("/users/{user_id}/sessions/{session_id}/revoke")
+async def revoke_user_session(user_id: str, session_id: str, state: AppStateDep, _admin: User = _RequireAdmin) -> dict:
+    """Spec §20 "Admin-initiated session revocation"."""
+    session = await state.repo.get_session(session_id)
+    if session is None or session["user_id"] != user_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    revoked = await state.repo.revoke_session(session_id)
+    return revoked

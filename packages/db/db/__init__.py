@@ -5,6 +5,7 @@ from .models import (
     CommitteeDecisionRow,
     ContactInquiryRow,
     DecisionJournalRow,
+    MagicLinkTokenRow,
     OrganizationRow,
     PermissionRow,
     PostTradeAnalysisRow,
@@ -12,6 +13,7 @@ from .models import (
     RiskLimitsRow,
     RolePermissionRow,
     RoleRow,
+    SessionRow,
     TradeIdeaRow,
     UserRow,
 )
@@ -34,5 +36,7 @@ __all__ = [
     "PermissionRow",
     "RolePermissionRow",
     "UserRow",
+    "MagicLinkTokenRow",
+    "SessionRow",
     "SqlAppRepository",
 ]

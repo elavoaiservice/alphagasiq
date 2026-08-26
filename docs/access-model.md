@@ -1,6 +1,6 @@
 # Access Model — Accounts, Authentication, RBAC & Entitlements
 
-> Status: Milestones 1-2. This document describes the target design end-to-end (per the
+> Status: Milestones 1-3. This document describes the target design end-to-end (per the
 > platform's access-model specification) and is updated incrementally as each milestone lands.
 > Sections marked **(not yet built)** describe target behavior that ships in a later milestone —
 > they are documented now so the design is reviewable as a whole, not discovered piecemeal.
@@ -62,43 +62,123 @@ behavior — an existing organization (matched by exact name) is reused, otherwi
 created from `company_name`/`company_website`/`company_type`/`country`/`state_region`. Every
 created user starts `INVITED` regardless of what's requested in the payload (there is no `status`
 field on the request model at all) — the only way to reach `ACTIVE` is completing the magic-link
-invitation once Milestone 3 wires it. Duplicate email (case-insensitive) is rejected with `409`;
-an unrecognized `role` is rejected with `400`. `GET /admin/users`/`GET /admin/users/{id}` resolve
-`organization_name`/`role_name` for display. `POST /admin/organizations`/`GET /admin/organizations`
-manage organizations directly. See `docs/api-specification.md` for the full endpoint table and
-`tests/api/test_admin_users.py` for the enforcement/state-machine/dedup tests.
+invitation (Milestone 3, now real — see §3). Duplicate email (case-insensitive) is rejected with
+`409`; an unrecognized `role` is rejected with `400`. `GET /admin/users`/`GET /admin/users/{id}`
+resolve `organization_name`/`role_name` for display. `POST /admin/organizations`/
+`GET /admin/organizations` manage organizations directly. `POST /admin/users/{id}/resend-
+invitation` (spec §18) is only valid while `INVITED`. `GET /admin/users/{id}/sessions` /
+`POST /admin/users/{id}/sessions/{id}/revoke` give an admin visibility into and control over a
+user's active sessions (spec §20). See `docs/api-specification.md` for the full endpoint table
+and `tests/api/test_admin_users.py`/`tests/api/test_magic_link_auth.py` for the enforcement/
+state-machine/dedup/email/session tests.
 
 ## 3. Authentication: magic link, no passwords
 
-- `POST /auth/magic-link/request {email}` — **implemented now** as an honest placeholder: it
-  already returns the platform's final, non-enumerating response —
-  `{"message": "If an authorized AlphaGasIQ account exists for this email, a secure sign-in link
-  has been sent."}` — for every email, whether or not it matches a user, so the endpoint can never
-  be used to enumerate accounts. Real lookup, `MagicLinkToken` issuance, and email dispatch land
-  in Milestone 3 behind this same response contract (the response text does not change).
-- `GET /auth/magic-link/verify?token=...` **(not yet built — Milestone 3)** — hashes the
-  presented token, looks it up by hash only (the raw token is never stored), checks
-  expiry/consumption/revocation/user-status, marks it consumed, creates a `Session` row, and
-  redirects to `/platform#access_token=...` exactly like the existing OIDC callback does today
-  (`apps/api/api_app/routers/auth.py`).
+**Implemented now** (Milestone 3):
+
+- `POST /auth/magic-link/request {email}` (`apps/api/api_app/routers/auth.py`) always returns
+  the same generic response — `{"detail": "If an authorized AlphaGasIQ account exists for this
+  email, a secure sign-in link has been sent."}` — for every email, whether or not it matches a
+  user, whether the account is eligible, and whether the request was rate-limited. Underneath
+  that fixed response: an unknown email or an ineligible account status (anything but `ACTIVE`/
+  `INVITED`) is a silent no-op; an `ACTIVE` user gets a login link (`magic_link.
+  issue_and_send_login_link`); a still-`INVITED` user gets a fresh invitation link instead (spec
+  §21 — this is exactly the "Resend Invitation" flow, just triggered from `/login` rather than
+  the admin console). Rate-limited per email and per IP independently
+  (`apps/api/api_app/rate_limit.py`'s in-memory sliding window, default 5 requests / 15 minutes
+  per identifier — see `packages/config/config/settings.py`'s `magic_link_rate_limit_*` settings).
+- `GET /auth/magic-link/verify?token=...` hashes the presented token (`apps/api/api_app/
+  magic_link.py::hash_token`, sha256 — only the hash is ever persisted, in `MagicLinkTokenRow.
+  token_hash`), looks it up by hash, and checks in order: exists, not consumed, not revoked, not
+  expired, and the owning user is still in an authenticatable status. It then marks the token
+  consumed (so it can never be replayed), promotes an `INVITED` user to `ACTIVE` (the *only* code
+  path that does this — see §2), creates a `Session` row, and redirects to
+  `/platform#access_token=...` exactly like the existing OIDC callback.
 - The user never receives a plaintext password, temporary password, or raw authentication secret
-  in any email — only a single-use magic-link URL with a short expiry (~15 minutes).
+  in any email — only a single-use magic-link URL with a 15-minute expiry
+  (`magic_link_expire_minutes`). `apps/api/api_app/email_service.py`'s templates are checked by
+  `tests/api/test_magic_link_auth.py::test_create_user_sends_invitation_email_with_magic_link_and_no_secret`,
+  which literally asserts the words "password"/"secret" never appear in the rendered email body.
 - `/login` (`apps/web/app/login/page.tsx`) is the primary entry point: an email field and a
   single "Send Secure Magic Link" button. It always shows the same generic success copy after
   submission, regardless of what was entered.
-- The existing dev-mode password grant (`POST /auth/login`, `_DEV_USERS`) remains available
-  through Milestone 2 only, so the platform stays usable while the real account/session system is
-  built out. It is removed in Milestone 3 once magic-link auth is real, since a standing password
-  grant would directly conflict with this platform's "no plaintext passwords" requirement.
 - `apps/api/api_app/oidc.py`'s Authorization Code + PKCE SSO flow is unaffected by any of this —
   it remains an additive, optional login path alongside magic link.
 
-## 4. Sessions **(not yet built — Milestone 3)**
+### Bootstrap credentials (a deliberate exception, not an oversight)
 
-Session JWTs will carry `sub=session_id` (not `sub=user_id`), backed by a `Session` table, so a
-session can be revoked server-side (today's dev-mode/OIDC JWTs are intentionally stateless and
-carry `sub=user_id`-equivalent claims directly — revocation isn't possible today, which is
-acceptable for a stub auth mode but not for the production account system).
+The existing dev-mode password grant (`POST /auth/login`, `_DEV_USERS` in `apps/api/api_app/
+auth.py`) is **kept permanently**, not removed in this milestone as earlier drafts of this doc
+assumed — but its role changes: it is now explicitly the platform's fixed break-glass/bootstrap
+credential set, not a general password-login feature for real end users.
+
+Real accounts (`UserRow`) never authenticate with a password — they always go through magic link
+or OIDC SSO, satisfying the spec's "no plaintext passwords" requirement for actual users. But
+`POST /admin/users` itself requires an authenticated administrator, and magic-link auth requires
+a `UserRow` to already exist to send a link to — something has to authenticate the very first
+operator before any `UserRow` exists to create more. `_DEV_USERS` is that something: a small,
+fixed, non-self-service set of operator credentials, structurally disconnected from the `users`
+table (it is never joined to `UserRow`, never created by any endpoint, and never reachable by an
+arbitrary email the way the spec's "no self-registration" rule cares about). This is the same
+pattern real IAM systems use (a cloud provider's root account, a seeded Django/Rails superuser) —
+a deliberate, reviewed design decision, not a gap. Before any production deployment, these
+credentials must be rotated out of source and replaced with real secrets management
+(`packages/config`'s `jwt_secret` carries the identical caveat already).
+
+## 4. Sessions
+
+**Implemented now** (Milestone 3): `SessionRow` (`packages/db/db/models.py`) backs every
+magic-link-issued JWT via a `sid` claim (`apps/api/api_app/auth.py::create_access_token`). A
+dev-mode or OIDC-issued token carries no `sid` claim and is completely unaffected — it decodes
+exactly as it always has, with no DB round trip (`decode_access_token` only touches `state.repo`
+when `sid` is present). This is a deliberate refinement of the `sub=session_id` design floated in
+earlier drafts of this doc: `sub` stays the real, stable `user_id` (so `created_by`,
+`current_user_id`, and every other place this codebase treats `user_id` as a durable identity
+keep working unchanged), and a *separate* `sid` claim carries the revocable session pointer. This
+achieves the actual goal — server-side revocation — without corrupting `user_id`'s meaning
+elsewhere in the codebase.
+
+- `POST /auth/logout` revokes the caller's `Session` row (a no-op for a dev-mode/OIDC token,
+  which has none).
+- `GET /auth/sessions` lists the caller's own sessions (spec §20 "Device/session history").
+- `GET /admin/users/{id}/sessions` / `POST /admin/users/{id}/sessions/{id}/revoke` give an
+  administrator the same visibility and an explicit revoke action (spec §20 "Admin-initiated
+  session revocation" / "view active sessions without exposing session secrets" — a `Session` row
+  has no secret field to begin with, so nothing needs redacting).
+- Idle/absolute timeout: a session's fixed `expires_at` (`magic_link_session_minutes`, default
+  480) *is* the absolute timeout — an idle-specific (shorter, activity-resetting) timeout is not
+  yet implemented separately; `last_seen_at`/`touch_session()` exist in the schema/repository to
+  support adding one without a migration, once a milestone actually calls for it.
+- Secure-cookie/HttpOnly/SameSite/CSRF: this platform's session token travels as a bearer token
+  in the `Authorization` header (the same contract OIDC already established), not a cookie —
+  there is no cookie-based CSRF surface to protect against under this transport. If a
+  cookie-based session transport is ever added, it must ship with the CSRF protections spec §20
+  calls for; nothing today needs them because nothing today sets an auth cookie.
+
+## 4a. Role -> dev-mode `Role` bridge (interim, until Milestone 4)
+
+A magic-link-authenticated user's session JWT still needs to carry *some* value every router's
+`require_role` check understands today (`apps/api/api_app/auth.py`'s 5-value `Role` enum), since
+real `require_permission(...)` enforcement against the seeded RBAC data is Milestone 4's job, not
+this one. `auth.py::map_db_role_to_dev_roles` bridges the 8 DB roles to that 5-value enum,
+mirroring the capability composition the `_DEV_USERS` fixtures already use (e.g. a DB `TRADER`
+maps to `{TRADER, RESEARCHER, VIEWER}`, the same set `trader@alphagasiq.local` carries):
+
+| DB role | Mapped dev-mode roles |
+|---|---|
+| `SUPER_ADMIN` | `ADMIN`, `TRADER`, `RISK_MANAGER`, `RESEARCHER`, `VIEWER` |
+| `ADMIN` | `ADMIN`, `TRADER`, `RISK_MANAGER`, `RESEARCHER`, `VIEWER` |
+| `TRADER` | `TRADER`, `RESEARCHER`, `VIEWER` |
+| `RISK_MANAGER` | `RISK_MANAGER`, `VIEWER` |
+| `RESEARCHER` | `RESEARCHER`, `VIEWER` |
+| `EXECUTIVE` | `VIEWER` |
+| `VIEWER` | `VIEWER` |
+| `API_USER` | `VIEWER` |
+
+An unrecognized DB role name never raises — it falls back to `VIEWER`-only, mirroring
+`oidc.py`'s existing "unrecognized claim -> VIEWER" posture. This bridge (and the interim
+`require_role(Role.ADMIN)` check on every `/admin/*` route) is replaced, not layered on top of,
+once Milestone 4 lands.
 
 ## 5. RBAC and feature entitlements
 
