@@ -191,6 +191,18 @@ No column for chain-of-thought. `reasoning_summary` is a concise, human-auditabl
   tool_used, model, latency_ms, permissions_context (jsonb — roles + which permission was checked
   + whether it was granted), created_at. No column exists for a chain-of-thought — there isn't
   one to persist, since the tool layer returns retrieved facts, not a reasoning transcript.
+- **`data_feed_configs`** / **`data_feed_events`** (Milestone 7, spec §§35-37) — admin-visible
+  data-feed configuration and ingestion log. `data_feed_configs`: provider_id (primary key,
+  matches `BaseDataProvider.provider_id`), enabled, paused, polling_frequency_seconds,
+  freshness_threshold_seconds, priority, fallback_provider_id, notes, updated_by, updated_at.
+  **Deliberately has no credential/secret column** — every provider's API key is
+  environment-provisioned via `packages/config/config/settings.py` and never enters the database,
+  which is the strongest possible reading of "credentials must never be redisplayed after entry."
+  One row is seeded per currently-registered provider at boot, idempotently (existing rows /
+  admin edits are never overwritten). `data_feed_events`: id, provider_id, event_type
+  (`test_connection`/`manual_refresh`), status (`success`/`error`), detail, records_received,
+  latency_ms, occurred_at — an append-only ingestion log, one row per admin-triggered
+  test-connection or manual-refresh action.
 
 ## 5. TimescaleDB Specifics
 

@@ -27,13 +27,16 @@ _RequireSystemSettings = Depends(require_permission("admin.system_settings"))
 @router.get("/overview")
 async def admin_overview(state: AppStateDep, _admin: User = _RequireDashboard) -> dict:
     """Spec §31 "Admin Overview". Fields that depend on subsystems not yet built
-    (data-feed health -> Milestone 7; model health -> Milestone 9/10; risk alerts and
-    failed-authentication tracking -> Milestone 10's audit log) are reported as
-    `None` with an explanatory `not_yet_available` list, rather than fabricated —
-    this platform's consistent honest-stub convention."""
+    (model health -> Milestone 9/10; risk alerts and failed-authentication tracking ->
+    Milestone 10's audit log) are reported as `None` with an explanatory
+    `not_yet_available` list, rather than fabricated — this platform's consistent
+    honest-stub convention."""
     users = await state.repo.list_users()
     organizations = await state.repo.list_organizations()
     today = datetime.now(timezone.utc).date()
+
+    health_by_provider = {h.provider_id: h for h in await state.providers.health_snapshot()}
+    feed_configs = await state.repo.list_data_feed_configs()
 
     def _logged_in_today(user: dict) -> bool:
         last_login = user["last_login_at"]
@@ -64,15 +67,42 @@ async def admin_overview(state: AppStateDep, _admin: User = _RequireDashboard) -
         "agent_execution_health": {
             "total_executions_logged": len(state.agent_execution_log),
         },
-        "data_feed_health": None,
-        "stale_data_feeds": None,
+        "data_feed_health": {
+            "total_feeds": len(feed_configs),
+            "healthy": sum(
+                1
+                for c in feed_configs
+                if (health_by_provider.get(c["provider_id"]) is not None
+                    and health_by_provider[c["provider_id"]].status == "healthy")
+            ),
+            "degraded_or_unavailable": sum(
+                1
+                for c in feed_configs
+                if (health_by_provider.get(c["provider_id"]) is not None
+                    and health_by_provider[c["provider_id"]].status in ("degraded", "unavailable"))
+            ),
+            "not_configured": sum(
+                1
+                for c in feed_configs
+                if (health_by_provider.get(c["provider_id"]) is None
+                    or health_by_provider[c["provider_id"]].status == "not_configured")
+            ),
+        },
+        "stale_data_feeds": sum(
+            1
+            for c in feed_configs
+            if (
+                c["freshness_threshold_seconds"] is not None
+                and health_by_provider.get(c["provider_id"]) is not None
+                and health_by_provider[c["provider_id"]].freshness_seconds is not None
+                and health_by_provider[c["provider_id"]].freshness_seconds > c["freshness_threshold_seconds"]
+            )
+        ),
         "model_health": None,
         "system_alerts": None,
         "failed_authentication_attempts": None,
         "critical_risk_alerts": None,
         "not_yet_available": [
-            "data_feed_health",
-            "stale_data_feeds",
             "model_health",
             "system_alerts",
             "failed_authentication_attempts",

@@ -397,6 +397,45 @@ class SystemSettingHistoryRow(Base):
     changed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
 
 
+class DataFeedConfigRow(Base):
+    """Admin-configurable state for one registered `data_sdk.BaseDataProvider`
+    (spec §36 "Data Feed Administration"). Deliberately holds no credential/secret
+    field — every provider's API key/token is environment-provisioned
+    (`packages/config/config/settings.py`) and never touches this table or the API
+    layer at all, which is the strongest possible reading of spec §36's "Credentials
+    must never be redisplayed after entry" (they are never *displayed*, or even
+    *enterable*, through this admin surface in the first place)."""
+
+    __tablename__ = "data_feed_configs"
+
+    provider_id: Mapped[str] = mapped_column(String, primary_key=True)
+    enabled: Mapped[bool] = mapped_column(nullable=False, default=True)
+    paused: Mapped[bool] = mapped_column(nullable=False, default=False)
+    polling_frequency_seconds: Mapped[int | None] = mapped_column(nullable=True)
+    freshness_threshold_seconds: Mapped[int | None] = mapped_column(nullable=True)
+    priority: Mapped[int] = mapped_column(nullable=False, default=100)
+    fallback_provider_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    notes: Mapped[str | None] = mapped_column(String, nullable=True)
+    updated_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class DataFeedEventRow(Base):
+    """An ingestion-log entry (spec §36 "View ingestion logs" / "Review errors") —
+    written by the admin "Test Connection" and "Trigger Manual Refresh" actions."""
+
+    __tablename__ = "data_feed_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    provider_id: Mapped[str] = mapped_column(String, nullable=False)
+    event_type: Mapped[str] = mapped_column(String, nullable=False)  # test_connection | manual_refresh
+    status: Mapped[str] = mapped_column(String, nullable=False)  # success | error
+    detail: Mapped[str] = mapped_column(String, nullable=False, default="")
+    records_received: Mapped[int | None] = mapped_column(nullable=True)
+    latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
 class RiskLimitsRow(Base):
     __tablename__ = "risk_limits"
 

@@ -94,7 +94,8 @@ def test_admin_overview_reports_user_and_org_counts(client):
     assert body["invited_users"] >= 1
     assert body["active_organizations"] >= 1
     assert "not_yet_available" in body
-    assert "data_feed_health" in body["not_yet_available"]
+    assert "model_health" in body["not_yet_available"]
+    assert body["data_feed_health"]["total_feeds"] >= 1
 
 
 def test_admin_overview_requires_admin_dashboard_permission(client):

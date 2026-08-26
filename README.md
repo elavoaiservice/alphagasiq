@@ -249,6 +249,20 @@ versioned/reversible via a dedicated history table). Backed by a new `admin_cons
 plus `PATCH` endpoints on `admin_users.py` — every action gated by the exact permission the
 access-model spec assigns it.
 
+**Data feeds now have a real admin surface, with health and dependency mapping.** Milestone 7
+adds `GET/PATCH /admin/data-feeds(/{provider_id})`, `POST .../test-connection`,
+`POST .../refresh`, `GET .../events`, and `GET /admin/data-feeds/dependency-map`
+(`admin_data_feeds.py`, gated by `admin.data_feeds`). Each feed's admin-editable config
+(enabled/paused/polling frequency/freshness threshold/priority/fallback provider/notes) is merged
+with its provider's *live* `health_check()` result and a static dependency map built from the real
+agent org chart (`docs/agents.md` §2) — no fabricated dependency graph. `DataFeedConfigRow`
+deliberately has no credential field: every API key stays environment-provisioned and never
+touches the database. Test-connection and manual-refresh actions call the provider's real
+`health_check()`/`fetch()` and log the result; a provider failure is recorded as an event, never a
+500, since several connectors (FERC, pipeline bulletin boards, licensed news, live CME/ICE) are
+intentionally still stubs. `GET /admin/overview`'s data-feed-health fields, `null` since Milestone
+6, are now computed from this real data.
+
 **The pipeline digital twin can now be backed by a real Neo4j instance.**
 `fundamentals_service/pipeline_graph_neo4j.py` seeds the same `PipelineGraph`
 `build_default_pipeline_graph()` already builds into Neo4j via Cypher `MERGE`, then reloads it —

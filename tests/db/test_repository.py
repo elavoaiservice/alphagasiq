@@ -708,3 +708,59 @@ async def test_update_organization_partial_update_and_missing_org(repo):
     assert updated["name"] == "Org Edit Test Co"  # untouched
 
     assert await repo.update_organization("no-such-org", name="x") is None
+
+
+async def test_seed_list_get_update_data_feed_configs(repo):
+    await repo.seed_data_feed_configs(["eia", "noaa_nws"])
+    configs = await repo.list_data_feed_configs()
+    assert {c["provider_id"] for c in configs} == {"eia", "noaa_nws"}
+    for c in configs:
+        assert c["enabled"] is True
+        assert c["paused"] is False
+        assert c["priority"] == 100
+
+    eia = await repo.get_data_feed_config("eia")
+    assert eia["provider_id"] == "eia"
+    assert await repo.get_data_feed_config("no-such-provider") is None
+
+    updated = await repo.update_data_feed_config(
+        "eia", paused=True, priority=10, notes="throttled during maintenance", updated_by="u-admin-1"
+    )
+    assert updated["paused"] is True
+    assert updated["priority"] == 10
+    assert updated["notes"] == "throttled during maintenance"
+    assert updated["updated_by"] == "u-admin-1"
+    assert updated["enabled"] is True  # untouched
+
+    assert await repo.update_data_feed_config("no-such-provider", paused=True) is None
+
+
+async def test_seed_data_feed_configs_is_idempotent(repo):
+    await repo.seed_data_feed_configs(["eia"])
+    await repo.update_data_feed_config("eia", notes="do not revert me")
+    await repo.seed_data_feed_configs(["eia", "noaa_nws"])  # re-run with an added provider
+
+    assert (await repo.get_data_feed_config("eia"))["notes"] == "do not revert me"
+    assert await repo.get_data_feed_config("noaa_nws") is not None
+
+
+async def test_record_and_list_data_feed_events(repo):
+    await repo.seed_data_feed_configs(["eia"])
+    await repo.record_data_feed_event(
+        provider_id="eia", event_type="test_connection", status="success", detail="ok", latency_ms=12.5
+    )
+    event = await repo.record_data_feed_event(
+        provider_id="eia",
+        event_type="manual_refresh",
+        status="success",
+        detail="Fetched 3 observation(s).",
+        records_received=3,
+        latency_ms=42.0,
+    )
+    assert event["records_received"] == 3
+
+    events = await repo.list_data_feed_events("eia")
+    assert len(events) == 2
+    assert events[0]["event_type"] == "manual_refresh"  # newest first
+
+    assert await repo.list_data_feed_events("no-such-provider") == []

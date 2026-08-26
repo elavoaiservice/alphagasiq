@@ -6,6 +6,8 @@ from .models import (
     ChatMessageRow,
     CommitteeDecisionRow,
     ContactInquiryRow,
+    DataFeedConfigRow,
+    DataFeedEventRow,
     DecisionJournalRow,
     FeatureRow,
     MagicLinkTokenRow,
@@ -54,5 +56,7 @@ __all__ = [
     "ChatMessageRow",
     "SystemSettingRow",
     "SystemSettingHistoryRow",
+    "DataFeedConfigRow",
+    "DataFeedEventRow",
     "SqlAppRepository",
 ]

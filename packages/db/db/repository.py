@@ -23,6 +23,8 @@ from .models import (
     ChatMessageRow,
     CommitteeDecisionRow,
     ContactInquiryRow,
+    DataFeedConfigRow,
+    DataFeedEventRow,
     DecisionJournalRow,
     FeatureRow,
     MagicLinkTokenRow,
@@ -370,6 +372,34 @@ def _organization_to_dict(row: OrganizationRow) -> dict:
 
 def _role_to_dict(row: RoleRow) -> dict:
     return {"id": row.id, "name": row.name, "description": row.description}
+
+
+def _data_feed_config_to_dict(row: DataFeedConfigRow) -> dict:
+    return {
+        "provider_id": row.provider_id,
+        "enabled": row.enabled,
+        "paused": row.paused,
+        "polling_frequency_seconds": row.polling_frequency_seconds,
+        "freshness_threshold_seconds": row.freshness_threshold_seconds,
+        "priority": row.priority,
+        "fallback_provider_id": row.fallback_provider_id,
+        "notes": row.notes,
+        "updated_by": row.updated_by,
+        "updated_at": row.updated_at,
+    }
+
+
+def _data_feed_event_to_dict(row: DataFeedEventRow) -> dict:
+    return {
+        "id": row.id,
+        "provider_id": row.provider_id,
+        "event_type": row.event_type,
+        "status": row.status,
+        "detail": row.detail,
+        "records_received": row.records_received,
+        "latency_ms": row.latency_ms,
+        "occurred_at": row.occurred_at,
+    }
 
 
 def _system_setting_to_dict(row: SystemSettingRow) -> dict:
@@ -791,6 +821,89 @@ class SqlAppRepository:
             await session.commit()
             await session.refresh(row)
         return _organization_to_dict(row)
+
+    # -- data feed administration (spec §§35-37) ---------------------------------------
+
+    async def seed_data_feed_configs(self, provider_ids: list[str]) -> None:
+        """Idempotent: seeds one default config row per currently-registered
+        provider id. Safe to re-run on every boot (e.g. after a new connector is
+        registered) without touching an admin's prior edits to an existing row."""
+        async with self.session_factory() as session:
+            existing = set((await session.execute(select(DataFeedConfigRow.provider_id))).scalars().all())
+            for provider_id in provider_ids:
+                if provider_id not in existing:
+                    session.add(DataFeedConfigRow(provider_id=provider_id))
+            await session.commit()
+
+    async def list_data_feed_configs(self) -> list[dict]:
+        async with self.session_factory() as session:
+            rows = (
+                (await session.execute(select(DataFeedConfigRow).order_by(DataFeedConfigRow.provider_id)))
+                .scalars()
+                .all()
+            )
+        return [_data_feed_config_to_dict(r) for r in rows]
+
+    async def get_data_feed_config(self, provider_id: str) -> dict | None:
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(select(DataFeedConfigRow).where(DataFeedConfigRow.provider_id == provider_id))
+            ).scalar_one_or_none()
+        return _data_feed_config_to_dict(row) if row is not None else None
+
+    async def update_data_feed_config(self, provider_id: str, **fields) -> dict | None:
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(select(DataFeedConfigRow).where(DataFeedConfigRow.provider_id == provider_id))
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            for field, value in fields.items():
+                setattr(row, field, value)
+            row.updated_at = datetime.utcnow()
+            await session.commit()
+            await session.refresh(row)
+        return _data_feed_config_to_dict(row)
+
+    async def record_data_feed_event(
+        self,
+        *,
+        provider_id: str,
+        event_type: str,
+        status: str,
+        detail: str = "",
+        records_received: int | None = None,
+        latency_ms: float | None = None,
+    ) -> dict:
+        row = DataFeedEventRow(
+            provider_id=provider_id,
+            event_type=event_type,
+            status=status,
+            detail=detail,
+            records_received=records_received,
+            latency_ms=latency_ms,
+        )
+        async with self.session_factory() as session:
+            session.add(row)
+            await session.commit()
+            await session.refresh(row)
+        return _data_feed_event_to_dict(row)
+
+    async def list_data_feed_events(self, provider_id: str, *, limit: int = 50) -> list[dict]:
+        async with self.session_factory() as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(DataFeedEventRow)
+                        .where(DataFeedEventRow.provider_id == provider_id)
+                        .order_by(DataFeedEventRow.occurred_at.desc())
+                        .limit(limit)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        return [_data_feed_event_to_dict(r) for r in rows]
 
     async def list_roles(self) -> list[dict]:
         async with self.session_factory() as session:

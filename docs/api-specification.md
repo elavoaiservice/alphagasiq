@@ -52,13 +52,25 @@ create a `User` or `Organization` — see `docs/access-model.md` "No Self-Regist
 | POST | `/admin/users/{user_id}/send-login-link` | requires `admin.users.edit`. Spec §32 "Send login Magic Link" — only valid once the user is `ACTIVE` (distinct from resend-invitation, which is `INVITED`-only) |
 | GET | `/admin/users/{user_id}/entitlements` | requires `admin.users.view`. Admin's view of a user's effective permissions/features (spec §32 "View feature usage") |
 | PATCH | `/admin/organizations/{organization_id}` | requires `admin.organizations`. Partial update, including `data_entitlements` (spec §32 "Change data entitlements") |
-| GET | `/admin/overview` | requires `admin.dashboard`. Executive operating metrics (spec §31) — active/invited/suspended users, active organizations, logins today, Chief Trading Agent query volume, paper-trading activity; fields depending on not-yet-built subsystems (data-feed/model health, risk alerts, failed-auth tracking) report `null` in a `not_yet_available` list |
+| GET | `/admin/overview` | requires `admin.dashboard`. Executive operating metrics (spec §31) — active/invited/suspended users, active organizations, logins today, Chief Trading Agent query volume, paper-trading activity, and real data-feed health/staleness counts; fields depending on not-yet-built subsystems (model health, risk alerts, failed-auth tracking) report `null` in a `not_yet_available` list |
 | GET/PUT | `/admin/features(/{feature_key})` | requires `admin.feature_management`. List/toggle a feature's global `globally_enabled` switch (spec §34) |
 | GET/PUT | `/admin/roles/{role_name}/features(/{feature_key})` | requires `admin.feature_management`. View/toggle a role's feature grants |
 | PUT | `/admin/organizations/{organization_id}/features/{feature_key}` | requires `admin.feature_management`. Org-level feature override |
 | PUT | `/admin/users/{user_id}/features/{feature_key}` | requires `admin.users.features`. Per-user feature override (spec §32's "Enable/disable Chief Trading Agent/Portfolio/Risk Analytics/Paper Trading/API Access") — deny-only for `security_sensitive` features |
 | GET/PUT | `/admin/settings(/{key})` | requires `admin.system_settings` (`SUPER_ADMIN`-only). List/get/update a system configuration value (spec §38) |
 | GET | `/admin/settings/{key}/history` | requires `admin.system_settings`. Prior versions of one setting |
+
+## Admin: Data Feeds (Milestone 7, spec §§35-37)
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/admin/data-feeds` | requires `admin.data_feeds`. Every registered provider's config merged with its *live* `health_check()` result and its static dependency-map entry — connection status, freshness, priority, affected agents/business functions, dependency chain (spec §35). `data_quality_score` is `null` (honest stub — no scoring model exists yet) |
+| GET | `/admin/data-feeds/{provider_id}` | requires `admin.data_feeds`. Single-provider version of the above |
+| PATCH | `/admin/data-feeds/{provider_id}` | requires `admin.data_feeds`. Partial update of enabled/paused/polling_frequency_seconds/freshness_threshold_seconds/priority/fallback_provider_id/notes (spec §36). No credential field exists to edit — API keys are environment-provisioned only |
+| POST | `/admin/data-feeds/{provider_id}/test-connection` | requires `admin.data_feeds`. Calls the provider's real `health_check()`; records a `data_feed_events` row. A provider exception is caught and recorded as an `error` event, never a 500 |
+| POST | `/admin/data-feeds/{provider_id}/refresh` | requires `admin.data_feeds`. Calls the provider's real `fetch()`; records `records_received` and any error the same way |
+| GET | `/admin/data-feeds/{provider_id}/events` | requires `admin.data_feeds`. Ingestion log (spec §35 "Errors"/"Records Received"), newest first |
+| GET | `/admin/data-feeds/dependency-map` | requires `admin.data_feeds`. The full static provider → agent → business-function dependency map (spec §37), built from `docs/agents.md` §2's real org chart |
 
 ## System / Observability
 

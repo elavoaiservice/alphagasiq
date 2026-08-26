@@ -416,8 +416,8 @@ Several follow-up hardening items from the MVP status are now closed out:
   `apps/web/app/platform/admin/*` (Overview/Users/Organizations/Features/System Settings),
   backed by a new `apps/api/api_app/routers/admin_console.py` plus extensions to
   `admin_users.py`. `GET /admin/overview` (spec §31) reports real user/org/chat/paper-trading
-  metrics, honestly marking fields that depend on not-yet-built subsystems (data-feed/model
-  health, risk alerts, audit-based failed-auth tracking) as `null` in a `not_yet_available` list.
+  metrics, honestly marking fields that depend on not-yet-built subsystems (model health, risk
+  alerts, audit-based failed-auth tracking) as `null` in a `not_yet_available` list.
   `PATCH /admin/users/{id}` and `PATCH /admin/organizations/{id}` are partial-update endpoints
   covering spec §32's "Edit user profile"/"Change organization"/"Change role"/"Change data
   entitlements". Feature management (spec §34) gets full CRUD across all four tiers — global
@@ -429,3 +429,21 @@ Several follow-up hardening items from the MVP status are now closed out:
   (`SUPER_ADMIN`-only) — every write appends the setting's prior value/version to history first,
   giving the "versioned, timestamped, reversible" guarantee the spec calls for without waiting on
   Milestone 10's full `AuditEvent` table.
+- **Access model, Milestone 7 (data-feed administration + health + dependency mapping)**: a new
+  `apps/api/api_app/routers/admin_data_feeds.py`, gated by `admin.data_feeds`, exposes
+  `GET/PATCH /admin/data-feeds(/{provider_id})`, `POST .../test-connection`, `POST .../refresh`,
+  `GET .../events`, and `GET /admin/data-feeds/dependency-map` (spec §§35-37). `DataFeedConfigRow`
+  (`packages/db`) holds the admin-editable knobs — enabled/paused/polling frequency/freshness
+  threshold/priority/fallback provider/notes — seeded one row per registered provider at boot,
+  idempotently. It **has no credential/secret field**: every provider's API key stays
+  environment-provisioned via `packages/config/config/settings.py` and never enters the database
+  or this admin surface, the strongest possible reading of "credentials must never be redisplayed
+  after entry." `GET /admin/data-feeds` merges that config with each provider's *live*
+  `health_check()` result and a new static dependency map
+  (`apps/api/api_app/data_feed_dependencies.py`, built from `docs/agents.md` §2's real agent org
+  chart — NOAA's chain is the spec's own worked example verbatim). Test-connection/manual-refresh
+  actions call the provider's real `health_check()`/`fetch()` and log a `DataFeedEventRow`; a
+  provider exception is recorded as an `error` event, never raised as a 500, since a feed failing
+  is expected/normal for this platform's intentionally-stubbed connectors (FERC, pipeline bulletin
+  boards, licensed news, live CME/ICE). `GET /admin/overview`'s `data_feed_health`/
+  `stale_data_feeds` fields, `null` since Milestone 6, are now computed from this real data.

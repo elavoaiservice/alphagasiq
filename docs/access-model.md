@@ -1,6 +1,6 @@
 # Access Model — Accounts, Authentication, RBAC & Entitlements
 
-> Status: Milestones 1-6. This document describes the target design end-to-end (per the
+> Status: Milestones 1-7. This document describes the target design end-to-end (per the
 > platform's access-model specification) and is updated incrementally as each milestone lands.
 > Sections marked **(not yet built)** describe target behavior that ships in a later milestone —
 > they are documented now so the design is reviewable as a whole, not discovered piecemeal.
@@ -317,11 +317,11 @@ picks the console up or down for UX purposes only; every actual boundary is the 
 `require_permission`/`require_any_permission` check, exactly as everywhere else in this document.
 
 - `GET /admin/overview` (spec §31, `admin.dashboard`) reports active/invited/suspended user
-  counts, active organizations, logins today, Chief Trading Agent query volume, and paper-trading
-  activity — computed from real data. Fields that depend on a subsystem not yet built (data-feed
-  health → Milestone 7; model health → Milestone 9/10; risk alerts and failed-authentication
-  tracking → Milestone 10's audit log) are reported as `null` inside a `not_yet_available` list
-  rather than fabricated.
+  counts, active organizations, logins today, Chief Trading Agent query volume, paper-trading
+  activity, and (as of Milestone 7) real data-feed health and staleness counts — computed from
+  real data. Fields that depend on a subsystem not yet built (model health → Milestone 9/10; risk
+  alerts and failed-authentication tracking → Milestone 10's audit log) are reported as `null`
+  inside a `not_yet_available` list rather than fabricated.
 - `PATCH /admin/users/{id}` (spec §32 "Edit user profile" / "Change organization" / "Change
   role" / "Set account expiration", `admin.users.edit`) is a partial update — only fields present
   in the request body change. `POST /admin/users/{id}/send-login-link` (`admin.users.edit`) is
@@ -349,12 +349,43 @@ picks the console up or down for UX purposes only; every actual boundary is the 
   practical" — reversal today means an admin manually writing the desired historical value back;
   a one-click "restore to version N" action would be simple, uncontroversial follow-up work.
 
-### Milestones 7-10 (not yet built)
+### Milestone 7: data-feed administration + health + dependency mapping (spec §§35-37)
 
-Data-feed administration and health monitoring, an AI Agent Control Center, agent versioning and
-a governed optimization workflow, model management, risk settings, a real cross-cutting
-`AuditEvent` table, and system health/alerting — all gated by RBAC, and all explicitly forbidden
-from reaching or modifying the Risk Governor's rules (see `docs/risk-framework.md` — the Risk
-Governor has no admin- or agent-facing write path today, and none will be added; agent
-"optimization" can only ever change an agent's own versioned prompt/model/thresholds, never risk
-limits).
+**Implemented now**: `GET/PATCH /admin/data-feeds(/{provider_id})`,
+`POST /admin/data-feeds/{provider_id}/test-connection`, `POST /admin/data-feeds/{provider_id}/refresh`,
+`GET /admin/data-feeds/{provider_id}/events`, and `GET /admin/data-feeds/dependency-map`
+(`apps/api/api_app/routers/admin_data_feeds.py`), all gated by `admin.data_feeds` (granted to
+`ADMIN` and `SUPER_ADMIN`).
+
+- `DataFeedConfigRow` (`packages/db`) holds the admin-editable knobs spec §36 calls for — enabled/
+  paused, polling frequency, freshness threshold, priority, fallback provider, notes — seeded one
+  row per currently-registered provider at boot (`AppState.seed()`), idempotently, so adding a new
+  connector later never disturbs an admin's existing edits to the others. **It deliberately has no
+  credential/secret field of any kind.** Every provider's API key is environment-provisioned via
+  `packages/config/config/settings.py` and never touches the database or this admin surface at
+  all — the strongest possible reading of this document's "credentials must never be redisplayed
+  after entry," since there is no field here to redisplay in the first place.
+- `GET /admin/data-feeds` merges that config with the *live* result of each provider's real
+  `health_check()` (connection status, detail, last-checked time, freshness) and the static
+  dependency map below, covering spec §35's field list. `data_quality_score` is reported as `null`
+  — an honest stub, since no scoring model exists yet, rather than a fabricated number.
+- `POST .../test-connection` and `POST .../refresh` call the provider's real `health_check()` /
+  `fetch()` and record a `DataFeedEventRow` (`packages/db`) — the ingestion log spec §35 calls
+  "Errors" and "Records Received." A provider exception is caught and recorded as an `error` event
+  rather than raised as a 500: a feed failing is an expected, normal operating condition for a
+  platform whose FERC/pipeline-bulletin-board/licensed-news/live-CME/live-ICE connectors are
+  intentionally still `NotImplementedProvider` stubs (see `docs/data-sources.md`).
+- `apps/api/api_app/data_feed_dependencies.py`'s static `_DEPENDENCIES` map answers spec §37's
+  "which agents/business functions does this feed affect" and "show the full dependency chain" —
+  built directly from `docs/agents.md` §2's real agent org chart, not fabricated. NOAA's chain is
+  the spec's own worked example verbatim: `NOAA → Weather Agent → Demand Agent → Storage Agent →
+  Forecasting Agent → Directional Strategy Agent → Chief Trading Agent → Trade Recommendation`.
+
+### Milestones 8-10 (not yet built)
+
+An AI Agent Control Center, agent versioning and a governed optimization workflow, model
+management, risk settings, a real cross-cutting `AuditEvent` table, and system health/alerting —
+all gated by RBAC, and all explicitly forbidden from reaching or modifying the Risk Governor's
+rules (see `docs/risk-framework.md` — the Risk Governor has no admin- or agent-facing write path
+today, and none will be added; agent "optimization" can only ever change an agent's own versioned
+prompt/model/thresholds, never risk limits).
