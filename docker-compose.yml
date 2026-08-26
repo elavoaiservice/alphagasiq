@@ -46,6 +46,21 @@ services:
     ports:
       - "9092:9092"
 
+  # Optional: the Neo4j-backed pipeline digital twin (see NEO4J_URI in .env.example).
+  # Behind a profile so `docker compose up` doesn't pull/run this JVM-based service by
+  # default — start it explicitly with `docker compose --profile neo4j up`.
+  neo4j:
+    image: neo4j:5-community
+    restart: unless-stopped
+    profiles: ["neo4j"]
+    environment:
+      NEO4J_AUTH: neo4j/alphagasiq-dev
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4jdata:/data
+
   api:
     build:
       context: .
@@ -102,3 +117,4 @@ services:
 
 volumes:
   pgdata:
+  neo4jdata:

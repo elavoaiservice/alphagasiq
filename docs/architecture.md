@@ -210,6 +210,21 @@ Milestones 10 and 11 are now implemented at MVP depth alongside 1-9:
   Team) surfaces constrained corridors and active maintenance. The frontend map
   (`apps/web/components/pipeline-map/PipelineMap.tsx`) is a dependency-free inline-SVG network
   view — no Mapbox token required — click a node to open `PipelineNodeInspector`.
+  **Neo4j-backed pipeline graph**: `pipeline_graph.py`'s in-memory `PipelineGraph` stays the
+  app-facing model (no router changes), but `fundamentals_service/pipeline_graph_neo4j.py` adds a
+  real round trip through Neo4j behind it — `seed_neo4j_from_graph()` writes every node/edge via
+  Cypher `MERGE` (idempotent; safe to re-run every boot), `load_pipeline_graph_from_neo4j()` reads
+  them back and reconstructs an equivalent `PipelineGraph`. `AppState` uses this round trip
+  (`sync_pipeline_graph_via_neo4j()`) only when `NEO4J_URI` is configured — the same additive,
+  config-gated pattern as `OIDC_ISSUER_URL`/`EVENT_BUS_IMPL=redpanda`; every default dev/docker
+  environment leaves it unset and keeps the plain in-memory graph, and a Neo4j sync failure at
+  boot falls back to it rather than crashing the app. `docker-compose.yml`'s `neo4j` service sits
+  behind a Compose profile (`docker compose --profile neo4j up`) so it isn't pulled/started by
+  default. No live Neo4j server is reachable in this sandboxed dev environment (no Docker daemon,
+  and the egress policy blocks fetching Neo4j's distribution directly), so this is validated
+  against faithful `neo4j.AsyncDriver`/`AsyncSession` test doubles
+  (`tests/fundamentals/test_pipeline_graph_neo4j.py`) — the same validation posture as
+  `RedpandaEventBus` above, for the same reason.
 - **Milestone 11 (post-trade learning)**: `services/paper-execution/paper_execution_service/post_trade.py`
   generates a `PostTradeAnalysis` on every position close (`POST /trade-ideas/{id}/close`),
   scoring thesis/timing/risk accuracy and classifying the outcome into one of the four

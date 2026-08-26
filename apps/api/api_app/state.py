@@ -11,6 +11,7 @@ require changing any router.
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
 
@@ -33,6 +34,7 @@ from data_service.registry import build_default_registry
 from db import SqlAppRepository
 from fundamentals_service.lng import LNGTerminalState, compute_netback
 from fundamentals_service.pipeline_graph import PipelineGraph, build_default_pipeline_graph
+from fundamentals_service.pipeline_graph_neo4j import sync_pipeline_graph_via_neo4j
 from fundamentals_service.power_burn import PowerMarketState, estimate_power_burn_bcf_d
 from fundamentals_service.seed import (
     generate_daily_balances,
@@ -72,6 +74,7 @@ from schemas import (
 from .models import Approval, ApprovalActionRecord, ApprovalState, ChatSession
 
 DEFAULT_INSTRUMENT_FALLBACK = "NG-M1"
+logger = logging.getLogger(__name__)
 
 
 class AppState:
@@ -82,6 +85,12 @@ class AppState:
         self.event_bus = build_event_bus(
             impl=settings.event_bus_impl, kafka_bootstrap_servers=settings.kafka_bootstrap_servers
         )
+        self.neo4j_driver = None
+        if settings.neo4j_uri:
+            from neo4j import AsyncGraphDatabase
+
+            auth = (settings.neo4j_user, settings.neo4j_password) if settings.neo4j_password else None
+            self.neo4j_driver = AsyncGraphDatabase.driver(settings.neo4j_uri, auth=auth)
         self.providers: ProviderRegistry = build_default_registry()
         llm = get_default_llm_provider()
 
@@ -223,6 +232,15 @@ class AppState:
         self.lng_terminals = seed_lng_terminals()
         self.power_markets = seed_power_markets()
         self.pipeline_graph = build_default_pipeline_graph()
+        if self.neo4j_driver is not None:
+            try:
+                self.pipeline_graph = await sync_pipeline_graph_via_neo4j(
+                    self.neo4j_driver, self.pipeline_graph, database=self.settings.neo4j_database
+                )
+            except Exception:
+                logger.exception(
+                    "Neo4j pipeline graph sync failed; falling back to the in-memory graph for this boot"
+                )
         self.price_history = generate_price_history(end_date=today, num_days=250)
 
         cme = self.providers.get("mock_cme")

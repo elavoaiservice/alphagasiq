@@ -116,8 +116,11 @@ No column for chain-of-thought. `reasoning_summary` is a concise, human-auditabl
   pipeline_interconnect, storage_facility, city_gate, power_plant, LNG_terminal, export_point,
   hub; edge types: pipeline, transport_contract, interconnect; edges carry capacity,
   scheduled_flow, actual_flow, utilization, direction, maintenance, constraint, tariff,
-  basis_relationship as jsonb/typed columns). Designed to be portable to Neo4j later — no
-  recursive-SQL-only features are relied upon.
+  basis_relationship as jsonb/typed columns). This migration's relational shape mirrors the
+  in-memory `PipelineGraph` `services/fundamentals/fundamentals_service/pipeline_graph.py`
+  builds at boot; a real Neo4j-backed alternative now also exists
+  (`pipeline_graph_neo4j.py`, `NEO4J_URI` config-gated, off by default) — see
+  `docs/architecture.md` §8 "Neo4j-backed pipeline graph".
 - **`lng_terminals`** — name, location (geography point), capacity_bcf_d, feedgas_bcf_d,
   utilization, maintenance_status, outage_status, estimated_cargo_loadings (jsonb).
 - **`market_ticks`** / **`forward_curve_points`** — normalized market data, continuous contract

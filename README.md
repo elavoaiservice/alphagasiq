@@ -158,3 +158,12 @@ existed but nothing published to it. No live broker is reachable in this dev san
 daemon), so `RedpandaEventBus` is tested against faithful `aiokafka` test doubles
 (`tests/eventbus/test_kafka_eventbus.py`) rather than a live one — everything on this side of
 that network boundary is real, unmocked code.
+
+**The pipeline digital twin can now be backed by a real Neo4j instance.**
+`fundamentals_service/pipeline_graph_neo4j.py` seeds the same `PipelineGraph`
+`build_default_pipeline_graph()` already builds into Neo4j via Cypher `MERGE`, then reloads it —
+a real round trip, activated only when `NEO4J_URI` is configured (`docker compose --profile neo4j
+up` provisions one). Every default environment keeps the plain in-memory graph, and a sync
+failure at boot falls back to it rather than crashing. Same validation posture as the event bus
+above: no live Neo4j server is reachable here, so it's tested against faithful `neo4j` driver
+test doubles (`tests/fundamentals/test_pipeline_graph_neo4j.py`).

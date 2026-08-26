@@ -21,6 +21,8 @@ async def _lifespan(app: FastAPI):
     stop = getattr(state.event_bus, "stop", None)
     if stop is not None:
         await stop()
+    if state.neo4j_driver is not None:
+        await state.neo4j_driver.close()
 
 
 def create_app() -> FastAPI:

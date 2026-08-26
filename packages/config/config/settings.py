@@ -15,6 +15,16 @@ class Settings(BaseSettings):
     event_bus_impl: str = "memory"  # memory | redpanda
     kafka_bootstrap_servers: str = "localhost:9092"
 
+    # Neo4j-backed pipeline digital twin: additive, same config-gated pattern as
+    # OIDC/redpanda above. When `neo4j_uri` is unset (every default dev/docker
+    # environment), the pipeline graph stays the plain in-memory `PipelineGraph`
+    # `pipeline_graph.py` already builds. When set, `AppState` seeds that same graph
+    # into Neo4j and reloads it from there — a real round trip, not just a config flag.
+    neo4j_uri: str | None = None
+    neo4j_user: str = "neo4j"
+    neo4j_password: str | None = None
+    neo4j_database: str | None = None
+
     jwt_secret: str = "dev-secret-change-me-in-production-min-32-bytes"
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 480
