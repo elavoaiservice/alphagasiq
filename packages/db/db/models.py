@@ -366,6 +366,37 @@ class ChatMessageRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
 
 
+class SystemSettingRow(Base):
+    """A single named, admin-editable non-sensitive platform setting (spec §38 —
+    Platform Name, Support Email, Default Timezone, etc.). Every change is versioned/
+    timestamped/reversible via `SystemSettingHistoryRow` — see
+    `SqlAppRepository.set_system_setting`."""
+
+    __tablename__ = "system_settings"
+
+    key: Mapped[str] = mapped_column(String, primary_key=True)
+    value: Mapped[dict] = mapped_column(JSON, nullable=False)
+    version: Mapped[int] = mapped_column(nullable=False, default=1)
+    updated_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class SystemSettingHistoryRow(Base):
+    """Append-only history of every prior value a `SystemSettingRow` held — spec §38
+    "System information changes must be: Versioned, Timestamped, Audited, Reversible
+    where practical". A full cross-cutting `AuditEvent` table (spec §54-55) lands in
+    Milestone 10; this dedicated history table covers system-setting changes now."""
+
+    __tablename__ = "system_setting_history"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    key: Mapped[str] = mapped_column(String, nullable=False)
+    value: Mapped[dict] = mapped_column(JSON, nullable=False)
+    version: Mapped[int] = mapped_column(nullable=False)
+    changed_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    changed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
 class RiskLimitsRow(Base):
     __tablename__ = "risk_limits"
 

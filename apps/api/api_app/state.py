@@ -158,6 +158,7 @@ class AppState:
             await self.repo.init_schema()
             await self.repo.seed_rbac_defaults()
             await self.repo.seed_feature_defaults()
+            await self.repo.seed_system_settings_defaults()
             await self._hydrate_from_repo()
             await self._seed_market_and_fundamentals()
             await self._run_initial_research_cycle()

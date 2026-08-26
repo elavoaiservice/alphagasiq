@@ -412,3 +412,20 @@ Several follow-up hardening items from the MVP status are now closed out:
   *actual* `UserRow.role_id`, not the route-gating `map_db_role_to_dev_roles` bridge — the bridge
   was silently under/mis-granting `SUPER_ADMIN`/`EXECUTIVE`/`API_USER` magic-link sessions (see
   `docs/access-model.md` §5 for the full explanation and its regression tests).
+- **Access model, Milestone 6 (admin console)**: a real admin console at
+  `apps/web/app/platform/admin/*` (Overview/Users/Organizations/Features/System Settings),
+  backed by a new `apps/api/api_app/routers/admin_console.py` plus extensions to
+  `admin_users.py`. `GET /admin/overview` (spec §31) reports real user/org/chat/paper-trading
+  metrics, honestly marking fields that depend on not-yet-built subsystems (data-feed/model
+  health, risk alerts, audit-based failed-auth tracking) as `null` in a `not_yet_available` list.
+  `PATCH /admin/users/{id}` and `PATCH /admin/organizations/{id}` are partial-update endpoints
+  covering spec §32's "Edit user profile"/"Change organization"/"Change role"/"Change data
+  entitlements". Feature management (spec §34) gets full CRUD across all four tiers — global
+  (`PUT /admin/features/{key}`), role (`PUT /admin/roles/{role}/features/{key}`), organization,
+  and per-user (`PUT /admin/users/{id}/features/{key}`, gated by `admin.users.features`) — all
+  respecting the deny-override rule for `security_sensitive` features already established in
+  Milestone 4. System configuration (spec §38) adds `SystemSettingRow`/`SystemSettingHistoryRow`
+  (`packages/db`) behind `GET/PUT /admin/settings(/{key})`, gated by `admin.system_settings`
+  (`SUPER_ADMIN`-only) — every write appends the setting's prior value/version to history first,
+  giving the "versioned, timestamped, reversible" guarantee the spec calls for without waiting on
+  Milestone 10's full `AuditEvent` table.

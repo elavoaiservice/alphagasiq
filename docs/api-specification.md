@@ -48,6 +48,17 @@ create a `User` or `Organization` — see `docs/access-model.md` "No Self-Regist
 | POST | `/admin/users/{user_id}/resend-invitation` | requires `admin.users.edit`. Spec §18 — only valid while `INVITED`; invalidates all prior unused invitation links and sends a fresh one; `400` once the account is no longer `INVITED` |
 | GET | `/admin/users/{user_id}/sessions` | requires `admin.users.sessions`. A user's active/past sessions |
 | POST | `/admin/users/{user_id}/sessions/{session_id}/revoke` | requires `admin.users.sessions`. Admin-initiated session revocation (spec §20) |
+| PATCH | `/admin/users/{user_id}` | requires `admin.users.edit`. Partial profile update — job title/department/phone/country/state_region/primary_use_case/market_experience/expiration_at, plus reassigning `role` (by name) or `company_name` (lookup-or-create) |
+| POST | `/admin/users/{user_id}/send-login-link` | requires `admin.users.edit`. Spec §32 "Send login Magic Link" — only valid once the user is `ACTIVE` (distinct from resend-invitation, which is `INVITED`-only) |
+| GET | `/admin/users/{user_id}/entitlements` | requires `admin.users.view`. Admin's view of a user's effective permissions/features (spec §32 "View feature usage") |
+| PATCH | `/admin/organizations/{organization_id}` | requires `admin.organizations`. Partial update, including `data_entitlements` (spec §32 "Change data entitlements") |
+| GET | `/admin/overview` | requires `admin.dashboard`. Executive operating metrics (spec §31) — active/invited/suspended users, active organizations, logins today, Chief Trading Agent query volume, paper-trading activity; fields depending on not-yet-built subsystems (data-feed/model health, risk alerts, failed-auth tracking) report `null` in a `not_yet_available` list |
+| GET/PUT | `/admin/features(/{feature_key})` | requires `admin.feature_management`. List/toggle a feature's global `globally_enabled` switch (spec §34) |
+| GET/PUT | `/admin/roles/{role_name}/features(/{feature_key})` | requires `admin.feature_management`. View/toggle a role's feature grants |
+| PUT | `/admin/organizations/{organization_id}/features/{feature_key}` | requires `admin.feature_management`. Org-level feature override |
+| PUT | `/admin/users/{user_id}/features/{feature_key}` | requires `admin.users.features`. Per-user feature override (spec §32's "Enable/disable Chief Trading Agent/Portfolio/Risk Analytics/Paper Trading/API Access") — deny-only for `security_sensitive` features |
+| GET/PUT | `/admin/settings(/{key})` | requires `admin.system_settings` (`SUPER_ADMIN`-only). List/get/update a system configuration value (spec §38) |
+| GET | `/admin/settings/{key}/history` | requires `admin.system_settings`. Prior versions of one setting |
 
 ## System / Observability
 

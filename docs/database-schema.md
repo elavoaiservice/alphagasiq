@@ -178,6 +178,11 @@ No column for chain-of-thought. `reasoning_summary` is a concise, human-auditabl
   ip_address, user_agent, last_seen_at. Only magic-link-issued JWTs carry a `sid` claim pointing
   at one of these rows (`apps/api/api_app/auth.py`) — dev-mode/OIDC sessions remain stateless and
   have no row here.
+- **`system_settings`** / **`system_setting_history`** (Milestone 6, spec §38) — admin-editable
+  non-sensitive platform configuration. `system_settings`: key (primary key), value (jsonb),
+  version, updated_by, updated_at. `system_setting_history`: id, key, value (jsonb), version,
+  changed_by, changed_at — every write to `system_settings` appends the row's *previous* state
+  here first, giving the "versioned, timestamped, reversible" guarantee spec §38 asks for.
 - **`chat_conversations`** / **`chat_messages`** (Milestone 5, spec §29) — persisted Chief
   Trading Agent Chat history behind the existing in-memory `ChatSession`/`ChatMessage` response
   contract (`chat_conversations.id` is the same UUID the API already returns as a session id).

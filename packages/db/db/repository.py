@@ -36,6 +36,8 @@ from .models import (
     RolePermissionRow,
     RoleRow,
     SessionRow,
+    SystemSettingHistoryRow,
+    SystemSettingRow,
     TradeIdeaRow,
     UserFeatureOverrideRow,
     UserRow,
@@ -318,6 +320,33 @@ _ROLE_FEATURES: dict[str, list[str]] = {
 }
 
 
+# System settings catalog (spec §38), seeded once at first boot. Each value is
+# already JSON-shaped (a plain string for most, a dict for the handful of
+# structured ones) since `SystemSettingRow.value` is a JSON column.
+_SYSTEM_SETTINGS_DEFAULTS: dict[str, object] = {
+    "platform_name": "AlphaGasIQ",
+    "platform_description": "Agentic natural gas intelligence & paper-trading platform.",
+    "market_coverage": "North America",
+    "supported_commodities": ["Henry Hub Natural Gas"],
+    "system_status_message": "",
+    "maintenance_message": "",
+    "support_email": "support@alphagasiq.local",
+    "contact_information": "",
+    "legal_disclaimer": "AlphaGasIQ is a decision-support platform. Nothing herein is investment advice.",
+    "trading_disclaimer": "All trading on this platform is simulated (paper trading only).",
+    "default_timezone": "America/New_York",
+    "default_currency": "USD",
+    "default_units": "Bcf/d",
+    "default_market": "HENRY_HUB",
+    "default_dashboard": "market",
+    "data_freshness_policies": {},
+    "alert_thresholds": {},
+    "notification_settings": {},
+    "feature_defaults": {},
+    "chat_defaults": {},
+}
+
+
 def _organization_to_dict(row: OrganizationRow) -> dict:
     return {
         "id": row.id,
@@ -341,6 +370,16 @@ def _organization_to_dict(row: OrganizationRow) -> dict:
 
 def _role_to_dict(row: RoleRow) -> dict:
     return {"id": row.id, "name": row.name, "description": row.description}
+
+
+def _system_setting_to_dict(row: SystemSettingRow) -> dict:
+    return {
+        "key": row.key,
+        "value": row.value,
+        "version": row.version,
+        "updated_by": row.updated_by,
+        "updated_at": row.updated_at,
+    }
 
 
 def _user_to_dict(row: UserRow) -> dict:
@@ -612,6 +651,146 @@ class SqlAppRepository:
             else:
                 session.add(UserFeatureOverrideRow(user_id=user_id, feature_id=feature.id, enabled=enabled))
             await session.commit()
+
+    async def set_feature_globally_enabled(self, feature_key: str, enabled: bool) -> dict:
+        """Milestone 6 "Feature Management" (spec §34) — the global on/off switch a
+        `Feature` row's `globally_enabled` column already models; this just exposes
+        writing it."""
+        async with self.session_factory() as session:
+            feature = (await session.execute(select(FeatureRow).where(FeatureRow.key == feature_key))).scalar_one_or_none()
+            if feature is None:
+                raise ValueError(f"Unknown feature key: {feature_key}")
+            feature.globally_enabled = enabled
+            await session.commit()
+            await session.refresh(feature)
+        return {
+            "id": feature.id,
+            "key": feature.key,
+            "name": feature.name,
+            "description": feature.description,
+            "security_sensitive": feature.security_sensitive,
+            "globally_enabled": feature.globally_enabled,
+        }
+
+    async def set_role_feature_entitlement(self, *, role_id: str, feature_key: str, enabled: bool) -> None:
+        async with self.session_factory() as session:
+            feature = (await session.execute(select(FeatureRow).where(FeatureRow.key == feature_key))).scalar_one_or_none()
+            if feature is None:
+                raise ValueError(f"Unknown feature key: {feature_key}")
+            existing = (
+                await session.execute(
+                    select(RoleFeatureEntitlementRow).where(
+                        RoleFeatureEntitlementRow.role_id == role_id,
+                        RoleFeatureEntitlementRow.feature_id == feature.id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing is not None:
+                existing.enabled = enabled
+            else:
+                session.add(RoleFeatureEntitlementRow(role_id=role_id, feature_id=feature.id, enabled=enabled))
+            await session.commit()
+
+    # -- system settings (spec §38) ----------------------------------------------------
+
+    async def seed_system_settings_defaults(self) -> None:
+        """Idempotent: only inserts a key if it doesn't already exist, so an admin's
+        prior edit is never reverted by a later restart re-running this seed."""
+        async with self.session_factory() as session:
+            existing_keys = set((await session.execute(select(SystemSettingRow.key))).scalars().all())
+            for key, value in _SYSTEM_SETTINGS_DEFAULTS.items():
+                if key not in existing_keys:
+                    session.add(SystemSettingRow(key=key, value=value, version=1))
+            await session.commit()
+
+    async def list_system_settings(self) -> list[dict]:
+        async with self.session_factory() as session:
+            rows = (await session.execute(select(SystemSettingRow).order_by(SystemSettingRow.key))).scalars().all()
+        return [_system_setting_to_dict(r) for r in rows]
+
+    async def get_system_setting(self, key: str) -> dict | None:
+        async with self.session_factory() as session:
+            row = (await session.execute(select(SystemSettingRow).where(SystemSettingRow.key == key))).scalar_one_or_none()
+        return _system_setting_to_dict(row) if row is not None else None
+
+    async def set_system_setting(self, key: str, value: object, *, updated_by: str | None) -> dict:
+        """Writes the new value and appends the row's *previous* state to
+        `system_setting_history` first — so history is always "what it used to be,"
+        letting an admin see (and manually revert to) any prior version."""
+        async with self.session_factory() as session:
+            row = (await session.execute(select(SystemSettingRow).where(SystemSettingRow.key == key))).scalar_one_or_none()
+            if row is None:
+                raise ValueError(f"Unknown system setting key: {key}")
+            session.add(
+                SystemSettingHistoryRow(
+                    key=row.key, value=row.value, version=row.version, changed_by=row.updated_by, changed_at=row.updated_at
+                )
+            )
+            row.value = value
+            row.version += 1
+            row.updated_by = updated_by
+            row.updated_at = datetime.utcnow()
+            await session.commit()
+            await session.refresh(row)
+        return _system_setting_to_dict(row)
+
+    async def list_system_setting_history(self, key: str) -> list[dict]:
+        async with self.session_factory() as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(SystemSettingHistoryRow)
+                        .where(SystemSettingHistoryRow.key == key)
+                        .order_by(SystemSettingHistoryRow.version.desc())
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        return [
+            {
+                "id": r.id,
+                "key": r.key,
+                "value": r.value,
+                "version": r.version,
+                "changed_by": r.changed_by,
+                "changed_at": r.changed_at,
+            }
+            for r in rows
+        ]
+
+    # -- admin: user profile edits ------------------------------------------------------
+
+    async def update_user_profile(self, user_id: str, **fields) -> dict | None:
+        """Milestone 6 "Edit user profile" / "Change organization" / "Change role" /
+        "Set account expiration" (spec §32). Only the keys actually passed are
+        updated — the caller (the admin API layer) decides which fields a request
+        touched; this never overwrites a field with `None` unless `None` was
+        explicitly passed for it."""
+        async with self.session_factory() as session:
+            row = (await session.execute(select(UserRow).where(UserRow.id == user_id))).scalar_one_or_none()
+            if row is None:
+                return None
+            for field, value in fields.items():
+                setattr(row, field, value)
+            row.updated_at = datetime.utcnow()
+            await session.commit()
+            await session.refresh(row)
+        return _user_to_dict(row)
+
+    async def update_organization(self, organization_id: str, **fields) -> dict | None:
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(select(OrganizationRow).where(OrganizationRow.id == organization_id))
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            for field, value in fields.items():
+                setattr(row, field, value)
+            row.updated_at = datetime.utcnow()
+            await session.commit()
+            await session.refresh(row)
+        return _organization_to_dict(row)
 
     async def list_roles(self) -> list[dict]:
         async with self.session_factory() as session:

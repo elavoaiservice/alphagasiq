@@ -617,3 +617,94 @@ async def test_get_permission_keys_for_role(repo):
     assert "chief_agent.chat" in trader_permissions
     assert "admin.users.create" not in trader_permissions
     assert await repo.get_permission_keys_for_role("NOT_A_REAL_ROLE") == set()
+
+
+async def test_set_feature_globally_enabled_toggles_and_rejects_unknown_key(repo):
+    await repo.seed_feature_defaults()
+    updated = await repo.set_feature_globally_enabled("paper_trading", False)
+    assert updated["globally_enabled"] is False
+
+    features = await repo.list_features()
+    assert next(f for f in features if f["key"] == "paper_trading")["globally_enabled"] is False
+
+    with pytest.raises(ValueError):
+        await repo.set_feature_globally_enabled("not_a_real_feature", True)
+
+
+async def test_set_role_feature_entitlement_toggles_grant(repo):
+    await repo.seed_rbac_defaults()
+    await repo.seed_feature_defaults()
+    viewer = await repo.get_role_by_name("VIEWER")
+    assert "paper_trading" not in await repo.get_role_feature_keys(viewer["id"])
+
+    await repo.set_role_feature_entitlement(role_id=viewer["id"], feature_key="paper_trading", enabled=True)
+    assert "paper_trading" in await repo.get_role_feature_keys(viewer["id"])
+
+    await repo.set_role_feature_entitlement(role_id=viewer["id"], feature_key="paper_trading", enabled=False)
+    assert "paper_trading" not in await repo.get_role_feature_keys(viewer["id"])
+
+    with pytest.raises(ValueError):
+        await repo.set_role_feature_entitlement(role_id=viewer["id"], feature_key="not_a_real_feature", enabled=True)
+
+
+async def test_system_settings_seed_list_get_and_update_with_history(repo):
+    await repo.seed_system_settings_defaults()
+    settings = await repo.list_system_settings()
+    keys = {s["key"] for s in settings}
+    assert "platform_name" in keys
+    assert "support_email" in keys
+    assert "chat_defaults" in keys
+
+    platform_name = await repo.get_system_setting("platform_name")
+    assert platform_name["value"] == "AlphaGasIQ"
+    assert platform_name["version"] == 1
+
+    updated = await repo.set_system_setting("platform_name", "New Name", updated_by="u-admin-1")
+    assert updated["value"] == "New Name"
+    assert updated["version"] == 2
+    assert updated["updated_by"] == "u-admin-1"
+
+    history = await repo.list_system_setting_history("platform_name")
+    assert len(history) == 1
+    assert history[0]["value"] == "AlphaGasIQ"
+    assert history[0]["version"] == 1
+
+    assert await repo.get_system_setting("not_a_real_setting") is None
+    with pytest.raises(ValueError):
+        await repo.set_system_setting("not_a_real_setting", "x", updated_by=None)
+
+
+async def test_seed_system_settings_defaults_is_idempotent(repo):
+    await repo.seed_system_settings_defaults()
+    await repo.set_system_setting("platform_name", "Customized Name", updated_by="admin")
+    await repo.seed_system_settings_defaults()  # re-running must not revert the edit
+    assert (await repo.get_system_setting("platform_name"))["value"] == "Customized Name"
+
+
+async def test_update_user_profile_partial_update_and_missing_user(repo):
+    await repo.seed_rbac_defaults()
+    role = await repo.get_role_by_name("VIEWER")
+    org = await repo.create_organization(name="Profile Edit Test Co")
+    user = await repo.create_user(
+        first_name="Before",
+        last_name="Edit",
+        email="profileedit@example.com",
+        organization_id=org["id"],
+        role_id=role["id"],
+        status="ACTIVE",
+    )
+
+    updated = await repo.update_user_profile(user["id"], job_title="VP Trading")
+    assert updated["job_title"] == "VP Trading"
+    assert updated["first_name"] == "Before"  # untouched
+
+    assert await repo.update_user_profile("no-such-user", job_title="x") is None
+
+
+async def test_update_organization_partial_update_and_missing_org(repo):
+    org = await repo.create_organization(name="Org Edit Test Co")
+    updated = await repo.update_organization(org["id"], data_entitlements={"eia_full_history": True})
+    assert updated["data_entitlements"] == {"eia_full_history": True}
+    assert updated["name"] == "Org Edit Test Co"  # untouched
+
+    assert await repo.update_organization("no-such-org", name="x") is None

@@ -21,7 +21,13 @@ from ..account_states import AccountStatus, InvalidAccountStateTransition, valid
 from ..auth import User
 from ..deps import AppStateDep
 from ..email_service import build_account_status_changed_email
-from ..entitlements import ensure_permission, require_any_permission, require_permission
+from ..entitlements import (
+    ensure_permission,
+    get_effective_features,
+    get_effective_permissions,
+    require_any_permission,
+    require_permission,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -165,6 +171,37 @@ async def list_organizations(state: AppStateDep, _admin: User = _RequireOrganiza
     return await state.repo.list_organizations()
 
 
+class OrganizationUpdateRequest(BaseModel):
+    """Spec §32 "Change data entitlements" plus general organization-profile edits.
+    Every field is optional — a PATCH, not a PUT."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    website: str | None = None
+    industry: str | None = None
+    company_type: str | None = None
+    country: str | None = None
+    state_region: str | None = None
+    status: str | None = None
+    billing_plan: str | None = None
+    account_owner: str | None = None
+    primary_contact: str | None = None
+    feature_package: str | None = None
+    data_entitlements: dict | None = None
+    notes: str | None = None
+
+
+@router.patch("/organizations/{organization_id}", response_model=OrganizationOut)
+async def update_organization(
+    organization_id: str, body: OrganizationUpdateRequest, state: AppStateDep, _admin: User = _RequireOrganizations
+) -> dict:
+    if await state.repo.get_organization(organization_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found")
+    fields = body.model_dump(exclude_unset=True)
+    if not fields:
+        return await state.repo.get_organization(organization_id)
+    return await state.repo.update_organization(organization_id, **fields)
+
+
 @router.post("/users", response_model=UserOut, status_code=status.HTTP_201_CREATED)
 async def create_user(body: UserCreateRequest, state: AppStateDep, admin: User = _RequireUsersCreate) -> UserOut:
     email = str(body.business_email).lower()
@@ -259,6 +296,102 @@ async def get_user(user_id: str, state: AppStateDep, _admin: User = _RequireUser
         organization_name=organization["name"] if organization else None,
         role_name=role["name"] if role else None,
     )
+
+
+class UserProfileUpdateRequest(BaseModel):
+    """Spec §32 "Edit user profile" / "Change organization" / "Change role" / "Set
+    account expiration". Every field is optional — only the ones actually present in
+    the request body are updated (a PATCH, not a PUT)."""
+
+    first_name: str | None = Field(default=None, min_length=1, max_length=100)
+    last_name: str | None = Field(default=None, min_length=1, max_length=100)
+    job_title: str | None = None
+    department: str | None = None
+    phone: str | None = None
+    country: str | None = None
+    state_region: str | None = None
+    primary_use_case: str | None = None
+    market_experience: str | None = None
+    role: str | None = Field(default=None, description="Reassign to one of the seeded Role names")
+    company_name: str | None = Field(
+        default=None, description="Reassign organization by name (looked up or created inline, per spec §14)"
+    )
+    expiration_at: datetime | None = None
+    notes: str | None = None
+
+
+@router.patch("/users/{user_id}", response_model=UserOut)
+async def update_user_profile(
+    user_id: str, body: UserProfileUpdateRequest, state: AppStateDep, _admin: User = _RequireUsersEdit
+) -> UserOut:
+    user = await state.repo.get_user_by_id(user_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    fields = body.model_dump(exclude_unset=True, exclude={"role", "company_name"})
+
+    if body.role is not None:
+        role = await state.repo.get_role_by_name(body.role)
+        if role is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unknown role: {body.role}")
+        fields["role_id"] = role["id"]
+
+    if body.company_name is not None:
+        organization = await state.repo.find_organization_by_name(body.company_name)
+        if organization is None:
+            organization = await state.repo.create_organization(name=body.company_name)
+        fields["organization_id"] = organization["id"]
+
+    updated = await state.repo.update_user_profile(user_id, **fields) if fields else user
+    organization = await state.repo.get_organization(updated["organization_id"])
+    role = await state.repo.get_role_by_id(updated["role_id"])
+    return _to_user_out(
+        updated,
+        organization_name=organization["name"] if organization else None,
+        role_name=role["name"] if role else None,
+    )
+
+
+@router.post("/users/{user_id}/send-login-link", response_model=UserOut)
+async def send_login_link(user_id: str, state: AppStateDep, _admin: User = _RequireUsersEdit) -> UserOut:
+    """Spec §32 "Send login Magic Link" — distinct from "Resend Invitation": this is
+    for an already-`ACTIVE` user who needs a fresh sign-in link (e.g. they lost the
+    original email)."""
+    user = await state.repo.get_user_by_id(user_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    if user["status"] != AccountStatus.ACTIVE.value:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User must be ACTIVE to send a login link")
+    await magic_link.issue_and_send_login_link(state, user=user)
+    organization = await state.repo.get_organization(user["organization_id"])
+    role = await state.repo.get_role_by_id(user["role_id"])
+    return _to_user_out(
+        user,
+        organization_name=organization["name"] if organization else None,
+        role_name=role["name"] if role else None,
+    )
+
+
+@router.get("/users/{user_id}/entitlements")
+async def get_user_entitlements(user_id: str, state: AppStateDep, _admin: User = _RequireUsersView) -> dict:
+    """Spec §32 "View feature usage" — an admin's view of a user's effective
+    permissions/features, computed the exact same way `/auth/me/entitlements`
+    computes the caller's own (`entitlements.py`'s real DB-role resolution — see
+    docs/access-model.md §5)."""
+    from ..auth import Role
+
+    user = await state.repo.get_user_by_id(user_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    synthetic_user = User(
+        user_id=user["id"],
+        email=user["email"],
+        display_name=f"{user['first_name']} {user['last_name']}",
+        roles=[Role.VIEWER],  # irrelevant: a real UserRow resolves via role_id, not this
+    )
+    permissions = await get_effective_permissions(synthetic_user, state)
+    features = await get_effective_features(synthetic_user, state)
+    return {"permissions": sorted(permissions), "features": features}
 
 
 _STATUS_CHANGE_PERMISSION: dict[AccountStatus, str] = {

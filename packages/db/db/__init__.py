@@ -19,6 +19,8 @@ from .models import (
     RolePermissionRow,
     RoleRow,
     SessionRow,
+    SystemSettingHistoryRow,
+    SystemSettingRow,
     TradeIdeaRow,
     UserFeatureOverrideRow,
     UserRow,
@@ -50,5 +52,7 @@ __all__ = [
     "UserFeatureOverrideRow",
     "ChatConversationRow",
     "ChatMessageRow",
+    "SystemSettingRow",
+    "SystemSettingHistoryRow",
     "SqlAppRepository",
 ]

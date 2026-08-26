@@ -19,6 +19,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <Link href="/platform/model-performance" className="hover:text-terminal-accent">
             Model Performance
           </Link>
+          <div className="mt-2 border-t border-terminal-border pt-2">
+            <Link href="/platform/admin" className="hover:text-terminal-accent">
+              Admin
+            </Link>
+          </div>
         </nav>
         <main className="flex-1 p-4">{children}</main>
       </div>

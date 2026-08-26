@@ -1,6 +1,6 @@
 # Access Model — Accounts, Authentication, RBAC & Entitlements
 
-> Status: Milestones 1-5. This document describes the target design end-to-end (per the
+> Status: Milestones 1-6. This document describes the target design end-to-end (per the
 > platform's access-model specification) and is updated incrementally as each milestone lands.
 > Sections marked **(not yet built)** describe target behavior that ships in a later milestone —
 > they are documented now so the design is reviewable as a whole, not discovered piecemeal.
@@ -307,12 +307,54 @@ extending `require_feature` to the rest of the dashboard's read endpoints is str
 follow-up work using the same mechanism, not a new one to build. A full admin-configurable
 per-organization/per-user override UI for these entitlements is Milestone 6's job.
 
-## 7. Administration **(not yet built — Milestones 6-10)**
+## 7. Administration
 
-An admin console (`apps/web/app/(admin)/...`) for user/organization/feature/data-feed/system
-management, an AI Agent Control Center, agent versioning and a governed optimization workflow,
-and model/risk-settings management, audit log, and system health — all gated by RBAC, all
-writing to the append-only `AuditEvent` table, and all explicitly forbidden from reaching or
-modifying the Risk Governor's rules (see `docs/risk-framework.md` — the Risk Governor has no
-admin- or agent-facing write path today, and none will be added; agent "optimization" can only
-ever change an agent's own versioned prompt/model/thresholds, never risk limits).
+### Milestone 6: user/organization/feature management + system configuration
+
+**Implemented now**: the admin console at `apps/web/app/platform/admin/*` (Overview, Users,
+Organizations, Features, System Settings) — a client-side gate on the `ADMIN` dev-mode role
+picks the console up or down for UX purposes only; every actual boundary is the API's own
+`require_permission`/`require_any_permission` check, exactly as everywhere else in this document.
+
+- `GET /admin/overview` (spec §31, `admin.dashboard`) reports active/invited/suspended user
+  counts, active organizations, logins today, Chief Trading Agent query volume, and paper-trading
+  activity — computed from real data. Fields that depend on a subsystem not yet built (data-feed
+  health → Milestone 7; model health → Milestone 9/10; risk alerts and failed-authentication
+  tracking → Milestone 10's audit log) are reported as `null` inside a `not_yet_available` list
+  rather than fabricated.
+- `PATCH /admin/users/{id}` (spec §32 "Edit user profile" / "Change organization" / "Change
+  role" / "Set account expiration", `admin.users.edit`) is a partial update — only fields present
+  in the request body change. `POST /admin/users/{id}/send-login-link` (`admin.users.edit`) is
+  spec §32's "Send login Magic Link", distinct from "Resend Invitation" (only valid once a user
+  is already `ACTIVE`, where resend-invitation only applies while still `INVITED`).
+  `GET /admin/users/{id}/entitlements` (`admin.users.view`) is spec §32's "View feature usage" —
+  an admin's view of another user's effective permissions/features, computed by the exact same
+  `entitlements.py` functions `/auth/me/entitlements` uses on the caller's own identity.
+- `PATCH /admin/organizations/{id}` (`admin.organizations`) covers spec §32 "Change data
+  entitlements" and general organization-profile edits, again as a partial update.
+- Feature management (spec §34): `GET/PUT /admin/features(/{key})` (global on/off switch,
+  `admin.feature_management`), `GET/PUT /admin/roles/{role}/features(/{key})` (role-level grants,
+  same permission), `PUT /admin/organizations/{id}/features/{key}` (org-level override, same
+  permission), `PUT /admin/users/{id}/features/{key}` (per-user override — spec §32's "Enable/
+  disable Chief Trading Agent / Portfolio Access / Risk Analytics / Paper Trading / API Access",
+  gated by `admin.users.features`). The deny-override rule for `security_sensitive` features
+  (§5 above) applies here exactly as it does to `/auth/me/entitlements` — an admin cannot use a
+  per-user override to grant a sensitive feature the user's role/org don't already allow; only the
+  role-level or org-level grant can do that.
+- System configuration (spec §38): `SystemSettingRow`/`SystemSettingHistoryRow`
+  (`packages/db`) back `GET/PUT /admin/settings(/{key})` and `GET /admin/settings/{key}/history`,
+  gated by `admin.system_settings` — one of the four permissions reserved for `SUPER_ADMIN` alone
+  (§5). Every write appends the setting's *previous* value/version to the history table before
+  applying the new one, satisfying spec §38's "Versioned, Timestamped, Audited, Reversible where
+  practical" — reversal today means an admin manually writing the desired historical value back;
+  a one-click "restore to version N" action would be simple, uncontroversial follow-up work.
+
+### Milestones 7-10 (not yet built)
+
+Data-feed administration and health monitoring, an AI Agent Control Center, agent versioning and
+a governed optimization workflow, model management, risk settings, a real cross-cutting
+`AuditEvent` table, and system health/alerting — all gated by RBAC, and all explicitly forbidden
+from reaching or modifying the Risk Governor's rules (see `docs/risk-framework.md` — the Risk
+Governor has no admin- or agent-facing write path today, and none will be added; agent
+"optimization" can only ever change an agent's own versioned prompt/model/thresholds, never risk
+limits).

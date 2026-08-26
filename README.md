@@ -238,6 +238,17 @@ a real bug: a magic-link `SUPER_ADMIN`/`EXECUTIVE`/`API_USER` session was resolv
 from the route-gating role bridge instead of their actual DB role, silently under/mis-granting
 permissions — see `docs/access-model.md` §5.
 
+**There's now a real admin console, not just admin-only API endpoints.** Milestone 6 adds
+`apps/web/app/platform/admin/*` — Overview (real active/invited/suspended-user and organization
+counts, Chief Trading Agent query volume, paper-trading activity, with not-yet-built metrics
+honestly marked `null`), Users (create/edit/reassign role or organization/suspend/reactivate/
+revoke/resend invitation/send login link), Organizations (create/edit data entitlements), Feature
+Management (global/role/organization/user-level toggles across all 18 features, respecting the
+deny-override rule for security-sensitive ones), and System Settings (`SUPER_ADMIN`-only,
+versioned/reversible via a dedicated history table). Backed by a new `admin_console.py` router
+plus `PATCH` endpoints on `admin_users.py` — every action gated by the exact permission the
+access-model spec assigns it.
+
 **The pipeline digital twin can now be backed by a real Neo4j instance.**
 `fundamentals_service/pipeline_graph_neo4j.py` seeds the same `PipelineGraph`
 `build_default_pipeline_graph()` already builds into Neo4j via Cypher `MERGE`, then reloads it —
