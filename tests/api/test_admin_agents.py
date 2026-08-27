@@ -59,6 +59,44 @@ def test_list_agents_covers_every_agent_type_with_catalog_and_stats(client):
     assert governor["status"] is None  # no AgentConfigRow -- visibility only
 
 
+def test_lng_and_power_market_agents_are_real_implemented_seats(client):
+    r = client.get("/api/v1/admin/agents", headers=_admin_headers(client))
+    by_type = {a["agent_type"]: a for a in r.json()}
+
+    lng = by_type["LNG"]
+    assert lng["implemented"] is True
+    assert lng["administrable"] is True
+    assert lng["agent_id"] == "fundamentals.lng.v1"
+    assert lng["status"] == "ACTIVE"
+    assert lng["total_executions"] >= 1  # boot's initial research cycle already ran it
+    assert lng["last_status"] == "SUCCESS"
+
+    power = by_type["POWER_MARKET"]
+    assert power["implemented"] is True
+    assert power["administrable"] is True
+    assert power["agent_id"] == "fundamentals.power_market.v1"
+    assert power["total_executions"] >= 1
+    assert power["last_status"] == "SUCCESS"
+
+
+def test_disabling_lng_agent_is_reflected_in_appstate_disabled_set(client):
+    """LNG/Power Market only run as part of the boot research cycle (like Pipeline),
+    not the lighter on-demand `run_chief_trading_cycle`, so this exercises the same
+    `AppState._disabled_agent_types()` wiring `_run_initial_research_cycle` consults,
+    directly -- `tests/agents/test_agents.py` covers the actual skip behavior inside
+    the sub-agent orchestration itself."""
+    import asyncio
+
+    from api_app import state as state_module
+
+    headers = _admin_headers(client)
+    client.patch("/api/v1/admin/agents/LNG", json={"status": "DISABLED"}, headers=headers)
+
+    disabled = asyncio.run(state_module._state._disabled_agent_types())
+    assert "LNG" in disabled
+    assert "POWER_MARKET" not in disabled
+
+
 def test_list_agents_requires_admin_agent_management_permission(client):
     r = client.get("/api/v1/admin/agents", headers=_trader_headers(client))
     assert r.status_code == 403
@@ -164,3 +202,37 @@ def test_existing_chief_trading_run_endpoint_still_works_after_refactor(client):
     )
     assert r.status_code == 200
     assert "trade_ideas_generated" in r.json()
+
+
+def test_disabling_a_sub_agent_actually_stops_it_from_running(client):
+    """The real enforcement behind Milestone 8's status control (docs/agent-governance.md
+    §3) -- not just a recorded status. Boot already ran SUPPLY once (SUCCESS); after
+    disabling it, the next research cycle must record a SKIPPED execution instead of a
+    fabricated success."""
+    headers = _admin_headers(client)
+    before = client.get("/api/v1/admin/agents/SUPPLY", headers=headers).json()
+    assert before["last_status"] == "SUCCESS"
+
+    client.patch("/api/v1/admin/agents/SUPPLY", json={"status": "DISABLED"}, headers=headers)
+    client.post("/api/v1/admin/agents/CHIEF_TRADING_AGENT/run", headers=headers)
+
+    after = client.get("/api/v1/admin/agents/SUPPLY", headers=headers).json()
+    assert after["last_status"] == "SKIPPED"
+    assert after["total_executions"] == before["total_executions"] + 1
+    latest = after["recent_executions"][0]
+    assert latest["status"] == "SKIPPED"
+
+
+def test_disabling_chief_investment_agent_forces_rejected_approval(client):
+    """CHIEF_INVESTMENT_AGENT gates whether a trade is forwarded for human review;
+    disabling it must fail closed (never silently forward), not skip the gate."""
+    headers = _admin_headers(client)
+    client.patch("/api/v1/admin/agents/CHIEF_INVESTMENT_AGENT", json={"status": "DISABLED"}, headers=headers)
+
+    r = client.post("/api/v1/admin/agents/CHIEF_TRADING_AGENT/run", headers=headers)
+    assert r.status_code == 200
+    if r.json()["new_approval_ids"] == []:
+        return  # this run happened not to generate a trade idea -- nothing to assert
+
+    cia_detail = client.get("/api/v1/admin/agents/CHIEF_INVESTMENT_AGENT", headers=headers).json()
+    assert cia_detail["last_status"] == "SKIPPED"

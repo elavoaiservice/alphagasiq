@@ -465,10 +465,14 @@ Several follow-up hardening items from the MVP status are now closed out:
   the agent's own status is `PAUSED`/`DISABLED`. Every other implemented seat is composed
   *internally* by the Chief Trading/Investment Agent's own orchestration code with no independent
   entry point today, so running one directly honestly 409s with an explanation rather than faking
-  a result — and setting such a sub-agent's status here is recorded/visible but does not yet gate
-  its execution inside that composed cycle, a documented, deliberately-scoped limitation (see
-  `docs/agent-governance.md` §3) consistent with how every prior milestone in this stream scoped
-  its enforcement rather than attempting a full retrofit in one pass.
+  a result. **Post-MVP follow-up**: setting such a sub-agent's status now genuinely gates its
+  execution inside the composed cycle too, not just the Control Center's display —
+  `ChiefTradingAgent.run_research_cycle()`/`InvestmentCommittee.deliberate()` accept a
+  `disabled_agent_types` set that every `AppState` orchestration call site populates from real
+  `AgentConfigRow` statuses; a disabled agent's `_execute()` never runs
+  (`BaseAgent.skipped_result()` records a real `SKIPPED` placeholder instead), a disabled
+  committee member forces `WAIT_FOR_MORE_DATA` (incomplete quorum, fail closed), and disabling the
+  Chief Investment Agent forces `ApprovalState.REJECTED` (see `docs/agent-governance.md` §3).
 - **Access model, Milestone 9 (agent versioning + prompt editor + optimization workflow)**: a new
   `AgentVersionRow` (`packages/db`) and `apps/api/api_app/routers/admin_agent_versions.py` expose
   `GET/POST /admin/agents/{agent_type}/versions`, `GET .../versions/production`,

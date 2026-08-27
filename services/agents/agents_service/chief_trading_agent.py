@@ -59,21 +59,47 @@ class ChiefTradingAgent(BaseAgent):
         weather_kwargs: dict,
         market_consensus_bcf: float | None = None,
         is_simulated: bool = True,
+        disabled_agent_types: frozenset[str] = frozenset(),
     ) -> ResearchCycleResult:
-        supply_result = await self.supply_agent.run(balances=balances, is_simulated=is_simulated)
-        demand_result = await self.demand_agent.run(balances=balances, is_simulated=is_simulated)
-        storage_result = await self.storage_agent.run(
-            balances=balances,
-            five_year_average_bcf=five_year_average_bcf,
-            last_year_bcf=last_year_bcf,
-            as_of=as_of,
-            is_simulated=is_simulated,
+        """`disabled_agent_types` (docs/agent-governance.md §3) skips a sub-agent's
+        `_execute()` entirely and records a `SKIPPED` placeholder instead -- the actual
+        enforcement behind an admin's "disable this agent" action, not just a recorded
+        status. An empty set (the default) reproduces the previous unconditional
+        behavior exactly, so no caller that doesn't pass this argument is affected."""
+        supply_result = (
+            self.supply_agent.skipped_result("Disabled by admin.")
+            if "SUPPLY" in disabled_agent_types
+            else await self.supply_agent.run(balances=balances, is_simulated=is_simulated)
         )
-        weather_result = await self.weather_agent.run(is_simulated=is_simulated, **weather_kwargs)
+        demand_result = (
+            self.demand_agent.skipped_result("Disabled by admin.")
+            if "DEMAND" in disabled_agent_types
+            else await self.demand_agent.run(balances=balances, is_simulated=is_simulated)
+        )
+        storage_result = (
+            self.storage_agent.skipped_result("Disabled by admin.")
+            if "STORAGE" in disabled_agent_types
+            else await self.storage_agent.run(
+                balances=balances,
+                five_year_average_bcf=five_year_average_bcf,
+                last_year_bcf=last_year_bcf,
+                as_of=as_of,
+                is_simulated=is_simulated,
+            )
+        )
+        weather_result = (
+            self.weather_agent.skipped_result("Disabled by admin.")
+            if "WEATHER" in disabled_agent_types
+            else await self.weather_agent.run(is_simulated=is_simulated, **weather_kwargs)
+        )
 
         trade_ideas: list[TradeIdea] = []
         strategy_result = None
-        if storage_result.outputs and weather_result.outputs:
+        if (
+            "DIRECTIONAL_STRATEGY" not in disabled_agent_types
+            and storage_result.outputs
+            and weather_result.outputs
+        ):
             storage_forecast = StorageForecast.model_validate(
                 {**storage_result.outputs, "market_consensus_bcf": market_consensus_bcf}
             )
@@ -86,6 +112,8 @@ class ChiefTradingAgent(BaseAgent):
             )
             if strategy_result.outputs.get("trade_idea"):
                 trade_ideas.append(TradeIdea.model_validate(strategy_result.outputs["trade_idea"]))
+        elif "DIRECTIONAL_STRATEGY" in disabled_agent_types:
+            strategy_result = self.strategy_agent.skipped_result("Disabled by admin.")
 
         chief_result = await self.run(
             instrument=instrument,

@@ -70,6 +70,25 @@ class BaseAgent(ABC):
                 errors=[AgentError(code=type(exc).__name__, message=str(exc))],
             )
 
+    def skipped_result(self, reason: str) -> AgentResult:
+        """A well-formed `AgentResult` with `status=SKIPPED`, built without calling
+        `_execute()` at all -- used by an orchestrator (`ChiefTradingAgent.
+        run_research_cycle`, `InvestmentCommittee.deliberate`) when an administrator
+        has disabled this agent (docs/agent-governance.md §3). Distinct from the
+        `AgentOutcome(status=SKIPPED)` a subclass's own `_execute()` returns for a
+        data-driven skip (e.g. no balances available) -- this one never runs the
+        agent's logic at all."""
+        return AgentResult(
+            agent_id=self.agent_id,
+            agent_name=self.agent_name,
+            agent_type=self.agent_type,
+            version=self.version,
+            status=AgentStatus.SKIPPED,
+            last_execution_time=datetime.utcnow(),
+            execution_duration_ms=0.0,
+            reasoning_summary=reason,
+        )
+
 
 class AgentOutcome:
     """What a concrete agent's `_execute()` returns — everything `run()` needs to

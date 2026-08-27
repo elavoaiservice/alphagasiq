@@ -2,7 +2,9 @@ from .chief_investment_agent import ChiefInvestmentAgent
 from .chief_trading_agent import ChiefTradingAgent, ResearchCycleResult
 from .committee.coordinator import InvestmentCommittee
 from .fundamental.demand import DemandAgent
+from .fundamental.lng import LNGAgent
 from .fundamental.pipeline import PipelineAgent
+from .fundamental.power_market import PowerMarketAgent
 from .fundamental.storage import StorageAgent
 from .fundamental.supply import SupplyAgent
 from .fundamental.weather import WeatherAgent
@@ -19,7 +21,9 @@ __all__ = [
     "ResearchCycleResult",
     "InvestmentCommittee",
     "DemandAgent",
+    "LNGAgent",
     "PipelineAgent",
+    "PowerMarketAgent",
     "StorageAgent",
     "SupplyAgent",
     "WeatherAgent",

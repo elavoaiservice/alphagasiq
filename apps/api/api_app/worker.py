@@ -41,6 +41,7 @@ async def run_forever() -> None:
                     hdd_run=2.8, hdd_comparison=2.2, cdd_run=4.0, cdd_comparison=4.5,
                 ),
                 market_consensus_bcf=round(week_balance) + 3,
+                disabled_agent_types=await state._disabled_agent_types(),
             )
             for trade in result.trade_ideas:
                 await state.submit_trade_idea(trade)

@@ -22,7 +22,9 @@ from agents_service import (
     ChiefTradingAgent,
     ForecastingAgent,
     InvestmentCommittee,
+    LNGAgent,
     PipelineAgent,
+    PowerMarketAgent,
     RegimeDetectionAgent,
     RelativeValueAgent,
 )
@@ -100,6 +102,8 @@ class AppState:
         self.investment_committee = InvestmentCommittee(llm=llm)
         self.chief_investment_agent = ChiefInvestmentAgent(llm=llm)
         self.pipeline_agent = PipelineAgent(llm=llm)
+        self.lng_agent = LNGAgent(llm=llm)
+        self.power_market_agent = PowerMarketAgent(llm=llm)
         self.forecasting_agent = ForecastingAgent(llm=llm)
         self.regime_detection_agent = RegimeDetectionAgent(llm=llm)
         self.relative_value_agent = RelativeValueAgent(llm=llm)
@@ -325,6 +329,7 @@ class AppState:
         current_price = self.market_curve[0].value if self.market_curve else 3.0
         week_balance = sum(b.balance_bcf for b in self.balances[-7:])
         market_consensus_bcf = round(week_balance) + 3  # illustrative "street" estimate
+        disabled = await self._disabled_agent_types()
 
         result = await self.chief_trading_agent.run_research_cycle(
             instrument=self.primary_instrument(),
@@ -343,6 +348,7 @@ class AppState:
                 cdd_comparison=6.5,
             ),
             market_consensus_bcf=market_consensus_bcf,
+            disabled_agent_types=disabled,
         )
 
         for res in (result.supply, result.demand, result.storage, result.weather, result.strategy, result.chief):
@@ -350,19 +356,46 @@ class AppState:
                 self.agent_execution_log.append(res)
 
         if self.pipeline_graph is not None:
-            pipeline_result = await self.pipeline_agent.run(graph=self.pipeline_graph)
+            pipeline_result = (
+                self.pipeline_agent.skipped_result("Disabled by admin.")
+                if "PIPELINE" in disabled
+                else await self.pipeline_agent.run(graph=self.pipeline_graph)
+            )
             self.agent_execution_log.append(pipeline_result)
 
-        await self._run_quant_research(result)
+        lng_result = (
+            self.lng_agent.skipped_result("Disabled by admin.")
+            if "LNG" in disabled
+            else await self.lng_agent.run(
+                terminals=self.lng_terminals,
+                henry_hub_price=current_price,
+                ttf_price=self.ttf_price[0].value if self.ttf_price else None,
+            )
+        )
+        self.agent_execution_log.append(lng_result)
+
+        power_market_result = (
+            self.power_market_agent.skipped_result("Disabled by admin.")
+            if "POWER_MARKET" in disabled
+            else await self.power_market_agent.run(markets=self.power_markets)
+        )
+        self.agent_execution_log.append(power_market_result)
+
+        await self._run_quant_research(result, disabled_agent_types=disabled)
 
         for trade in result.trade_ideas:
             await self.submit_trade_idea(trade)
 
-    async def _run_quant_research(self, research_result) -> None:
+    async def _run_quant_research(
+        self, research_result, *, disabled_agent_types: frozenset[str] = frozenset()
+    ) -> None:
         """Runs the Quantitative Team over `self.price_history` — a synthetic daily
         Henry Hub spot series generated independently of `self.market_curve` (the
         forward-curve snapshot used for trading). Real desks keep spot and forward
-        curves as related but distinct series too; this is not an inconsistency."""
+        curves as related but distinct series too; this is not an inconsistency.
+
+        `disabled_agent_types` (docs/agent-governance.md §3) skips a disabled quant
+        agent's `_execute()` and records a `SKIPPED` placeholder instead."""
         if len(self.price_history) < 60:
             return
 
@@ -376,11 +409,15 @@ class AppState:
             if training_prices[i - 1] != 0
         ]
 
-        forecast_result = await self.forecasting_agent.run(
-            instrument=self.primary_instrument(),
-            horizon=ForecastHorizon.SEVEN_DAY,
-            training_prices=training_prices,
-            current_price=current_price,
+        forecast_result = (
+            self.forecasting_agent.skipped_result("Disabled by admin.")
+            if "FORECASTING" in disabled_agent_types
+            else await self.forecasting_agent.run(
+                instrument=self.primary_instrument(),
+                horizon=ForecastHorizon.SEVEN_DAY,
+                training_prices=training_prices,
+                current_price=current_price,
+            )
         )
         self.agent_execution_log.append(forecast_result)
         if forecast_result.outputs.get("price_forecast") is not None:
@@ -397,17 +434,21 @@ class AppState:
 
             storage_forecast = StorageForecast.model_validate(research_result.storage.outputs)
 
-        regime_result = await self.regime_detection_agent.run(
-            recent_returns=recent_returns,
-            weather_impact=weather_impact,
-            storage_forecast=storage_forecast,
-            news_events=self.news_events,
+        regime_result = (
+            self.regime_detection_agent.skipped_result("Disabled by admin.")
+            if "REGIME_DETECTION" in disabled_agent_types
+            else await self.regime_detection_agent.run(
+                recent_returns=recent_returns,
+                weather_impact=weather_impact,
+                storage_forecast=storage_forecast,
+                news_events=self.news_events,
+            )
         )
         self.agent_execution_log.append(regime_result)
         if regime_result.outputs.get("regime") is not None:
             self.latest_regime = RegimeResult.model_validate(regime_result.outputs)
 
-        if self.market_curve and self.ttf_price:
+        if self.market_curve and self.ttf_price and "RELATIVE_VALUE" not in disabled_agent_types:
             rv_result = await self.relative_value_agent.run(
                 henry_hub_price=self.market_curve[0].value,
                 ttf_price=self.ttf_price[0].value,
@@ -417,11 +458,17 @@ class AppState:
             self.agent_execution_log.append(rv_result)
             if rv_result.outputs:
                 self.latest_relative_value = rv_result.outputs
+        elif self.market_curve and self.ttf_price:
+            self.agent_execution_log.append(self.relative_value_agent.skipped_result("Disabled by admin."))
 
-        backtest_result = await self.backtesting_agent.run(
-            instrument=self.primary_instrument(),
-            price_history=self.price_history,
-            horizon=ForecastHorizon.SEVEN_DAY,
+        backtest_result = (
+            self.backtesting_agent.skipped_result("Disabled by admin.")
+            if "BACKTESTING" in disabled_agent_types
+            else await self.backtesting_agent.run(
+                instrument=self.primary_instrument(),
+                price_history=self.price_history,
+                horizon=ForecastHorizon.SEVEN_DAY,
+            )
         )
         self.agent_execution_log.append(backtest_result)
         results_by_model = backtest_result.outputs.get("results_by_model")
@@ -449,6 +496,7 @@ class AppState:
                 model="GFS", run="latest", comparison_run="previous", hdd_run=2.8, hdd_comparison=2.2, cdd_run=4.0, cdd_comparison=4.5
             ),
             market_consensus_bcf=round(week_balance) + 3,
+            disabled_agent_types=await self._disabled_agent_types(),
         )
         for res in (result.supply, result.demand, result.storage, result.weather, result.strategy, result.chief):
             if res is not None:
@@ -464,6 +512,15 @@ class AppState:
             "new_approval_ids": [a.id for a in new_approvals],
             "chief_summary": result.chief.reasoning_summary if result.chief else None,
         }
+
+    async def _disabled_agent_types(self) -> frozenset[str]:
+        """The real enforcement behind an admin's agent enable/disable/pause action
+        (docs/agent-governance.md §3, Milestone 8's `AgentConfigRow`) -- every
+        orchestration call site in this module passes this into the composed research
+        cycle so a disabled agent's logic genuinely never runs, rather than only
+        being recorded as disabled."""
+        configs = await self.repo.list_agent_configs()
+        return frozenset(c["agent_type"] for c in configs if c["status"] in ("PAUSED", "DISABLED"))
 
     async def submit_trade_idea(self, trade: TradeIdea) -> Approval:
         self.trade_ideas[trade.trade_id] = trade
@@ -488,6 +545,7 @@ class AppState:
             )
         )
 
+        disabled = await self._disabled_agent_types()
         decision = await self.investment_committee.deliberate(
             trade=trade,
             supporting_observations=[],
@@ -495,6 +553,7 @@ class AppState:
             existing_positions={
                 instrument: pos.quantity for instrument, pos in self.paper_adapter.portfolio.positions.items()
             },
+            disabled_agent_types=disabled,
         )
         self.committee_decisions[trade.trade_id] = decision
         await self.repo.save_committee_decision(trade.trade_id, decision)
@@ -526,8 +585,10 @@ class AppState:
                 )
             )
 
-        cia_result = await self.chief_investment_agent.run(
-            committee_decision=decision, risk_verdict=risk_check.verdict
+        cia_result = (
+            self.chief_investment_agent.skipped_result("Disabled by admin.")
+            if "CHIEF_INVESTMENT_AGENT" in disabled
+            else await self.chief_investment_agent.run(committee_decision=decision, risk_verdict=risk_check.verdict)
         )
         self.agent_execution_log.append(cia_result)
 

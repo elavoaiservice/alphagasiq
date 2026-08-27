@@ -319,6 +319,23 @@ pages had to write inline. Verified end-to-end against the live API and a headle
 console/runtime errors; real data rendering, real state changes, and the expected 403-with-friendly-
 message on the two SUPER_ADMIN-only pages when logged in as a plain ADMIN) — not just `next build`.
 
+**Disabling an agent now genuinely stops it from running, and LNG/Power Market are real agents.**
+`ChiefTradingAgent.run_research_cycle()` and `InvestmentCommittee.deliberate()` (`services/agents`)
+now accept a `disabled_agent_types` set, populated from real `AgentConfigRow` statuses at every
+call site (`AppState._run_initial_research_cycle`/`run_chief_trading_cycle`/`_run_quant_research`/
+`submit_trade_idea`, plus the standalone `worker.py` cycle) — a disabled agent's `_execute()`
+genuinely never runs; `BaseAgent.skipped_result()` records a real `SKIPPED` result in its place
+instead. A disabled Investment Committee member forces the decision to `WAIT_FOR_MORE_DATA`
+(incomplete quorum, fail closed) rather than silently computing a partial consensus; disabling the
+Chief Investment Agent forces the trade to `ApprovalState.REJECTED` rather than defaulting to
+approval. Separately, the LNG Agent and Power Market Agent
+(`services/agents/agents_service/fundamental/{lng,power_market}.py`) are now real implemented
+seats — each wraps its existing deterministic calculation engine
+(`fundamentals_service.lng`'s Henry-Hub-to-TTF netback,
+`fundamentals_service.power_burn`'s gas-fired power-burn estimate) with one LLM summarization
+call, the same pattern every other fundamental agent already uses, and both run every research
+cycle alongside the Pipeline Agent with the same admin enable/disable/pause control.
+
 **The pipeline digital twin can now be backed by a real Neo4j instance.**
 `fundamentals_service/pipeline_graph_neo4j.py` seeds the same `PipelineGraph`
 `build_default_pipeline_graph()` already builds into Neo4j via Cypher `MERGE`, then reloads it —

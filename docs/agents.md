@@ -96,11 +96,18 @@ call result that is logged as a `citation`.
 ## 4. MVP Implementation Scope
 
 Implemented so far: the Chief Trading Agent and Chief Investment Agent; Supply, Demand,
-Storage, Weather, and Pipeline agents (Fundamental Research Team); News Intelligence Agent
-(Market Intelligence Team); the full Quantitative Team — Forecasting, Regime Detection,
-Relative Value, and Backtesting agents (`services/agents/agents_service/quant/`, backed by
-`services/quant`); the Directional Strategy Agent; and the full AI Investment Committee
-(Bull/Bear/Skeptic/Data Integrity/Portfolio).
+Storage, Weather, LNG, Power Market, and Pipeline agents (Fundamental Research Team); News
+Intelligence Agent (Market Intelligence Team); the full Quantitative Team — Forecasting, Regime
+Detection, Relative Value, and Backtesting agents (`services/agents/agents_service/quant/`,
+backed by `services/quant`); the Directional Strategy Agent; and the full AI Investment
+Committee (Bull/Bear/Skeptic/Data Integrity/Portfolio). The LNG Agent
+(`services/agents/agents_service/fundamental/lng.py`) wraps `fundamentals_service.lng`'s
+Henry-Hub-to-TTF netback calculation over the seeded terminal roster; the Power Market Agent
+(`.../fundamental/power_market.py`) wraps `fundamentals_service.power_burn`'s gas-fired
+power-burn estimate over the seeded ISO/RTO roster — both follow the same pattern as every
+other fundamental agent (a deterministic calculation plus one LLM summarization call), and both
+run every research cycle alongside the Pipeline Agent, gated by the same admin
+enable/disable/pause control every other implemented agent has (docs/agent-governance.md §3).
 
 Every `AgentType` enum member is defined whether or not a concrete agent exists for it yet.
 Unbuilt seats (Market Data, Event Detection, Sentiment, the remaining Strategy Team members,

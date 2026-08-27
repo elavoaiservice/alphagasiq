@@ -74,18 +74,28 @@ manually (`POST /admin/agents/CHIEF_TRADING_AGENT/run` — the same on-demand re
 `POST /agents/chief-trading/run` already exposed, now also reachable through the admin surface
 and refusing to run while the agent's own status is `PAUSED`/`DISABLED`).
 
-**Honest limitation, stated plainly rather than hidden:** every other implemented seat (Supply,
-Demand, Storage, Weather, Directional Strategy, the five Investment Committee agents, the four
-Quantitative Team agents, Pipeline, Chief Investment Agent) is composed *internally* by the Chief
-Trading Agent's or Chief Investment Agent's own orchestration code (`services/agents`) — there is
-no independent entry point to run one in isolation today, so `POST /admin/agents/{agent_type}/run`
-for any of them returns 409 with an explanation rather than faking a run. Likewise, setting a
-sub-agent's status to `PAUSED`/`DISABLED` here is recorded and visible in the Control Center, but
-does not yet gate that sub-agent's execution inside the composed cycle — wiring per-sub-agent
-skip logic into `services/agents`' internal composition is real follow-up work, scoped out of this
-milestone the same way every prior milestone in this stream scoped its enforcement to a slice
-(e.g. Milestone 5's `require_feature` covering only `portfolio_analytics`/`risk_analytics`) rather
-than a full retrofit. The Risk Governor has no admin actions here at all — see §1.
+Every other implemented seat (Supply, Demand, Storage, Weather, LNG, Power Market, Directional
+Strategy, the five Investment Committee agents, the four Quantitative Team agents, Pipeline,
+Chief Investment Agent) is composed *internally* by the Chief Trading Agent's or Chief Investment
+Agent's own orchestration code (`services/agents`) — there is no independent entry point to run
+one in isolation today, so `POST /admin/agents/{agent_type}/run` for any of them returns 409 with
+an explanation rather than faking a run.
+
+**Disabling a sub-agent genuinely stops it from running** — this is not merely a recorded status.
+`ChiefTradingAgent.run_research_cycle()` and `InvestmentCommittee.deliberate()` (both
+`services/agents`) accept a `disabled_agent_types` set that every `AppState` call site
+(`_run_initial_research_cycle`, `run_chief_trading_cycle`, `_run_quant_research`,
+`submit_trade_idea`, and the standalone `worker.py` cycle) populates from the real
+`AgentConfigRow` statuses before every research cycle. A disabled fundamental-team or
+quantitative-team agent's `_execute()` never runs — `BaseAgent.skipped_result()` records a real
+`SKIPPED` `AgentResult` ("Disabled by admin.") in its place, distinguishable from a data-driven
+skip (e.g. insufficient price history). A disabled Investment Committee member is more than an
+optional input: because every member's output feeds the consensus formula, disabling one means
+the committee lacks full quorum, so the decision is forced to `WAIT_FOR_MORE_DATA` rather than
+silently computing a partial consensus — the same fail-closed posture this platform already takes
+when the Risk Governor is unavailable (§1). Disabling the Chief Investment Agent fails closed the
+same way: the trade is never forwarded for human review (`ApprovalState.REJECTED`) rather than
+defaulting to approval. The Risk Governor has no admin actions here at all — see §1.
 
 **Direct untested production replacement is never permitted.** Nothing in §2-3 lets an
 administrator edit an agent's instructions, model, or configuration in place — that flow (draft ->
