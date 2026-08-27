@@ -233,7 +233,7 @@ No column for chain-of-thought. `reasoning_summary` is a concise, human-auditabl
   `list_audit_events` — there is no update or delete method for this table, in the repository or
   the API, ever.
 
-## 4b. Alpha Intelligence Tables (Alpha Intelligence Layer Milestones 1-2 — `docs/alpha-intelligence.md`)
+## 4b. Alpha Intelligence Tables (Alpha Intelligence Layer Milestones 1-3 — `docs/alpha-intelligence.md`)
 
 - **`alpha_signals`** — one row per `Signal` AlphaSignal(TM) detected and persisted. id,
   organization_id (nullable FK to `organizations`, NULL = platform-wide — the only kind
@@ -261,6 +261,26 @@ No column for chain-of-thought. `reasoning_summary` is a concise, human-auditabl
   `chain` (jsonb — the ordered `ImpactEdge` list, embedded rather than a separate join table
   since it's always fetched with its parent and never queried edge-by-edge independently),
   created_at.
+- **`alpha_agent_forecasts`** — one row per `AgentForecast` extracted from a contributing
+  agent's research-cycle output by `alpha_service.forecast_extractor.ForecastExtractor`. id,
+  agent_id, agent_type, agent_version, organization_id (nullable FK to `organizations`),
+  forecast_type, target, market (default `HENRY_HUB`), horizon, forecast_value (nullable),
+  direction, probability, confidence, drivers (jsonb), citations (jsonb), created_at,
+  expires_at (nullable).
+- **`alpha_agent_scores`** — Agent Alpha Score(TM)'s latest score per agent type. Natural-key
+  PK `agent_type` (upserted every cycle, not a history table — a score trend over time is
+  explicitly deferred future work): agent_type, score (0-100), method (`BACKTESTED_
+  DIRECTIONAL_ACCURACY` or `CONFIDENCE_CONSISTENCY_PROXY`), sample_size, components (jsonb),
+  computed_at.
+- **`alpha_consensus_views`** — one row per `ConsensusView` AlphaConsensus(TM) computed. id,
+  organization_id (nullable FK to `organizations`), consensus_type (e.g. `MARKET_DIRECTION` or
+  the specialized `STORAGE_FORECAST`), market (default `HENRY_HUB`), target, horizon,
+  consensus_value (nullable — only set when every contributing forecast shares the same
+  target), bull_probability, bear_probability, neutral_probability, confidence, dispersion,
+  agreement_label (HIGH/MEDIUM/LOW), agent_count, `agent_weights` (jsonb — the embedded
+  `ConsensusWeight` list, for the same reason `ImpactAnalysisRow.chain` is embedded), 
+  leading_agents (jsonb), dissenting_agents (jsonb), drivers (jsonb), risks (jsonb),
+  market_consensus_value (nullable), variance_vs_market (nullable), created_at.
 
 ## 5. TimescaleDB Specifics
 

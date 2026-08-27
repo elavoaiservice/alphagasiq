@@ -176,3 +176,83 @@ async def test_why_does_it_matter_declined_without_permission(monkeypatch, user)
     assert result.access_granted is False
     assert result.tool_used == "why_does_it_matter"
     assert "alpha_impacts.view" in result.content
+
+
+async def test_agent_consensus_routes_to_alphaconsensus_tool(monkeypatch, user):
+    """AlphaConsensusTool (docs/alpha-intelligence.md section 43): "do the agents
+    agree" phrasing routes to the new topic, requires `alpha_consensus.view`, and
+    reads `state.recent_consensus_views` -- distinct from `disagree` (which routes
+    to the pre-existing `most_disagreeing_agent` topic)."""
+    from alpha_service import ConsensusEngine
+    from schemas import AgentForecast, AgentType, SignalDirection
+
+    async def fake_permissions(_user, _state):
+        return {"alpha_consensus.view"}
+
+    monkeypatch.setattr(chat_agent_module, "get_effective_permissions", fake_permissions)
+    agent = ChatAgent(llm=MockLLMProvider())
+
+    forecasts = [
+        AgentForecast(
+            agent_id="storage-agent",
+            agent_type=AgentType.STORAGE,
+            agent_version="1.0.0",
+            forecast_type="STORAGE_WEEKLY",
+            target="STORAGE_BCF",
+            forecast_value=88.0,
+            direction=SignalDirection.BULLISH,
+            probability=0.7,
+            confidence=0.7,
+        )
+    ]
+    view = ConsensusEngine().compute(
+        consensus_type="STORAGE_FORECAST",
+        target="STORAGE_BCF",
+        market="HENRY_HUB",
+        forecasts=forecasts,
+        scores={},
+        market_consensus_value=86.0,
+    )
+    state = _FakeState()
+    state.recent_consensus_views = [view]
+
+    result = await agent.ask("Do the agents agree?", state, user)
+
+    assert result.access_granted is True
+    assert result.tool_used == "agent_consensus"
+    assert result.permission_required == "alpha_consensus.view"
+    assert "HENRY_HUB" in result.content
+
+
+async def test_agent_consensus_declined_without_permission(monkeypatch, user):
+    async def fake_permissions(_user, _state):
+        return set()
+
+    monkeypatch.setattr(chat_agent_module, "get_effective_permissions", fake_permissions)
+    agent = ChatAgent(llm=MockLLMProvider())
+
+    # _FakeState has no `recent_consensus_views` attribute -- a wrongly-dispatched
+    # tool call would raise AttributeError instead of returning a declined result.
+    result = await agent.ask("Do the agents agree?", _FakeState(), user)
+
+    assert result.access_granted is False
+    assert result.tool_used == "agent_consensus"
+    assert "alpha_consensus.view" in result.content
+
+
+async def test_disagree_still_routes_to_most_disagreeing_agent(monkeypatch, user):
+    """Regression guard: adding the "agree" keyword for AlphaConsensus must not
+    steal "disagree" questions away from the pre-existing disagreement topic --
+    the `most_disagreeing_agent` elif branch is checked first in `_route`."""
+
+    async def fake_permissions(_user, _state):
+        return {"trading_recommendations.view"}
+
+    monkeypatch.setattr(chat_agent_module, "get_effective_permissions", fake_permissions)
+    agent = ChatAgent(llm=MockLLMProvider())
+
+    state = _FakeState()
+    state.committee_decisions = {}
+    result = await agent.ask("Which agent disagrees the most?", state, user)
+
+    assert result.tool_used == "most_disagreeing_agent"

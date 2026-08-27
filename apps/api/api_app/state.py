@@ -28,7 +28,15 @@ from agents_service import (
     RegimeDetectionAgent,
     RelativeValueAgent,
 )
-from alpha_service import BaselineSnapshot, ImpactEngine, MaterialityEngine, SignalDetector
+from alpha_service import (
+    AgentAlphaScoreEngine,
+    BaselineSnapshot,
+    ConsensusEngine,
+    ForecastExtractor,
+    ImpactEngine,
+    MaterialityEngine,
+    SignalDetector,
+)
 from config import get_settings
 from data_sdk import FetchRequest, ProviderRegistry
 from data_service.providers.mock_market_data import MockCMEProvider, MockICEProvider
@@ -53,8 +61,11 @@ from risk_service.governor import RiskContext, RiskGovernor
 from risk_service.limits import default_risk_limits
 from risk_service.metrics import PositionSnapshot, summarize
 from schemas import (
+    AgentAlphaScore,
     AgentResult,
+    AgentType,
     BacktestResult,
+    ConsensusView,
     DataClassification,
     DomainEvent,
     EventType,
@@ -114,14 +125,19 @@ class AppState:
         self.risk_governor = RiskGovernor()
         self.alpha_signal_detector = SignalDetector(MaterialityEngine())
         self.alpha_impact_engine = ImpactEngine()
-        # Bounded caches of the most recently detected signals/impact analyses, kept
-        # in-memory alongside the durable `alpha_signals`/`alpha_impact_analyses`
-        # tables so the (synchronous) chat-tool dispatch methods in chat_agent.py can
-        # read them the same way every other tool method reads AppState — without
-        # making that dispatch path async-aware for just these topics
-        # (docs/alpha-intelligence.md Milestone 1/2 provisional decisions).
+        self.alpha_forecast_extractor = ForecastExtractor()
+        self.alpha_score_engine = AgentAlphaScoreEngine()
+        self.alpha_consensus_engine = ConsensusEngine()
+        # Bounded caches of the most recently detected signals/impact analyses/
+        # consensus views, kept in-memory alongside the durable `alpha_signals`/
+        # `alpha_impact_analyses`/`alpha_consensus_views` tables so the (synchronous)
+        # chat-tool dispatch methods in chat_agent.py can read them the same way
+        # every other tool method reads AppState — without making that dispatch path
+        # async-aware for just these topics (docs/alpha-intelligence.md Milestone
+        # 1-3 provisional decisions).
         self.recent_signals: list[Signal] = []
         self.recent_impacts: list[ImpactAnalysis] = []
+        self.recent_consensus_views: list[ConsensusView] = []
 
         from .email_service import get_email_provider
         from .rate_limit import SlidingWindowRateLimiter
@@ -402,13 +418,17 @@ class AppState:
             pipeline_result=pipeline_result,
         )
 
-        await self._run_quant_research(result, disabled_agent_types=disabled)
+        await self._run_quant_research(result, disabled_agent_types=disabled, market_consensus_bcf=market_consensus_bcf)
 
         for trade in result.trade_ideas:
             await self.submit_trade_idea(trade)
 
     async def _run_quant_research(
-        self, research_result, *, disabled_agent_types: frozenset[str] = frozenset()
+        self,
+        research_result,
+        *,
+        disabled_agent_types: frozenset[str] = frozenset(),
+        market_consensus_bcf: float | None = None,
     ) -> None:
         """Runs the Quantitative Team over `self.price_history` — a synthetic daily
         Henry Hub spot series generated independently of `self.market_curve` (the
@@ -469,6 +489,7 @@ class AppState:
         if regime_result.outputs.get("regime") is not None:
             self.latest_regime = RegimeResult.model_validate(regime_result.outputs)
 
+        rv_result = None
         if self.market_curve and self.ttf_price and "RELATIVE_VALUE" not in disabled_agent_types:
             rv_result = await self.relative_value_agent.run(
                 henry_hub_price=self.market_curve[0].value,
@@ -497,6 +518,106 @@ class AppState:
             self.latest_backtests = {
                 name: BacktestResult.model_validate(payload) for name, payload in results_by_model.items()
             }
+
+        await self._run_alpha_consensus(
+            research_result=research_result,
+            forecast_result=forecast_result,
+            rv_result=rv_result,
+            market_consensus_bcf=market_consensus_bcf,
+        )
+
+    async def _run_alpha_consensus(
+        self,
+        *,
+        research_result,
+        forecast_result: AgentResult | None,
+        rv_result: AgentResult | None,
+        market_consensus_bcf: float | None = None,
+    ) -> None:
+        """AlphaConsensus(TM)'s integration point (docs/alpha-intelligence.md section
+        6): extracts this cycle's `AgentForecast`s, recomputes each contributing
+        agent's `AgentAlphaScore`, and computes both a general market-direction
+        consensus and (when storage forecasts contributed) a specialized storage-
+        forecast-vs-market-consensus view. Only reachable via `_run_quant_research`
+        (boot's full cycle) -- `run_chief_trading_cycle`'s lighter on-demand path
+        doesn't re-run quant research, so it doesn't reach here either, matching
+        that method's already-documented scope."""
+        forecasts = self.alpha_forecast_extractor.extract(
+            storage_result=research_result.storage,
+            weather_result=research_result.weather,
+            supply_result=research_result.supply,
+            demand_result=research_result.demand,
+            forecast_result=forecast_result,
+            relative_value_result=rv_result,
+            storage_market_consensus_bcf=market_consensus_bcf,
+        )
+        for forecast in forecasts:
+            await self.repo.save_agent_forecast(forecast)
+            await self.event_bus.publish(
+                DomainEvent(
+                    event_type=EventType.AGENT_FORECAST_CREATED,
+                    source_service="alpha_service",
+                    payload=forecast.model_dump(mode="json"),
+                )
+            )
+
+        scores: dict[AgentType, AgentAlphaScore] = {}
+        for agent_type in {f.agent_type for f in forecasts}:
+            recent_results = [r for r in self.agent_execution_log if r.agent_type == agent_type][-20:]
+            recent_confidences = [r.confidence for r in recent_results if r.confidence is not None]
+            citations_fraction = (
+                sum(1.0 for r in recent_results if r.citations) / len(recent_results) if recent_results else None
+            )
+            score = self.alpha_score_engine.score(
+                agent_type,
+                recent_confidences=recent_confidences,
+                has_citations_fraction=citations_fraction,
+                price_forecast=self.latest_forecast if agent_type == AgentType.FORECASTING else None,
+                latest_backtests=self.latest_backtests if agent_type == AgentType.FORECASTING else None,
+            )
+            scores[agent_type] = score
+            await self.repo.save_agent_alpha_score(score)
+
+        if not forecasts:
+            return
+
+        market_view = self.alpha_consensus_engine.compute(
+            consensus_type="MARKET_DIRECTION",
+            target="PRICE",
+            market=self.primary_instrument(),
+            forecasts=forecasts,
+            scores=scores,
+        )
+        if market_view is not None:
+            await self._persist_consensus_view(market_view)
+
+        storage_forecasts = [f for f in forecasts if f.target == "STORAGE_BCF"]
+        if storage_forecasts:
+            storage_outputs = research_result.storage.outputs if research_result.storage is not None else {}
+            storage_market_consensus_value = storage_outputs.get("market_consensus_bcf")
+            if storage_market_consensus_value is None:
+                storage_market_consensus_value = market_consensus_bcf
+            storage_view = self.alpha_consensus_engine.compute(
+                consensus_type="STORAGE_FORECAST",
+                target="STORAGE_BCF",
+                market=self.primary_instrument(),
+                forecasts=storage_forecasts,
+                scores=scores,
+                market_consensus_value=storage_market_consensus_value,
+            )
+            if storage_view is not None:
+                await self._persist_consensus_view(storage_view)
+
+    async def _persist_consensus_view(self, view: ConsensusView) -> None:
+        await self.repo.save_consensus_view(view)
+        self.recent_consensus_views.append(view)
+        self.recent_consensus_views = self.recent_consensus_views[-50:]
+        event_type = (
+            EventType.CONSENSUS_DIVERGENCE_DETECTED if view.dispersion >= 0.5 else EventType.CONSENSUS_UPDATED
+        )
+        await self.event_bus.publish(
+            DomainEvent(event_type=event_type, source_service="alpha_service", payload=view.model_dump(mode="json"))
+        )
 
     async def run_chief_trading_cycle(self) -> dict:
         """The Chief Trading Agent's on-demand research cycle -- the logic behind both

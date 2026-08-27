@@ -65,6 +65,7 @@ _TOOL_PERMISSIONS: dict[str, str] = {
     "top_risks": "portfolio.view",
     "what_changed_overnight": "alpha_signals.view",
     "why_does_it_matter": "alpha_impacts.view",
+    "agent_consensus": "alpha_consensus.view",
     "what_changed": "dashboard.view",
     "todays_move": "news.view",
     "general_status": "dashboard.view",
@@ -96,6 +97,8 @@ class ChatAgent:
             return "why_does_it_matter"
         elif "overnight" in q or "material change" in q or "alphasignal" in q:
             return "what_changed_overnight"
+        elif "agree" in q or "alphaconsensus" in q or "agent alpha score" in q or "do the agents" in q:
+            return "agent_consensus"
         elif "what changed" in q or "last six hours" in q or "recent" in q:
             return "what_changed"
         elif "caused today" in q or "today's move" in q or "why did" in q and "move" in q:
@@ -126,6 +129,8 @@ class ChatAgent:
             return self._why_does_it_matter(state)
         elif topic == "what_changed_overnight":
             return self._what_changed_overnight(state)
+        elif topic == "agent_consensus":
+            return self._agent_consensus_view(state)
         elif topic == "what_changed":
             return self._what_changed(q, state)
         elif topic == "todays_move":
@@ -358,6 +363,37 @@ class ChatAgent:
             "\n".join(lines),
             [{"source": "alpha_service.impact_engine", "reference": str(analysis.id)}],
             {"signal_id": str(analysis.signal_id)},
+        )
+
+    def _agent_consensus_view(self, state: AppState) -> ToolResult:
+        """AlphaConsensusTool (docs/alpha-intelligence.md section 43) -- the latest
+        dynamically-weighted consensus view, keyed by each contributing agent's
+        Agent Alpha Score(TM) rather than a simple majority vote. Reads
+        `state.recent_consensus_views`, the same bounded in-memory cache pattern
+        `_what_changed_overnight`/`_why_does_it_matter` use for signals/impacts."""
+        if not state.recent_consensus_views:
+            return ToolResult("No agent consensus view computed yet.", [], {})
+        view = state.recent_consensus_views[-1]
+        lines = [
+            f"{view.consensus_type} consensus for {view.market} ({view.agreement_label} agreement, "
+            f"{view.agent_count} agents): bull {view.bull_probability:.0%} / bear {view.bear_probability:.0%} "
+            f"/ neutral {view.neutral_probability:.0%}, dispersion {view.dispersion:.2f}."
+        ]
+        if view.consensus_value is not None:
+            lines.append(f"AlphaConsensus value: {view.consensus_value:+.1f}")
+            if view.market_consensus_value is not None:
+                lines.append(
+                    f"Market consensus: {view.market_consensus_value:+.1f} "
+                    f"(variance {view.variance_vs_market:+.1f})"
+                )
+        if view.leading_agents:
+            lines.append("Leading agents: " + ", ".join(view.leading_agents))
+        if view.dissenting_agents:
+            lines.append("Dissenting agents: " + ", ".join(view.dissenting_agents))
+        return ToolResult(
+            "\n".join(lines),
+            [{"source": "alpha_service.consensus_engine", "reference": str(view.id)}],
+            {"agent_count": view.agent_count},
         )
 
     def _what_changed(self, q: str, state: AppState) -> ToolResult:

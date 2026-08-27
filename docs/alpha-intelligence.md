@@ -110,7 +110,7 @@ can ship.
 |---|---|---|
 | 1 | AlphaSignal™ — material-change detection + materiality engine | **Implemented** |
 | 2 | AlphaImpact™ — event→market causal chain | **Implemented** |
-| 3 | AlphaConsensus™ + Agent Alpha Score™ — calibrated, dynamically-weighted consensus | Planned |
+| 3 | AlphaConsensus™ + Agent Alpha Score™ — calibrated, dynamically-weighted consensus | **Implemented** |
 | 4 | AlphaScenario™ — counterfactual/stress-test engine | Planned |
 | 5 | AlphaMemory™ — decision/institutional memory | Planned |
 | 6 | AlphaReplay™ — bitemporal historical reconstruction | Planned |
@@ -298,20 +298,100 @@ alongside the general market view) remains planned, not built — `affected_cont
 always empty and no enterprise-data branch exists yet, since the Enterprise Data Platform
 milestones (7-10) haven't been built.
 
-## 6. AlphaConsensus™ + Agent Alpha Score™ (planned)
+## 6. AlphaConsensus™ + Agent Alpha Score™ (implemented)
 
-An internal prediction/opinion aggregation system. Specialized agents independently submit an
-`AgentForecast` (forecast value, direction, probability, confidence, time horizon, evidence).
-**Agent Alpha Score™** rates each predictive agent's historical accuracy, calibration,
-regime-specific performance, and consistency — separately by time horizon, market, strategy,
-and regime (e.g. a Weather Agent might score 93 in extreme-cold regimes but 66 in shoulder
-season). `AlphaConsensus` then computes a *dynamically weighted* (never equal-weighted)
-consensus view (`ConsensusView`: bull/bear/neutral probability, confidence, dispersion,
-leading/dissenting agents) using each agent's current Alpha Score, specialization, and recent
-calibration as the weight — the same "no LLM in the scoring path, deterministic and testable"
-philosophy as the Risk Governor and AlphaSignal's materiality engine. A specialized
-implementation compares the platform's weighted storage-forecast consensus against the
-external "market consensus" figure already used in today's `StorageForecast.market_consensus_bcf`.
+**Purpose**: an internal prediction/opinion aggregation system. Specialized agents
+independently submit an `AgentForecast` (forecast value, direction, probability, confidence,
+time horizon, evidence). **Agent Alpha Score™** rates each predictive agent's reliability.
+`AlphaConsensus` then computes a *dynamically weighted* (never equal-weighted) consensus view
+using each agent's current Alpha Score and its own forecast confidence as the weight — the
+same "no LLM in the scoring path, deterministic and testable" philosophy as the Risk Governor,
+AlphaSignal's materiality engine, and AlphaImpact's causal-chain builder.
+
+**Schema** (`packages/schemas/schemas/alpha.py`): `AgentForecast` (`agent_id`, `agent_type`,
+`agent_version`, `organization_id`, `forecast_type`, `target`, `market`, `horizon`,
+`forecast_value`, `direction`, `probability`, `confidence`, `drivers`, `citations`);
+`AgentAlphaScore` (`agent_type`, `score` 0-100, `method`, `sample_size`, `components`);
+`ConsensusWeight` (`agent_type`, `weight`, `alpha_score`, `forecast_confidence`, `direction`);
+`ConsensusView` (`consensus_type`, `market`, `target`, `horizon`, `consensus_value`,
+`bull_probability`/`bear_probability`/`neutral_probability`, `confidence`, `dispersion`,
+`agreement_label`, `agent_count`, `agent_weights: list[ConsensusWeight]`, `leading_agents`,
+`dissenting_agents`, `drivers`, `risks`, `market_consensus_value`, `variance_vs_market`).
+
+**Forecast extraction** (`services/alpha/alpha_service/forecast_extractor.py`):
+`ForecastExtractor.extract()` is pure — no DB/LLM/event-bus access — and turns each
+fundamental/quant agent's already-computed `AgentResult.outputs` into the common
+`AgentForecast` shape. It only extracts a forecast where the source agent's own single-cycle
+output already implies a genuine directional read: Storage (tighter-than-consensus is
+bullish), Weather (`price_direction` already computed by the agent), Supply (rising
+production is bearish), Demand (rising demand is bullish), Forecasting (the Quant team's
+`PriceForecast.up_probability`), and Relative Value (`CHEAP`/`RICH`). LNG/Power/Pipeline
+agents are deliberately excluded — their single-cycle output reports a current *level*, not a
+*trend*, so extracting a direction from it would be fabricated, unlike AlphaSignal's detector,
+which can infer a trend from its own cycle-over-cycle baseline diff.
+
+**Agent Alpha Score™** (`services/alpha/alpha_service/agent_alpha_score.py`):
+`AgentAlphaScoreEngine.score()` is honest about scope — only the Forecasting agent has a
+genuine historical-accuracy figure available today, `METHOD_BACKTESTED` (each contributing
+model's real walk-forward `BacktestResult.directional_accuracy`, weighted by
+`PriceForecast.model_contributions`). Every other agent gets `METHOD_CONFIDENCE_PROXY` — a
+weighted blend of mean recent confidence, confidence consistency (low variance scores higher),
+and evidence quality (citation coverage) — explicitly **not** a claim of historical predictive
+accuracy, since no resolved-outcome ledger per fundamental agent exists yet (building one
+requires linking each forecast to what actually happened later, which is AlphaMemory's
+decision-memory infrastructure, a later milestone). Weights (0.5/0.3/0.2) are provisional,
+like AlphaSignal's materiality weights.
+
+**Consensus engine** (`services/alpha/alpha_service/consensus_engine.py`):
+`ConsensusEngine.compute()` weights each forecast by `(alpha_score / 100) * forecast_confidence`
+— never equal-weighted — normalizes to sum to 1.0 (falling back to equal weighting only if
+every contributor has zero effective weight), and aggregates into bull/bear/neutral
+probability shares, an `agreement_label` (HIGH/MEDIUM/LOW by the majority direction's share),
+and leading/dissenting agent lists. A single scalar `consensus_value` is only computed when
+every contributing forecast shares the exact same `target` (e.g. all `STORAGE_BCF`) — averaging
+a price forecast with a production-trend forecast would be meaningless. Returns `None` for an
+empty forecast list rather than a misleadingly "no conviction" zeroed-out view.
+
+**Integration** (`apps/api/api_app/state.py`): `AppState._run_alpha_consensus()` runs after
+the quant research cycle, extracting forecasts from that cycle's Storage/Weather/Supply/
+Demand/Forecasting/Relative-Value `AgentResult`s, recomputing each contributing agent type's
+`AgentAlphaScore`, and computing two `ConsensusView`s: a general `MARKET_DIRECTION` view across
+all contributing agents, and (when a Storage forecast is present) a specialized
+`STORAGE_FORECAST` view that reproduces the flagship "AlphaConsensus vs. Market Consensus"
+comparison from the platform-forecast Bcf figure against the external EIA-survey consensus
+figure. Fixed a latent data-flow gap in the process: the Storage Agent's own raw
+`AgentResult.outputs` never carries `market_consensus_bcf` — that figure was only ever merged
+in downstream, ephemerally, when `chief_trading_agent.py` builds the Directional Strategy
+Agent's `StorageForecast` input. `market_consensus_bcf` is now threaded explicitly from
+`_run_initial_research_cycle` through to the forecast extractor so this comparison isn't
+silently unavailable. Persists via `AgentForecastRow`/`AgentAlphaScoreRow` (natural-key,
+upserted per `agent_type`)/`ConsensusViewRow`, publishes `AGENT_FORECAST_CREATED` per forecast
+and `CONSENSUS_UPDATED` (or `CONSENSUS_DIVERGENCE_DETECTED` when `agreement_label == "LOW"`)
+per view, and appends to a bounded in-memory `AppState.recent_consensus_views` cache alongside
+`recent_signals`/`recent_impacts`.
+
+**API**: `GET /alpha/consensus` (filterable by `consensus_type`, `since_hours`, `limit`; gated
+by a new `alpha_consensus.view` permission granted to the same role set as
+`alpha_signals.view`/`alpha_impacts.view`), `GET /alpha/consensus/{market}` (latest view for a
+market — the flagship comparison endpoint), and `GET /alpha/consensus/by-id/{consensus_id}`.
+
+**Chat tool**: `AlphaConsensusTool` — a new `"agent_consensus"` topic ("Do the agents agree?"/
+"what does AlphaConsensus say"/"agent alpha score"), permission `alpha_consensus.view`, reads
+`state.recent_consensus_views` and narrates the bull/bear/neutral split, the AlphaConsensus
+value vs. market consensus where available, and leading/dissenting agents — the natural
+conversational follow-up to AlphaImpact's "Why does it matter?". Routed carefully so
+"disagree" (the pre-existing `most_disagreeing_agent` topic) is never shadowed by the new
+"agree" keyword.
+
+**Dashboard**: a third "AlphaConsensus" tab in the Alpha Intelligence sub-nav —
+`/platform/alpha-intelligence/consensus` (`ConsensusTable.tsx`) lists recent consensus views
+and renders the selected one's bull/bear/neutral probability bar, AlphaConsensus-vs-market
+comparison, and per-agent weight/Alpha-Score/direction table.
+
+**Enterprise personalization** (a workspace's own model routing/preferences influencing
+consensus weighting) remains planned, not built — every `ConsensusView` produced today is
+platform-wide (`organization_id IS NULL`), since the Enterprise Data Platform milestones
+(7-10) haven't been built.
 
 ## 7. AlphaScenario™ (planned)
 

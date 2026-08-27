@@ -217,7 +217,7 @@ All list endpoints support `limit`/`cursor` pagination. All responses embed
 `data_sources`/`citations`/`freshness` metadata wherever the payload includes market or research
 facts, per the platform's explainability requirement.
 
-## Alpha Intelligence — AlphaSignal + AlphaImpact (Alpha Intelligence Layer Milestones 1-2, `docs/alpha-intelligence.md`)
+## Alpha Intelligence — AlphaSignal + AlphaImpact + AlphaConsensus (Alpha Intelligence Layer Milestones 1-3, `docs/alpha-intelligence.md`)
 
 | Method | Path | Notes |
 |---|---|---|
@@ -225,8 +225,11 @@ facts, per the platform's explainability requirement.
 | GET | `/alpha/signals/{signal_id}` | requires `alpha_signals.view`. 404 if unknown |
 | GET | `/alpha/impacts` | requires `alpha_impacts.view`. Most-recent-first. Query params: `signal_id`, `since_hours` (default 24), `limit` (default 50). Same organization-scoped-plus-platform-wide visibility rule as `/alpha/signals` |
 | GET | `/alpha/impacts/{impact_id}` | requires `alpha_impacts.view`. 404 if unknown |
+| GET | `/alpha/consensus` | requires `alpha_consensus.view`. Most-recent-first. Query params: `consensus_type`, `since_hours` (default 24), `limit` (default 50). Same organization-scoped-plus-platform-wide visibility rule as `/alpha/signals` |
+| GET | `/alpha/consensus/{market}` | requires `alpha_consensus.view`. Latest `ConsensusView` for the given market (e.g. `HENRY_HUB`) — the flagship "AlphaConsensus vs. Market Consensus" comparison. 404 if none computed yet |
+| GET | `/alpha/consensus/by-id/{consensus_id}` | requires `alpha_consensus.view`. 404 if unknown |
 
-Only AlphaSignal and AlphaImpact are implemented so far. `docs/alpha-intelligence.md` documents
-the planned `/alpha/consensus`, `/alpha/scenarios`, `/alpha/replay`, `/alpha/memory`, and
-`/enterprise/*` endpoint families for the remaining four components and the Enterprise Data
-Platform — not yet built.
+Only AlphaSignal, AlphaImpact, and AlphaConsensus are implemented so far. `docs/alpha-intelligence.md`
+documents the planned `/alpha/scenarios`, `/alpha/replay`, `/alpha/memory`, and `/enterprise/*`
+endpoint families for the remaining three components and the Enterprise Data Platform — not yet
+built.

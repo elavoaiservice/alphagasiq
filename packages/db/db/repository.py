@@ -7,6 +7,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
 from schemas import (
+    AgentAlphaScore,
+    AgentForecast,
+    ConsensusView,
     ImpactAnalysis,
     InvestmentCommitteeDecision,
     PostTradeAnalysis,
@@ -19,7 +22,9 @@ from schemas import (
 
 from .engine import build_engine, build_sessionmaker
 from .models import (
+    AgentAlphaScoreRow,
     AgentConfigRow,
+    AgentForecastRow,
     AgentVersionRow,
     ApprovalRow,
     AuditEventRow,
@@ -27,6 +32,7 @@ from .models import (
     ChatConversationRow,
     ChatMessageRow,
     CommitteeDecisionRow,
+    ConsensusViewRow,
     ContactInquiryRow,
     DataFeedConfigRow,
     DataFeedEventRow,
@@ -109,6 +115,7 @@ _PERMISSION_KEYS = [
     "admin.risk_settings",
     "alpha_signals.view",
     "alpha_impacts.view",
+    "alpha_consensus.view",
 ]
 
 # Permissions reserved for SUPER_ADMIN: the system-level/risk/model/agent-optimization
@@ -142,6 +149,7 @@ _ROLE_PERMISSIONS: dict[str, list[str]] = {
         "trading_recommendations.view",
         "alpha_signals.view",
         "alpha_impacts.view",
+        "alpha_consensus.view",
         "trading_recommendations.challenge",
         "chief_agent.chat",
         "portfolio.view",
@@ -161,6 +169,7 @@ _ROLE_PERMISSIONS: dict[str, list[str]] = {
         "trading_recommendations.view",
         "alpha_signals.view",
         "alpha_impacts.view",
+        "alpha_consensus.view",
         "chief_agent.chat",
         "portfolio.view",
         "risk.view",
@@ -179,6 +188,7 @@ _ROLE_PERMISSIONS: dict[str, list[str]] = {
         "trading_recommendations.view",
         "alpha_signals.view",
         "alpha_impacts.view",
+        "alpha_consensus.view",
         "trading_recommendations.challenge",
         "chief_agent.chat",
         "portfolio.view",
@@ -197,6 +207,7 @@ _ROLE_PERMISSIONS: dict[str, list[str]] = {
         "trading_recommendations.view",
         "alpha_signals.view",
         "alpha_impacts.view",
+        "alpha_consensus.view",
         "portfolio.view",
         "risk.view",
         "chief_agent.chat",
@@ -213,6 +224,7 @@ _ROLE_PERMISSIONS: dict[str, list[str]] = {
         "trading_recommendations.view",
         "alpha_signals.view",
         "alpha_impacts.view",
+        "alpha_consensus.view",
     ],
     "API_USER": [
         "market_data.view",
@@ -562,6 +574,66 @@ def _impact_analysis_row_to_dict(row: ImpactAnalysisRow) -> dict:
         "data_sources": row.data_sources,
         "agent_contributors": row.agent_contributors,
         "chain": row.chain,
+        "created_at": row.created_at,
+    }
+
+
+def _agent_forecast_row_to_dict(row: AgentForecastRow) -> dict:
+    return {
+        "id": row.id,
+        "agent_id": row.agent_id,
+        "agent_type": row.agent_type,
+        "agent_version": row.agent_version,
+        "organization_id": row.organization_id,
+        "forecast_type": row.forecast_type,
+        "target": row.target,
+        "market": row.market,
+        "horizon": row.horizon,
+        "forecast_value": row.forecast_value,
+        "direction": row.direction,
+        "probability": row.probability,
+        "confidence": row.confidence,
+        "drivers": row.drivers,
+        "citations": row.citations,
+        "created_at": row.created_at,
+        "expires_at": row.expires_at,
+    }
+
+
+def _agent_alpha_score_row_to_dict(row: AgentAlphaScoreRow) -> dict:
+    return {
+        "agent_type": row.agent_type,
+        "score": row.score,
+        "method": row.method,
+        "sample_size": row.sample_size,
+        "components": row.components,
+        "computed_at": row.computed_at,
+    }
+
+
+def _consensus_view_row_to_dict(row: ConsensusViewRow) -> dict:
+    return {
+        "id": row.id,
+        "organization_id": row.organization_id,
+        "consensus_type": row.consensus_type,
+        "market": row.market,
+        "target": row.target,
+        "horizon": row.horizon,
+        "consensus_value": row.consensus_value,
+        "bull_probability": row.bull_probability,
+        "bear_probability": row.bear_probability,
+        "neutral_probability": row.neutral_probability,
+        "confidence": row.confidence,
+        "dispersion": row.dispersion,
+        "agreement_label": row.agreement_label,
+        "agent_count": row.agent_count,
+        "agent_weights": row.agent_weights,
+        "leading_agents": row.leading_agents,
+        "dissenting_agents": row.dissenting_agents,
+        "drivers": row.drivers,
+        "risks": row.risks,
+        "market_consensus_value": row.market_consensus_value,
+        "variance_vs_market": row.variance_vs_market,
         "created_at": row.created_at,
     }
 
@@ -1974,6 +2046,140 @@ class SqlAppRepository:
                 )
             ).scalar_one_or_none()
         return _impact_analysis_row_to_dict(row) if row is not None else None
+
+    async def save_agent_forecast(self, forecast: AgentForecast) -> None:
+        row = AgentForecastRow(
+            id=str(forecast.id),
+            agent_id=forecast.agent_id,
+            agent_type=forecast.agent_type.value,
+            agent_version=forecast.agent_version,
+            organization_id=forecast.organization_id,
+            forecast_type=forecast.forecast_type,
+            target=forecast.target,
+            market=forecast.market,
+            horizon=forecast.horizon,
+            forecast_value=forecast.forecast_value,
+            direction=forecast.direction.value,
+            probability=forecast.probability,
+            confidence=forecast.confidence,
+            drivers=forecast.drivers,
+            citations=[c.model_dump(mode="json") for c in forecast.citations],
+            created_at=_naive_utc(forecast.created_at),
+            expires_at=_naive_utc(forecast.expires_at),
+        )
+        async with self.session_factory() as session:
+            session.add(row)
+            await session.commit()
+
+    async def list_agent_forecasts(
+        self, *, market: str | None = None, since: datetime | None = None, limit: int = 100
+    ) -> list[dict]:
+        query = select(AgentForecastRow).order_by(AgentForecastRow.created_at.desc()).limit(limit)
+        if market is not None:
+            query = query.where(AgentForecastRow.market == market)
+        if since is not None:
+            query = query.where(AgentForecastRow.created_at >= _naive_utc(since))
+        async with self.session_factory() as session:
+            rows = (await session.execute(query)).scalars().all()
+        return [_agent_forecast_row_to_dict(r) for r in rows]
+
+    async def save_agent_alpha_score(self, score: AgentAlphaScore) -> None:
+        row = AgentAlphaScoreRow(
+            agent_type=score.agent_type.value,
+            score=score.score,
+            method=score.method,
+            sample_size=score.sample_size,
+            components=score.components,
+            computed_at=_naive_utc(score.computed_at),
+        )
+        async with self.session_factory() as session:
+            await session.merge(row)
+            await session.commit()
+
+    async def list_agent_alpha_scores(self) -> list[dict]:
+        async with self.session_factory() as session:
+            rows = (
+                (await session.execute(select(AgentAlphaScoreRow).order_by(AgentAlphaScoreRow.agent_type)))
+                .scalars()
+                .all()
+            )
+        return [_agent_alpha_score_row_to_dict(r) for r in rows]
+
+    async def get_agent_alpha_score(self, agent_type: str) -> dict | None:
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(select(AgentAlphaScoreRow).where(AgentAlphaScoreRow.agent_type == agent_type))
+            ).scalar_one_or_none()
+        return _agent_alpha_score_row_to_dict(row) if row is not None else None
+
+    async def save_consensus_view(self, view: ConsensusView) -> None:
+        row = ConsensusViewRow(
+            id=str(view.id),
+            organization_id=view.organization_id,
+            consensus_type=view.consensus_type,
+            market=view.market,
+            target=view.target,
+            horizon=view.horizon,
+            consensus_value=view.consensus_value,
+            bull_probability=view.bull_probability,
+            bear_probability=view.bear_probability,
+            neutral_probability=view.neutral_probability,
+            confidence=view.confidence,
+            dispersion=view.dispersion,
+            agreement_label=view.agreement_label,
+            agent_count=view.agent_count,
+            agent_weights=[w.model_dump(mode="json") for w in view.agent_weights],
+            leading_agents=view.leading_agents,
+            dissenting_agents=view.dissenting_agents,
+            drivers=view.drivers,
+            risks=view.risks,
+            market_consensus_value=view.market_consensus_value,
+            variance_vs_market=view.variance_vs_market,
+            created_at=_naive_utc(view.created_at),
+        )
+        async with self.session_factory() as session:
+            session.add(row)
+            await session.commit()
+
+    async def list_consensus_views(
+        self,
+        *,
+        consensus_type: str | None = None,
+        organization_id: str | None = None,
+        since: datetime | None = None,
+        limit: int = 50,
+    ) -> list[dict]:
+        query = select(ConsensusViewRow).order_by(ConsensusViewRow.created_at.desc()).limit(limit)
+        if consensus_type is not None:
+            query = query.where(ConsensusViewRow.consensus_type == consensus_type)
+        if organization_id is not None:
+            query = query.where(
+                (ConsensusViewRow.organization_id == organization_id) | (ConsensusViewRow.organization_id.is_(None))
+            )
+        if since is not None:
+            query = query.where(ConsensusViewRow.created_at >= _naive_utc(since))
+        async with self.session_factory() as session:
+            rows = (await session.execute(query)).scalars().all()
+        return [_consensus_view_row_to_dict(r) for r in rows]
+
+    async def get_consensus_view(self, consensus_id: str) -> dict | None:
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(select(ConsensusViewRow).where(ConsensusViewRow.id == consensus_id))
+            ).scalar_one_or_none()
+        return _consensus_view_row_to_dict(row) if row is not None else None
+
+    async def get_latest_consensus_view_for_market(self, market: str) -> dict | None:
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(
+                    select(ConsensusViewRow)
+                    .where(ConsensusViewRow.market == market)
+                    .order_by(ConsensusViewRow.created_at.desc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+        return _consensus_view_row_to_dict(row) if row is not None else None
 
     async def save_committee_decision(self, trade_id: UUID, decision: InvestmentCommitteeDecision) -> None:
         row = CommitteeDecisionRow(

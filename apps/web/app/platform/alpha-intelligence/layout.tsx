@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 const NAV = [
   { href: "/platform/alpha-intelligence/signals", label: "AlphaSignal" },
   { href: "/platform/alpha-intelligence/impacts", label: "AlphaImpact" },
+  { href: "/platform/alpha-intelligence/consensus", label: "AlphaConsensus" },
 ];
 
 export default function AlphaIntelligenceLayout({ children }: { children: React.ReactNode }) {

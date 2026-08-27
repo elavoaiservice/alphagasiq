@@ -346,7 +346,7 @@ above: no live Neo4j server is reachable here, so it's tested against faithful `
 test doubles (`tests/fundamentals/test_pipeline_graph_neo4j.py`).
 
 **A new proprietary Alpha Intelligence Layer sits between the digital twin and the Specialized AI
-Agents — Milestones 1-2 (AlphaSignal™/AlphaImpact™) are implemented.** See `docs/alpha-intelligence.md` for the
+Agents — Milestones 1-3 (AlphaSignal™/AlphaImpact™/AlphaConsensus™) are implemented.** See `docs/alpha-intelligence.md` for the
 full six-component target architecture (AlphaSignal™/AlphaImpact™/AlphaConsensus™/
 AlphaScenario™/AlphaReplay™/AlphaMemory™) and the planned multi-tenant Enterprise Data Platform,
 sequenced across 10 milestones the same incremental way the access-model spec was. AlphaSignal
@@ -378,3 +378,21 @@ via `GET /alpha/impacts`/`GET /alpha/impacts/{id}` (`alpha_impacts.view`), a new
 matter?" chat tool (the natural conversational follow-up to "What changed overnight?"), and a
 new sub-nav under "Alpha Intelligence" (AlphaSignal/AlphaImpact tabs, mirroring the admin
 console's sub-nav pattern) with an `ImpactsTable` rendering each analysis's causal chain.
+
+**AlphaConsensus™ + Agent Alpha Score™ (Milestone 3) aggregates every contributing agent's
+forecast into one dynamically-weighted view.** `alpha_service.forecast_extractor.ForecastExtractor`
+(pure) turns each fundamental/quant agent's already-computed output into a common
+`AgentForecast` wherever it implies a genuine directional read (never fabricated from a level-
+only output like LNG/Power/Pipeline's). `alpha_service.agent_alpha_score.AgentAlphaScoreEngine`
+(also pure) rates each agent's reliability — the Forecasting agent gets a real
+`BACKTESTED_DIRECTIONAL_ACCURACY` score from the Quant team's walk-forward backtests; every
+other agent gets a `CONFIDENCE_CONSISTENCY_PROXY` score, explicitly documented as not a
+historical-accuracy claim. `alpha_service.consensus_engine.ConsensusEngine` (also pure) then
+weights each forecast by `(alpha_score / 100) * forecast_confidence` — never equal-weighted —
+into a `ConsensusView` (bull/bear/neutral probability, agreement label, leading/dissenting
+agents), including a specialized storage view that reproduces the flagship "AlphaConsensus vs.
+Market Consensus" Bcf comparison. `AppState._run_alpha_consensus()` runs after the quant
+research cycle and publishes `AGENT_FORECAST_CREATED`/`CONSENSUS_UPDATED`/
+`CONSENSUS_DIVERGENCE_DETECTED`. Exposed via `GET /alpha/consensus`/`GET /alpha/consensus/{market}`
+(`alpha_consensus.view`), a new "Do the agents agree?" chat tool (the natural follow-up to "Why
+does it matter?"), and a third "AlphaConsensus" tab in the Alpha Intelligence sub-nav.

@@ -655,3 +655,80 @@ class ImpactAnalysisRow(Base):
     agent_contributors: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     chain: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class AgentForecastRow(Base):
+    """A structured directional forecast from one agent for one research cycle
+    (docs/alpha-intelligence.md section 6), extracted by
+    `alpha_service.forecast_extractor.ForecastExtractor`."""
+
+    __tablename__ = "alpha_agent_forecasts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    agent_id: Mapped[str] = mapped_column(String, nullable=False)
+    agent_type: Mapped[str] = mapped_column(String, nullable=False)
+    agent_version: Mapped[str] = mapped_column(String, nullable=False)
+    organization_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=True)
+    forecast_type: Mapped[str] = mapped_column(String, nullable=False)
+    target: Mapped[str] = mapped_column(String, nullable=False)
+    market: Mapped[str] = mapped_column(String, nullable=False, default="HENRY_HUB")
+    horizon: Mapped[str] = mapped_column(String, nullable=False, default="")
+    forecast_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    direction: Mapped[str] = mapped_column(String, nullable=False, default="NEUTRAL")
+    probability: Mapped[float] = mapped_column(Float, nullable=False, default=0.5)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    drivers: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    citations: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class AgentAlphaScoreRow(Base):
+    """Agent Alpha Score(TM) (docs/alpha-intelligence.md section 6) -- the latest
+    score per agent type. Natural-key PK `agent_type`: this is a "current score"
+    row, upserted every cycle, not a history table -- a score trend over time is
+    explicitly deferred future work (see the schema docstring for
+    `AgentAlphaScore`)."""
+
+    __tablename__ = "alpha_agent_scores"
+
+    agent_type: Mapped[str] = mapped_column(String, primary_key=True)
+    score: Mapped[float] = mapped_column(Float, nullable=False)
+    method: Mapped[str] = mapped_column(String, nullable=False)
+    sample_size: Mapped[int] = mapped_column(nullable=False, default=0)
+    components: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    computed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class ConsensusViewRow(Base):
+    """AlphaConsensus(TM)'s output (docs/alpha-intelligence.md section 6) -- a
+    dynamically-weighted aggregation of contributing `AgentForecast`s. `agent_weights`
+    is stored as an embedded JSON list (each contributing agent's weight/alpha
+    score/direction) rather than a separate join table, for the same reason
+    `ImpactAnalysisRow.chain` is embedded -- always fetched with its parent, never
+    queried weight-by-weight independently."""
+
+    __tablename__ = "alpha_consensus_views"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    organization_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=True)
+    consensus_type: Mapped[str] = mapped_column(String, nullable=False)
+    market: Mapped[str] = mapped_column(String, nullable=False, default="HENRY_HUB")
+    target: Mapped[str] = mapped_column(String, nullable=False)
+    horizon: Mapped[str] = mapped_column(String, nullable=False, default="")
+    consensus_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    bull_probability: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    bear_probability: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    neutral_probability: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    dispersion: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    agreement_label: Mapped[str] = mapped_column(String, nullable=False, default="LOW")
+    agent_count: Mapped[int] = mapped_column(nullable=False, default=0)
+    agent_weights: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    leading_agents: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    dissenting_agents: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    drivers: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    risks: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    market_consensus_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    variance_vs_market: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)

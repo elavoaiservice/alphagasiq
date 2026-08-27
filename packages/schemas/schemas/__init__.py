@@ -30,6 +30,10 @@ from .events import DomainEvent, EventType, topic_for_event_type
 from .post_trade import PostTradeAnalysis
 from .quant import BacktestResult, ForecastHorizon, ModelType, PriceForecast, RegimeResult, RelativeValueSignal
 from .alpha import (
+    AgentAlphaScore,
+    AgentForecast,
+    ConsensusView,
+    ConsensusWeight,
     ImpactAnalysis,
     ImpactCategory,
     ImpactEdge,
@@ -84,4 +88,8 @@ __all__ = [
     "ImpactAnalysis",
     "ImpactCategory",
     "ImpactEdge",
+    "AgentForecast",
+    "AgentAlphaScore",
+    "ConsensusWeight",
+    "ConsensusView",
 ]

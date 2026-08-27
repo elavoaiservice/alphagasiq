@@ -1,6 +1,8 @@
 from .engine import build_engine, build_sessionmaker
 from .models import (
+    AgentAlphaScoreRow,
     AgentConfigRow,
+    AgentForecastRow,
     AgentVersionRow,
     ApprovalRow,
     AuditEventRow,
@@ -8,6 +10,7 @@ from .models import (
     ChatConversationRow,
     ChatMessageRow,
     CommitteeDecisionRow,
+    ConsensusViewRow,
     ContactInquiryRow,
     DataFeedConfigRow,
     DataFeedEventRow,
@@ -72,5 +75,8 @@ __all__ = [
     "SignalRow",
     "SignalBaselineRow",
     "ImpactAnalysisRow",
+    "AgentForecastRow",
+    "AgentAlphaScoreRow",
+    "ConsensusViewRow",
     "SqlAppRepository",
 ]

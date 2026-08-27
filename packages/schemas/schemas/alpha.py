@@ -5,8 +5,11 @@ materiality-scored change in the natural gas ecosystem that everything downstrea
 (AlphaImpact, AlphaConsensus, AlphaScenario, AlphaMemory) will eventually consume or
 reference. `ImpactAnalysis`/`ImpactEdge` are AlphaImpact(TM)'s output: what a `Signal`
 means, expressed as a causal chain from physical event to portfolio/risk implication.
-Nothing in this module talks to a database, an LLM, or the network -- it is a pure data
-contract, exactly like every other schema in this package.
+`AgentForecast`/`AgentAlphaScore`/`ConsensusWeight`/`ConsensusView` are AlphaConsensus(TM)'s
+schemas: a structured forecast from one agent, that agent's performance rating, its
+resulting weight in a consensus computation, and the consensus view itself. Nothing in
+this module talks to a database, an LLM, or the network -- it is a pure data contract,
+exactly like every other schema in this package.
 """
 
 from __future__ import annotations
@@ -18,7 +21,7 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, Field
 
 from .agent import Citation
-from .enums import DataClassification
+from .enums import AgentType, DataClassification
 
 
 class SignalType(str, Enum):
@@ -169,4 +172,91 @@ class ImpactAnalysis(BaseModel):
     data_sources: list[str] = Field(default_factory=list)
     agent_contributors: list[str] = Field(default_factory=list)
     chain: list[ImpactEdge] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class AgentForecast(BaseModel):
+    """A structured directional forecast from one specialized agent for one research
+    cycle (docs/alpha-intelligence.md section 6). Extracted from that agent's own
+    already-computed `AgentResult.outputs` by `alpha_service.forecast_extractor` --
+    not every agent produces one every cycle, only those whose output already
+    contains a genuine directional read (a fabricated direction is never invented
+    for an agent whose output doesn't already imply one)."""
+
+    id: UUID = Field(default_factory=uuid4)
+    agent_id: str
+    agent_type: AgentType
+    agent_version: str
+    organization_id: str | None = None
+    forecast_type: str
+    target: str
+    market: str = "HENRY_HUB"
+    horizon: str = ""
+    forecast_value: float | None = None
+    direction: SignalDirection = SignalDirection.NEUTRAL
+    probability: float = Field(ge=0, le=1, default=0.5)
+    confidence: float = Field(ge=0, le=1, default=0.0)
+    drivers: list[str] = Field(default_factory=list)
+    citations: list[Citation] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    expires_at: datetime | None = None
+
+
+class AgentAlphaScore(BaseModel):
+    """Agent Alpha Score(TM) (docs/alpha-intelligence.md section 6): how much an
+    agent's directional read should be trusted. Milestone 3 is honest about scope --
+    only `FORECASTING` has a genuine historical-accuracy figure available today (the
+    Quantitative Team's real walk-forward backtests, `method="BACKTESTED_
+    DIRECTIONAL_ACCURACY"`); every other agent gets a `"CONFIDENCE_CONSISTENCY_
+    PROXY"` score (recent confidence level/consistency/evidence quality) that is
+    explicitly NOT a claim of historical predictive accuracy -- no resolved-outcome
+    ledger per fundamental agent exists yet (that requires the decision-memory
+    infrastructure a later milestone, AlphaMemory, builds). `sample_size=0` means
+    "insufficient data", not a low score. Regime/horizon-specific breakdowns (spec's
+    "Weather Agent: 93 in extreme cold, 66 in shoulder season") are deferred --
+    `components` carries whatever sub-metrics this milestone actually computed."""
+
+    agent_type: AgentType
+    score: float = Field(ge=0, le=100)
+    method: str
+    sample_size: int = 0
+    components: dict[str, float] = Field(default_factory=dict)
+    computed_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ConsensusWeight(BaseModel):
+    agent_type: AgentType
+    weight: float = Field(ge=0, le=1)
+    alpha_score: float
+    forecast_confidence: float
+    direction: SignalDirection
+
+
+class ConsensusView(BaseModel):
+    """AlphaConsensus(TM)'s output (docs/alpha-intelligence.md section 6): a
+    dynamically (never equal-)weighted aggregation of contributing `AgentForecast`s
+    for the same target/market/horizon, weighted by each agent's `AgentAlphaScore`
+    and its forecast's own confidence."""
+
+    id: UUID = Field(default_factory=uuid4)
+    organization_id: str | None = None
+    consensus_type: str
+    market: str = "HENRY_HUB"
+    target: str
+    horizon: str = ""
+    consensus_value: float | None = None
+    bull_probability: float = Field(ge=0, le=1, default=0.0)
+    bear_probability: float = Field(ge=0, le=1, default=0.0)
+    neutral_probability: float = Field(ge=0, le=1, default=0.0)
+    confidence: float = Field(ge=0, le=1, default=0.0)
+    dispersion: float = Field(ge=0, le=1, default=0.0)
+    agreement_label: str = "LOW"
+    agent_count: int = 0
+    agent_weights: list[ConsensusWeight] = Field(default_factory=list)
+    leading_agents: list[str] = Field(default_factory=list)
+    dissenting_agents: list[str] = Field(default_factory=list)
+    drivers: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+    market_consensus_value: float | None = None
+    variance_vs_market: float | None = None
     created_at: datetime = Field(default_factory=datetime.utcnow)

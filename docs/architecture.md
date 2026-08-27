@@ -537,7 +537,7 @@ Six components, documented in full in `docs/alpha-intelligence.md`:
 - **AlphaImpact™** — event-to-market causal chain (`services/alpha/alpha_service/
   impact_engine.py`). **Implemented (Milestone 2 of this layer).**
 - **AlphaConsensus™ + Agent Alpha Score™** — calibrated, dynamically-weighted multi-agent
-  forecast aggregation. Planned (Milestone 3).
+  forecast aggregation. **Implemented (Milestone 3 of this layer).**
 - **AlphaScenario™** — counterfactual/stress-test engine, extending `services/risk/
   risk_service/scenarios.py`. Planned (Milestone 4).
 - **AlphaMemory™** — decision/institutional memory. Planned (Milestone 5).
@@ -586,3 +586,28 @@ immediately after every new signal, publishing `IMPACT_ANALYSIS_CREATED`. Expose
 `AlphaImpactTool` chat topic ("Why does it matter?" — the natural follow-up to AlphaSignal's
 "What changed overnight?"), and an "AlphaImpact" tab in the Alpha Intelligence dashboard
 sub-nav. See `docs/alpha-intelligence.md` section 5 for the full design.
+
+### AlphaConsensus™ + Agent Alpha Score™ (implemented)
+
+`services/alpha/alpha_service/forecast_extractor.py`'s `ForecastExtractor` is pure: it turns
+each fundamental/quant agent's already-computed `AgentResult.outputs` into a common
+`AgentForecast` (`packages/schemas/schemas/alpha.py`) wherever the source agent's own
+single-cycle output already implies a genuine directional read (Storage/Weather/Supply/
+Demand/Forecasting/Relative-Value — never LNG/Power/Pipeline, whose single-cycle output is a
+level, not a trend). `alpha_service/agent_alpha_score.py`'s `AgentAlphaScoreEngine` is also
+pure: the Forecasting agent gets a genuine `BACKTESTED_DIRECTIONAL_ACCURACY` score from the
+Quant team's real walk-forward backtests; every other agent gets a `CONFIDENCE_CONSISTENCY_
+PROXY` score, explicitly documented as not a historical-accuracy claim (no resolved-outcome
+ledger per fundamental agent exists yet — that's AlphaMemory's job, a later milestone).
+`alpha_service/consensus_engine.py`'s `ConsensusEngine` aggregates `AgentForecast`s into a
+`ConsensusView`, weighting each by `(alpha_score / 100) * forecast_confidence` — never equal-
+weighted — same design philosophy as the Risk Governor. `AppState._run_alpha_consensus()`
+(`apps/api/api_app/state.py`) runs after the quant research cycle, persisting/publishing
+`AgentForecastRow`/`AGENT_FORECAST_CREATED`, `AgentAlphaScoreRow`, and
+`ConsensusViewRow`/`CONSENSUS_UPDATED` (or `CONSENSUS_DIVERGENCE_DETECTED` on low agreement) —
+including a specialized `STORAGE_FORECAST` view that reproduces the flagship "AlphaConsensus
+vs. Market Consensus" Bcf comparison. Exposed via `GET /alpha/consensus`,
+`GET /alpha/consensus/{market}`, and `GET /alpha/consensus/by-id/{id}` (`alpha_consensus.view`
+permission), an `AlphaConsensusTool` chat topic ("Do the agents agree?" — the natural follow-up
+to AlphaImpact's "Why does it matter?"), and an "AlphaConsensus" tab in the Alpha Intelligence
+dashboard sub-nav. See `docs/alpha-intelligence.md` section 6 for the full design.
