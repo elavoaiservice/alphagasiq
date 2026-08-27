@@ -3,7 +3,7 @@ name = "alphagasiq-service-alpha"
 version = "0.1.0"
 description = "Alpha Intelligence Layer: AlphaSignal materiality engine and signal detection for AlphaGasIQ"
 requires-python = ">=3.11"
-dependencies = ["alphagasiq-schemas"]
+dependencies = ["alphagasiq-schemas", "alphagasiq-service-risk"]
 
 [tool.setuptools.packages.find]
 include = ["alpha_service*"]

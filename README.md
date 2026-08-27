@@ -346,7 +346,7 @@ above: no live Neo4j server is reachable here, so it's tested against faithful `
 test doubles (`tests/fundamentals/test_pipeline_graph_neo4j.py`).
 
 **A new proprietary Alpha Intelligence Layer sits between the digital twin and the Specialized AI
-Agents — Milestones 1-3 (AlphaSignal™/AlphaImpact™/AlphaConsensus™) are implemented.** See `docs/alpha-intelligence.md` for the
+Agents — Milestones 1-4 (AlphaSignal™/AlphaImpact™/AlphaConsensus™/AlphaScenario™) are implemented.** See `docs/alpha-intelligence.md` for the
 full six-component target architecture (AlphaSignal™/AlphaImpact™/AlphaConsensus™/
 AlphaScenario™/AlphaReplay™/AlphaMemory™) and the planned multi-tenant Enterprise Data Platform,
 sequenced across 10 milestones the same incremental way the access-model spec was. AlphaSignal
@@ -396,3 +396,21 @@ research cycle and publishes `AGENT_FORECAST_CREATED`/`CONSENSUS_UPDATED`/
 `CONSENSUS_DIVERGENCE_DETECTED`. Exposed via `GET /alpha/consensus`/`GET /alpha/consensus/{market}`
 (`alpha_consensus.view`), a new "Do the agents agree?" chat tool (the natural follow-up to "Why
 does it matter?"), and a third "AlphaConsensus" tab in the Alpha Intelligence sub-nav.
+
+**AlphaScenario™ (Milestone 4) composes named and/or custom shocks into a richer
+counterfactual, then reuses `risk_service/scenarios.py`'s existing P&L/VaR math rather than
+duplicating it.** `alpha_service.scenario_engine.ScenarioEngine` (pure) combines named base
+scenarios from the standing `risk_service.scenarios.SCENARIOS` catalog with custom
+`ScenarioVariable` shocks (price/demand/supply summed, volatility multipliers compounded) into
+one composed scenario, then calls the already-tested `run_scenario()` directly — no shadow P&L
+math. `run_standing_library()` runs every catalog entry in one pass; `compare()` ranks the
+results worst-to-best — the "base vs. A vs. B vs. C" comparison. `AppState.run_alpha_scenario()`/
+`run_alpha_scenario_comparison()` persist runs and publish `SCENARIO_RUN`/
+`SCENARIO_COMPARISON_RUN`. Exposed via `GET /alpha/scenarios/library`, `POST /alpha/scenarios/run`,
+`POST /alpha/scenarios/compare`, `GET /alpha/scenarios/runs`/`GET /alpha/scenarios/runs/{id}`
+(new `alpha_scenarios.view`/`alpha_scenarios.run` permissions) — additive to, not a replacement
+for, the pre-existing single-scenario `/risk/scenarios` endpoints. The existing scenario chat
+topic now composes an explicit percentage shock named in the question ("...and prices spike
+20%"); a new "compare scenarios" chat topic runs the whole standing library. A fourth
+"AlphaScenario" tab in the Alpha Intelligence sub-nav lets a user run named/composed scenarios,
+run the full library, and browse recent run history.

@@ -256,3 +256,97 @@ async def test_disagree_still_routes_to_most_disagreeing_agent(monkeypatch, user
     result = await agent.ask("Which agent disagrees the most?", state, user)
 
     assert result.tool_used == "most_disagreeing_agent"
+
+
+class _FakePortfolio:
+    def __init__(self):
+        self.positions = {}
+
+
+class _FakePaperAdapter:
+    def __init__(self):
+        self.portfolio = _FakePortfolio()
+
+
+def _scenario_capable_fake_state() -> _FakeState:
+    """A `_FakeState` extended with just the attributes `_run_named_scenario`/
+    `_scenario_comparison` read: an empty paper book (so `run_scenario`'s P&L math
+    runs against zero positions, exercising the real engine without needing a
+    synthetic trade) and a real `ScenarioEngine` (pure, no I/O)."""
+    from alpha_service import ScenarioEngine
+
+    state = _FakeState()
+    state.paper_adapter = _FakePaperAdapter()
+    state.alpha_scenario_engine = ScenarioEngine()
+    state.mark_price = lambda instrument: 3.0
+    return state
+
+
+async def test_run_named_scenario_composes_an_explicit_percentage_shock(monkeypatch, user):
+    """AlphaScenarioTool (docs/alpha-intelligence.md section 7): a question naming
+    both a scenario and an explicit percentage stacks a custom price shock via
+    `ScenarioEngine.compose()` rather than only ever running the named scenario
+    alone -- the response must reflect the composed (not the bare) shock."""
+
+    async def fake_permissions(_user, _state):
+        return {"portfolio.view"}
+
+    monkeypatch.setattr(chat_agent_module, "get_effective_permissions", fake_permissions)
+    agent = ChatAgent(llm=MockLLMProvider())
+
+    result = await agent.ask(
+        "What happens if Freeport LNG goes offline and prices spike 20%?", _scenario_capable_fake_state(), user
+    )
+
+    assert result.access_granted is True
+    assert result.tool_used == "run_named_scenario"
+    assert result.permission_required == "portfolio.view"
+    assert "+20%" in result.content
+
+
+async def test_run_named_scenario_without_percentage_is_unchanged(monkeypatch, user):
+    async def fake_permissions(_user, _state):
+        return {"portfolio.view"}
+
+    monkeypatch.setattr(chat_agent_module, "get_effective_permissions", fake_permissions)
+    agent = ChatAgent(llm=MockLLMProvider())
+
+    result = await agent.ask("Run a scenario where Freeport LNG goes offline", _scenario_capable_fake_state(), user)
+
+    assert result.tool_used == "run_named_scenario"
+    assert "Freeport" in result.content or "LNG" in result.content
+    assert "%" not in result.content.split(":")[0]  # no composed-shock note in the scenario name clause
+
+
+async def test_scenario_comparison_routes_and_reads_the_standing_library(monkeypatch, user):
+    async def fake_permissions(_user, _state):
+        return {"alpha_scenarios.view"}
+
+    monkeypatch.setattr(chat_agent_module, "get_effective_permissions", fake_permissions)
+    agent = ChatAgent(llm=MockLLMProvider())
+
+    result = await agent.ask(
+        "Can you compare scenarios across my whole book?", _scenario_capable_fake_state(), user
+    )
+
+    assert result.access_granted is True
+    assert result.tool_used == "scenario_comparison"
+    assert result.permission_required == "alpha_scenarios.view"
+    assert "14 scenarios" in result.content
+    assert "Worst case" in result.content
+
+
+async def test_scenario_comparison_declined_without_permission(monkeypatch, user):
+    async def fake_permissions(_user, _state):
+        return set()
+
+    monkeypatch.setattr(chat_agent_module, "get_effective_permissions", fake_permissions)
+    agent = ChatAgent(llm=MockLLMProvider())
+
+    # _FakeState has no `alpha_scenario_engine`/`paper_adapter` -- a wrongly-dispatched
+    # tool call would raise AttributeError instead of returning a declined result.
+    result = await agent.ask("Stress test my portfolio against every scenario", _FakeState(), user)
+
+    assert result.access_granted is False
+    assert result.tool_used == "scenario_comparison"
+    assert "alpha_scenarios.view" in result.content

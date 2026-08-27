@@ -111,7 +111,7 @@ can ship.
 | 1 | AlphaSignal™ — material-change detection + materiality engine | **Implemented** |
 | 2 | AlphaImpact™ — event→market causal chain | **Implemented** |
 | 3 | AlphaConsensus™ + Agent Alpha Score™ — calibrated, dynamically-weighted consensus | **Implemented** |
-| 4 | AlphaScenario™ — counterfactual/stress-test engine | Planned |
+| 4 | AlphaScenario™ — counterfactual/stress-test engine | **Implemented** |
 | 5 | AlphaMemory™ — decision/institutional memory | Planned |
 | 6 | AlphaReplay™ — bitemporal historical reconstruction | Planned |
 | 7 | Chief Trading Agent full integration — all six `Alpha*Tool`s, Morning Brief, Overview dashboard | Planned |
@@ -393,19 +393,74 @@ consensus weighting) remains planned, not built — every `ConsensusView` produc
 platform-wide (`organization_id IS NULL`), since the Enterprise Data Platform milestones
 (7-10) haven't been built.
 
-## 7. AlphaScenario™ (planned)
+## 7. AlphaScenario™ (implemented)
 
-Extends `risk_service/scenarios.py`'s existing `Scenario`/`run_scenario` (currently a static
-14-scenario catalog with a single price/demand/supply/volatility shock per scenario) into a
-richer counterfactual engine: `Scenario`/`ScenarioVariable` (multi-factor shocks with
-geography/asset/duration) / `ScenarioResult` (supply/demand/storage/price/curve/basis/
-volatility/portfolio changes), natural-language-to-scenario parsing in the Chief Trading Agent
-("What happens if ECMWF removes 20 HDDs and Freeport loses 1 Bcf/d for two weeks?"), scenario
-comparison (base vs. A vs. B vs. C), and a continuously-maintained library of standard stress
-tests (polar vortex, hurricane, major LNG/pipeline outage, TTF spike/collapse, etc. — largely
-already named in `risk_service.scenarios.SCENARIOS`, extended with richer shock composition).
-Enterprise customers will be able to build private stress scenarios using their own portfolio/
-asset data once section 8's platform exists.
+**Purpose**: composes named and/or custom shocks into a richer counterfactual, then reuses
+`risk_service/scenarios.py`'s existing, already-tested `run_scenario()` P&L/VaR math rather
+than duplicating it — the same "extend, don't replace" relationship AlphaConsensus has with
+the Quant team's models. Milestone 4 is honest about scope: it delivers shock *composition*
+and *comparison*, not the full spec's per-geography/per-asset/duration-aware modeling — there
+is no per-geography position or duration-decay data in this codebase today.
+
+**Schema** (`packages/schemas/schemas/alpha.py`): `ScenarioFactorType` (the four shock
+dimensions `risk_service.scenarios.Scenario` already supports: `PRICE_SHOCK_PCT`,
+`DEMAND_SHOCK_BCF_D`, `SUPPLY_SHOCK_BCF_D`, `VOLATILITY_MULTIPLIER`); `ScenarioVariable` (one
+composable shock factor — `geography`/`asset_id`/`duration` are accepted on the schema for
+forward compatibility with the full spec but not yet used by the engine, always `None` until
+that data model exists, the same honesty pattern as AlphaSignal's `novelty_score`);
+`ScenarioDefinition` (zero or more `base_scenario_ids` from `risk_service.scenarios.SCENARIOS`
+stacked with zero or more custom `ScenarioVariable`s); `ScenarioRunResult` (wraps
+`risk_service.scenarios.ScenarioResult` with composition metadata and persistence identity);
+`ScenarioComparison` (the "base vs. A vs. B vs. C" ranked comparison).
+
+**Scenario engine** (`services/alpha/alpha_service/scenario_engine.py`): `ScenarioEngine` is
+pure — no DB/LLM/event-bus access. `compose()` combines every named base scenario plus every
+custom variable into one `risk_service.scenarios.Scenario`: price/demand/supply shocks are
+summed (additive stacking of independent shocks), volatility multipliers are multiplied
+(compounding uncertainty, matching AlphaImpact's decay philosophy that combining more shocks
+never yields *more* certainty). `run()` composes then calls `risk_service.scenarios.
+run_scenario()` directly — the underlying P&L/VaR math is never re-implemented.
+`run_standing_library()` runs every entry in `risk_service.scenarios.SCENARIOS` (the
+continuously-maintained standing stress-test library) against the same book in one pass;
+`compare()` ranks any list of results worst-to-best by portfolio P&L impact.
+
+**Integration** (`apps/api/api_app/state.py`): `AppState.run_alpha_scenario()` and
+`run_alpha_scenario_comparison()` build the current paper book's `PositionSnapshot`s, call the
+engine, persist via `ScenarioRunRow`, publish `SCENARIO_RUN`/`SCENARIO_COMPARISON_RUN`, and
+append to a bounded in-memory `AppState.recent_scenario_runs` cache alongside the other
+Alpha* caches.
+
+**API**: `GET /alpha/scenarios/library` (the standing catalog, for a scenario picker),
+`POST /alpha/scenarios/run` (composes and runs a named and/or custom scenario; 400 on an
+unknown base scenario id), `POST /alpha/scenarios/compare` (runs the entire standing library
+and ranks it), `GET /alpha/scenarios/runs`/`GET /alpha/scenarios/runs/{id}` (persisted run
+history) — all gated by new `alpha_scenarios.view`/`alpha_scenarios.run` permissions, granted
+to the same role set as `portfolio.view` (TRADER/RISK_MANAGER/RESEARCHER/EXECUTIVE, not
+VIEWER, since a scenario run reveals portfolio P&L). These are additive to the pre-existing,
+untouched `GET /risk/scenarios`/`POST /risk/scenarios/{id}/run` endpoints (which only ever ran
+a single named scenario with no composition, comparison, or persistence).
+
+**Chat tool**: the pre-existing `run_named_scenario` topic (permission unchanged,
+`portfolio.view`) now detects an explicit percentage price move in the question ("...and
+prices spike 20%") via `_extract_price_shock_pct()` — a modest, honest slice of "natural-
+language-to-scenario parsing": regex extraction of a number plus a direction word, not a
+general NLU parser — and stacks it onto the matched named scenario via `ScenarioEngine.
+compose()` before running. A new `"scenario_comparison"` topic ("compare scenarios"/"stress
+test my portfolio against every scenario"), permission `alpha_scenarios.view`, calls
+`state.alpha_scenario_engine.run_standing_library()` directly (a pure, synchronous engine
+call, no persistence) rather than the async `AppState` method — matching this project's
+established provisional decision to keep the chat dispatch path synchronous rather than
+making it async-aware for one topic.
+
+**Dashboard**: a fourth "AlphaScenario" tab in the Alpha Intelligence sub-nav —
+`/platform/alpha-intelligence/scenarios` (`ScenarioRunner.tsx`) lets a user pick a base
+scenario plus an optional custom price-shock percentage, run it, run the entire standing
+library and see it ranked, and browse recent run history.
+
+**Enterprise personalization** (private stress scenarios against a workspace's own
+portfolio/asset data) remains planned, not built — every `ScenarioRunResult` produced today is
+platform-wide (`organization_id IS NULL`), since the Enterprise Data Platform milestones
+(8-10) haven't been built.
 
 ## 8. AlphaMemory™ (planned)
 

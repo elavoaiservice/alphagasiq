@@ -24,12 +24,36 @@ from typing import Any
 from uuid import UUID
 
 from agent_sdk import LLMMessage, LLMProvider
+from alpha_service import ScenarioEngine
 from risk_service.metrics import PositionSnapshot
 from risk_service.scenarios import get_scenario, run_scenario
+from schemas import ScenarioDefinition, ScenarioFactorType, ScenarioVariable
 
 from .auth import User
 from .entitlements import get_effective_permissions
 from .state import AppState
+
+
+_UP_WORDS = ("up", "spike", "spikes", "higher", "rally", "rallies", "rise", "rises", "increase")
+_DOWN_WORDS = ("down", "drop", "drops", "lower", "collapse", "collapses", "fall", "falls", "decrease", "decline")
+
+
+def _extract_price_shock_pct(q: str) -> float | None:
+    """Regex-based extraction of an explicit percentage price move plus a direction
+    word (e.g. "prices spike 20%" -> +0.20, "prices drop 15%" -> -0.15) for
+    `ChatAgent._run_named_scenario`'s scenario composition. Returns `None` if no
+    percentage is present, or if a percentage is present without any recognizable
+    direction word -- this is deliberately not a general NLU parser, so an
+    ambiguous phrasing is left unparsed rather than guessing a sign."""
+    match = re.search(r"(\d+(?:\.\d+)?)\s*%", q)
+    if match is None:
+        return None
+    magnitude = float(match.group(1)) / 100.0
+    if any(word in q for word in _DOWN_WORDS):
+        return -magnitude
+    if any(word in q for word in _UP_WORDS):
+        return magnitude
+    return None
 
 
 class ToolResult:
@@ -66,6 +90,7 @@ _TOOL_PERMISSIONS: dict[str, str] = {
     "what_changed_overnight": "alpha_signals.view",
     "why_does_it_matter": "alpha_impacts.view",
     "agent_consensus": "alpha_consensus.view",
+    "scenario_comparison": "alpha_scenarios.view",
     "what_changed": "dashboard.view",
     "todays_move": "news.view",
     "general_status": "dashboard.view",
@@ -85,6 +110,8 @@ class ChatAgent:
             return "hdd_sensitivity"
         elif "ecmwf" in q or ("weather" in q and ("run" in q or "model" in q)):
             return "weather_run_delta"
+        elif "compare scenario" in q or "every scenario" in q or "stress test" in q or "standing library" in q:
+            return "scenario_comparison"
         elif "scenario" in q or "freeport" in q or "offline" in q:
             return "run_named_scenario"
         elif "evidence" in q or "data point" in q or "show every" in q:
@@ -131,6 +158,8 @@ class ChatAgent:
             return self._what_changed_overnight(state)
         elif topic == "agent_consensus":
             return self._agent_consensus_view(state)
+        elif topic == "scenario_comparison":
+            return self._scenario_comparison(state)
         elif topic == "what_changed":
             return self._what_changed(q, state)
         elif topic == "todays_move":
@@ -270,6 +299,22 @@ class ChatAgent:
         except KeyError:
             return ToolResult(f"Unknown scenario '{scenario_id}'.", [], {})
 
+        # AlphaScenario(TM) (docs/alpha-intelligence.md section 7): if the question
+        # also names an explicit percentage price move ("...and prices spike 20%"),
+        # stack it onto the matched named scenario via `ScenarioEngine.compose()`
+        # instead of only ever running the named scenario alone -- a modest, honest
+        # slice of "natural-language-to-scenario parsing": regex extraction of an
+        # explicit number + direction word, not a general NLU parser.
+        price_shock_pct = _extract_price_shock_pct(q)
+        variables = (
+            [ScenarioVariable(factor_type=ScenarioFactorType.PRICE_SHOCK_PCT, value=price_shock_pct)]
+            if price_shock_pct is not None
+            else []
+        )
+        composed = ScenarioEngine().compose(
+            ScenarioDefinition(name=scenario.name, description=scenario.description, base_scenario_ids=[scenario_id], variables=variables)
+        )
+
         positions = [
             PositionSnapshot(
                 instrument=instrument,
@@ -280,13 +325,40 @@ class ChatAgent:
             )
             for instrument, pos in state.paper_adapter.portfolio.positions.items()
         ]
-        result = run_scenario(scenario, positions)
+        result = run_scenario(composed, positions)
+        composition_note = f" plus a {price_shock_pct:+.0%} price shock" if price_shock_pct is not None else ""
         content = (
-            f"Scenario '{scenario.name}': portfolio P&L impact {result.portfolio_pnl:+.2f}, "
+            f"Scenario '{scenario.name}'{composition_note}: portfolio P&L impact {result.portfolio_pnl:+.2f}, "
             f"VaR impact {result.var_impact:+.2f}, margin impact {result.margin_impact:.2f}, "
             f"largest risk contributor: {result.largest_risk_contributor}."
         )
         return ToolResult(content, [{"source": "risk_service.scenarios", "reference": scenario_id}], {})
+
+    def _scenario_comparison(self, state: AppState) -> ToolResult:
+        """AlphaScenarioTool (docs/alpha-intelligence.md section 43/7) -- runs the
+        entire standing stress-test library against the current paper book in one
+        pass and ranks the results, the "base vs. A vs. B vs. C" comparison. Calls
+        `state.alpha_scenario_engine` directly (a pure, synchronous engine call, no
+        persistence) rather than `state.run_alpha_scenario_comparison()`, matching
+        this project's established provisional decision to keep the chat dispatch
+        path synchronous rather than making it async-aware for one topic."""
+        positions = [
+            PositionSnapshot(
+                instrument=instrument,
+                sector="NATURAL_GAS",
+                quantity=pos.quantity,
+                price=state.mark_price(instrument),
+                avg_price=pos.avg_price,
+            )
+            for instrument, pos in state.paper_adapter.portfolio.positions.items()
+        ]
+        results, comparison = state.alpha_scenario_engine.run_standing_library(positions)
+        content = (
+            f"Ran all {len(results)} scenarios in the standing stress-test library. "
+            f"Worst case: '{comparison.worst_case_scenario_name}' ({comparison.worst_case_portfolio_pnl:+.2f}). "
+            f"Best case: '{comparison.best_case_scenario_name}' ({comparison.best_case_portfolio_pnl:+.2f})."
+        )
+        return ToolResult(content, [{"source": "risk_service.scenarios", "reference": "SCENARIOS"}], {"scenario_count": len(results)})
 
     def _show_evidence(self, q: str, state: AppState) -> ToolResult:
         if not state.trade_ideas:

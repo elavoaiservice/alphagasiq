@@ -233,7 +233,7 @@ No column for chain-of-thought. `reasoning_summary` is a concise, human-auditabl
   `list_audit_events` — there is no update or delete method for this table, in the repository or
   the API, ever.
 
-## 4b. Alpha Intelligence Tables (Alpha Intelligence Layer Milestones 1-3 — `docs/alpha-intelligence.md`)
+## 4b. Alpha Intelligence Tables (Alpha Intelligence Layer Milestones 1-4 — `docs/alpha-intelligence.md`)
 
 - **`alpha_signals`** — one row per `Signal` AlphaSignal(TM) detected and persisted. id,
   organization_id (nullable FK to `organizations`, NULL = platform-wide — the only kind
@@ -281,6 +281,13 @@ No column for chain-of-thought. `reasoning_summary` is a concise, human-auditabl
   `ConsensusWeight` list, for the same reason `ImpactAnalysisRow.chain` is embedded), 
   leading_agents (jsonb), dissenting_agents (jsonb), drivers (jsonb), risks (jsonb),
   market_consensus_value (nullable), variance_vs_market (nullable), created_at.
+- **`alpha_scenario_runs`** — one row per `ScenarioRunResult` AlphaScenario(TM) executed. id,
+  organization_id (nullable FK to `organizations`), scenario_name, scenario_description,
+  base_scenario_ids (jsonb — the named `risk_service.scenarios.SCENARIOS` entries composed
+  into this run), price_shock_pct, demand_shock_bcf_d, supply_shock_bcf_d,
+  volatility_multiplier (the composed shock actually applied), portfolio_pnl, strategy_pnl
+  (jsonb), margin_impact, var_impact, largest_risk_contributor, requested_by (nullable user
+  id), run_at.
 
 ## 5. TimescaleDB Specifics
 

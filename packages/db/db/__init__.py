@@ -28,6 +28,7 @@ from .models import (
     RoleFeatureEntitlementRow,
     RolePermissionRow,
     RoleRow,
+    ScenarioRunRow,
     SessionRow,
     SignalBaselineRow,
     SignalRow,
@@ -78,5 +79,6 @@ __all__ = [
     "AgentForecastRow",
     "AgentAlphaScoreRow",
     "ConsensusViewRow",
+    "ScenarioRunRow",
     "SqlAppRepository",
 ]

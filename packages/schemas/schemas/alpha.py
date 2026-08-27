@@ -260,3 +260,85 @@ class ConsensusView(BaseModel):
     market_consensus_value: float | None = None
     variance_vs_market: float | None = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ScenarioFactorType(str, Enum):
+    """The four shock dimensions `risk_service.scenarios.Scenario` already supports.
+    AlphaScenario(TM) composes named scenarios and/or custom factors into one
+    combined shock rather than introducing a new shock-math engine."""
+
+    PRICE_SHOCK_PCT = "PRICE_SHOCK_PCT"
+    DEMAND_SHOCK_BCF_D = "DEMAND_SHOCK_BCF_D"
+    SUPPLY_SHOCK_BCF_D = "SUPPLY_SHOCK_BCF_D"
+    VOLATILITY_MULTIPLIER = "VOLATILITY_MULTIPLIER"
+
+
+class ScenarioVariable(BaseModel):
+    """One composable shock factor (docs/alpha-intelligence.md section 7). `geography`/
+    `asset_id`/`duration` are accepted on the schema for forward compatibility with the
+    full spec's per-geography/per-asset/duration-aware modeling, but the Milestone 4
+    engine does not yet condition on them -- there is no per-geography position or
+    duration-decay data in this codebase today, and fabricating that precision would
+    violate this project's "never claim more than is actually computed" rule. They are
+    always `None` until that data model exists."""
+
+    factor_type: ScenarioFactorType
+    value: float
+    geography: str | None = None
+    asset_id: str | None = None
+    duration: str | None = None
+
+
+class ScenarioDefinition(BaseModel):
+    """A (possibly composed) scenario: zero or more named base scenarios from
+    `risk_service.scenarios.SCENARIOS` stacked with zero or more custom
+    `ScenarioVariable`s. `alpha_service.scenario_engine.ScenarioEngine.compose()` turns
+    this into a single `risk_service.scenarios.Scenario` by summing/multiplying the
+    matching factor types -- see that module's docstring for the exact composition rule."""
+
+    id: UUID = Field(default_factory=uuid4)
+    name: str
+    description: str = ""
+    base_scenario_ids: list[str] = Field(default_factory=list)
+    variables: list[ScenarioVariable] = Field(default_factory=list)
+
+
+class ScenarioRunResult(BaseModel):
+    """One persisted execution of a `ScenarioDefinition` against the paper-trading
+    book (docs/alpha-intelligence.md section 7). Wraps
+    `risk_service.scenarios.ScenarioResult` (the underlying, already-tested P&L/VaR
+    math, reused rather than duplicated) with composition metadata and persistence
+    identity."""
+
+    id: UUID = Field(default_factory=uuid4)
+    organization_id: str | None = None
+    scenario_name: str
+    scenario_description: str = ""
+    base_scenario_ids: list[str] = Field(default_factory=list)
+    price_shock_pct: float = 0.0
+    demand_shock_bcf_d: float = 0.0
+    supply_shock_bcf_d: float = 0.0
+    volatility_multiplier: float = 1.0
+    portfolio_pnl: float
+    strategy_pnl: dict[str, float] = Field(default_factory=dict)
+    margin_impact: float
+    var_impact: float
+    largest_risk_contributor: str
+    requested_by: str | None = None
+    run_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ScenarioComparison(BaseModel):
+    """The result of running several scenarios (typically the whole standing library)
+    against the same book in one pass, ranked worst-to-best by portfolio P&L impact --
+    the "base vs. A vs. B vs. C" comparison from docs/alpha-intelligence.md section 7."""
+
+    id: UUID = Field(default_factory=uuid4)
+    organization_id: str | None = None
+    run_ids: list[UUID] = Field(default_factory=list)
+    worst_case_scenario_name: str = ""
+    worst_case_portfolio_pnl: float = 0.0
+    best_case_scenario_name: str = ""
+    best_case_portfolio_pnl: float = 0.0
+    ranked_scenario_names: list[str] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=datetime.utcnow)

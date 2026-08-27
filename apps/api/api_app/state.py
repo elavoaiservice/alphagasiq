@@ -35,6 +35,7 @@ from alpha_service import (
     ForecastExtractor,
     ImpactEngine,
     MaterialityEngine,
+    ScenarioEngine,
     SignalDetector,
 )
 from config import get_settings
@@ -82,6 +83,9 @@ from schemas import (
     RiskCheckResult,
     RiskLimits,
     RiskVerdict,
+    ScenarioComparison,
+    ScenarioDefinition,
+    ScenarioRunResult,
     Signal,
     TimeSeriesObservation,
     TradeIdea,
@@ -128,6 +132,7 @@ class AppState:
         self.alpha_forecast_extractor = ForecastExtractor()
         self.alpha_score_engine = AgentAlphaScoreEngine()
         self.alpha_consensus_engine = ConsensusEngine()
+        self.alpha_scenario_engine = ScenarioEngine()
         # Bounded caches of the most recently detected signals/impact analyses/
         # consensus views, kept in-memory alongside the durable `alpha_signals`/
         # `alpha_impact_analyses`/`alpha_consensus_views` tables so the (synchronous)
@@ -138,6 +143,7 @@ class AppState:
         self.recent_signals: list[Signal] = []
         self.recent_impacts: list[ImpactAnalysis] = []
         self.recent_consensus_views: list[ConsensusView] = []
+        self.recent_scenario_runs: list[ScenarioRunResult] = []
 
         from .email_service import get_email_provider
         from .rate_limit import SlidingWindowRateLimiter
@@ -618,6 +624,69 @@ class AppState:
         await self.event_bus.publish(
             DomainEvent(event_type=event_type, source_service="alpha_service", payload=view.model_dump(mode="json"))
         )
+
+    def _current_positions(self) -> list[PositionSnapshot]:
+        return [
+            PositionSnapshot(
+                instrument=instrument,
+                sector="NATURAL_GAS",
+                quantity=pos.quantity,
+                price=self.mark_price(instrument),
+                avg_price=pos.avg_price,
+            )
+            for instrument, pos in self.paper_adapter.portfolio.positions.items()
+        ]
+
+    async def run_alpha_scenario(
+        self,
+        definition: ScenarioDefinition,
+        *,
+        organization_id: str | None = None,
+        requested_by: str | None = None,
+    ) -> ScenarioRunResult:
+        """AlphaScenario(TM)'s integration point (docs/alpha-intelligence.md section
+        7): composes `definition` (named base scenarios and/or custom
+        `ScenarioVariable`s) into one shock, runs it against the current paper book
+        via `alpha_service.scenario_engine.ScenarioEngine`, persists the result, and
+        publishes `SCENARIO_RUN`."""
+        result = self.alpha_scenario_engine.run(
+            definition, self._current_positions(), organization_id=organization_id, requested_by=requested_by
+        )
+        await self.repo.save_scenario_run(result)
+        self.recent_scenario_runs.append(result)
+        self.recent_scenario_runs = self.recent_scenario_runs[-50:]
+        await self.event_bus.publish(
+            DomainEvent(
+                event_type=EventType.SCENARIO_RUN, source_service="alpha_service", payload=result.model_dump(mode="json")
+            )
+        )
+        return result
+
+    async def run_alpha_scenario_comparison(
+        self,
+        *,
+        organization_id: str | None = None,
+        requested_by: str | None = None,
+    ) -> tuple[list[ScenarioRunResult], ScenarioComparison]:
+        """Runs every scenario in the standing stress-test library
+        (`risk_service.scenarios.SCENARIOS`) against the current paper book in one
+        pass and ranks the results -- the "base vs. A vs. B vs. C" comparison from
+        docs/alpha-intelligence.md section 7."""
+        results, comparison = self.alpha_scenario_engine.run_standing_library(
+            self._current_positions(), organization_id=organization_id, requested_by=requested_by
+        )
+        for result in results:
+            await self.repo.save_scenario_run(result)
+        self.recent_scenario_runs.extend(results)
+        self.recent_scenario_runs = self.recent_scenario_runs[-50:]
+        await self.event_bus.publish(
+            DomainEvent(
+                event_type=EventType.SCENARIO_COMPARISON_RUN,
+                source_service="alpha_service",
+                payload=comparison.model_dump(mode="json"),
+            )
+        )
+        return results, comparison
 
     async def run_chief_trading_cycle(self) -> dict:
         """The Chief Trading Agent's on-demand research cycle -- the logic behind both

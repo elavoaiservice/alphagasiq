@@ -16,6 +16,7 @@ from schemas import (
     PriceForecast,
     RiskCheckResult,
     RiskLimits,
+    ScenarioRunResult,
     Signal,
     TradeIdea,
 )
@@ -50,6 +51,7 @@ from .models import (
     RoleFeatureEntitlementRow,
     RolePermissionRow,
     RoleRow,
+    ScenarioRunRow,
     SessionRow,
     SignalBaselineRow,
     SignalRow,
@@ -116,6 +118,8 @@ _PERMISSION_KEYS = [
     "alpha_signals.view",
     "alpha_impacts.view",
     "alpha_consensus.view",
+    "alpha_scenarios.view",
+    "alpha_scenarios.run",
 ]
 
 # Permissions reserved for SUPER_ADMIN: the system-level/risk/model/agent-optimization
@@ -150,6 +154,8 @@ _ROLE_PERMISSIONS: dict[str, list[str]] = {
         "alpha_signals.view",
         "alpha_impacts.view",
         "alpha_consensus.view",
+        "alpha_scenarios.view",
+        "alpha_scenarios.run",
         "trading_recommendations.challenge",
         "chief_agent.chat",
         "portfolio.view",
@@ -170,6 +176,8 @@ _ROLE_PERMISSIONS: dict[str, list[str]] = {
         "alpha_signals.view",
         "alpha_impacts.view",
         "alpha_consensus.view",
+        "alpha_scenarios.view",
+        "alpha_scenarios.run",
         "chief_agent.chat",
         "portfolio.view",
         "risk.view",
@@ -189,6 +197,8 @@ _ROLE_PERMISSIONS: dict[str, list[str]] = {
         "alpha_signals.view",
         "alpha_impacts.view",
         "alpha_consensus.view",
+        "alpha_scenarios.view",
+        "alpha_scenarios.run",
         "trading_recommendations.challenge",
         "chief_agent.chat",
         "portfolio.view",
@@ -208,6 +218,8 @@ _ROLE_PERMISSIONS: dict[str, list[str]] = {
         "alpha_signals.view",
         "alpha_impacts.view",
         "alpha_consensus.view",
+        "alpha_scenarios.view",
+        "alpha_scenarios.run",
         "portfolio.view",
         "risk.view",
         "chief_agent.chat",
@@ -635,6 +647,27 @@ def _consensus_view_row_to_dict(row: ConsensusViewRow) -> dict:
         "market_consensus_value": row.market_consensus_value,
         "variance_vs_market": row.variance_vs_market,
         "created_at": row.created_at,
+    }
+
+
+def _scenario_run_row_to_dict(row: ScenarioRunRow) -> dict:
+    return {
+        "id": row.id,
+        "organization_id": row.organization_id,
+        "scenario_name": row.scenario_name,
+        "scenario_description": row.scenario_description,
+        "base_scenario_ids": row.base_scenario_ids,
+        "price_shock_pct": row.price_shock_pct,
+        "demand_shock_bcf_d": row.demand_shock_bcf_d,
+        "supply_shock_bcf_d": row.supply_shock_bcf_d,
+        "volatility_multiplier": row.volatility_multiplier,
+        "portfolio_pnl": row.portfolio_pnl,
+        "strategy_pnl": row.strategy_pnl,
+        "margin_impact": row.margin_impact,
+        "var_impact": row.var_impact,
+        "largest_risk_contributor": row.largest_risk_contributor,
+        "requested_by": row.requested_by,
+        "run_at": row.run_at,
     }
 
 
@@ -2180,6 +2213,54 @@ class SqlAppRepository:
                 )
             ).scalar_one_or_none()
         return _consensus_view_row_to_dict(row) if row is not None else None
+
+    async def save_scenario_run(self, run: ScenarioRunResult) -> None:
+        row = ScenarioRunRow(
+            id=str(run.id),
+            organization_id=run.organization_id,
+            scenario_name=run.scenario_name,
+            scenario_description=run.scenario_description,
+            base_scenario_ids=run.base_scenario_ids,
+            price_shock_pct=run.price_shock_pct,
+            demand_shock_bcf_d=run.demand_shock_bcf_d,
+            supply_shock_bcf_d=run.supply_shock_bcf_d,
+            volatility_multiplier=run.volatility_multiplier,
+            portfolio_pnl=run.portfolio_pnl,
+            strategy_pnl=run.strategy_pnl,
+            margin_impact=run.margin_impact,
+            var_impact=run.var_impact,
+            largest_risk_contributor=run.largest_risk_contributor,
+            requested_by=run.requested_by,
+            run_at=_naive_utc(run.run_at),
+        )
+        async with self.session_factory() as session:
+            session.add(row)
+            await session.commit()
+
+    async def list_scenario_runs(
+        self,
+        *,
+        organization_id: str | None = None,
+        since: datetime | None = None,
+        limit: int = 50,
+    ) -> list[dict]:
+        query = select(ScenarioRunRow).order_by(ScenarioRunRow.run_at.desc()).limit(limit)
+        if organization_id is not None:
+            query = query.where(
+                (ScenarioRunRow.organization_id == organization_id) | (ScenarioRunRow.organization_id.is_(None))
+            )
+        if since is not None:
+            query = query.where(ScenarioRunRow.run_at >= _naive_utc(since))
+        async with self.session_factory() as session:
+            rows = (await session.execute(query)).scalars().all()
+        return [_scenario_run_row_to_dict(r) for r in rows]
+
+    async def get_scenario_run(self, run_id: str) -> dict | None:
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(select(ScenarioRunRow).where(ScenarioRunRow.id == run_id))
+            ).scalar_one_or_none()
+        return _scenario_run_row_to_dict(row) if row is not None else None
 
     async def save_committee_decision(self, trade_id: UUID, decision: InvestmentCommitteeDecision) -> None:
         row = CommitteeDecisionRow(

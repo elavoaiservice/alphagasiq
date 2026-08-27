@@ -539,7 +539,7 @@ Six components, documented in full in `docs/alpha-intelligence.md`:
 - **AlphaConsensus™ + Agent Alpha Score™** — calibrated, dynamically-weighted multi-agent
   forecast aggregation. **Implemented (Milestone 3 of this layer).**
 - **AlphaScenario™** — counterfactual/stress-test engine, extending `services/risk/
-  risk_service/scenarios.py`. Planned (Milestone 4).
+  risk_service/scenarios.py`. **Implemented (Milestone 4 of this layer).**
 - **AlphaMemory™** — decision/institutional memory. Planned (Milestone 5).
 - **AlphaReplay™** — bitemporal historical reconstruction ("as-known-at" querying, no
   look-ahead bias). Planned (Milestone 6, the most invasive since it retrofits bitemporal
@@ -611,3 +611,23 @@ vs. Market Consensus" Bcf comparison. Exposed via `GET /alpha/consensus`,
 permission), an `AlphaConsensusTool` chat topic ("Do the agents agree?" — the natural follow-up
 to AlphaImpact's "Why does it matter?"), and an "AlphaConsensus" tab in the Alpha Intelligence
 dashboard sub-nav. See `docs/alpha-intelligence.md` section 6 for the full design.
+
+### AlphaScenario™ (implemented)
+
+`services/alpha/alpha_service/scenario_engine.py`'s `ScenarioEngine` is pure: `compose()`
+combines named base scenarios from `risk_service.scenarios.SCENARIOS` with custom
+`ScenarioVariable` shocks (`packages/schemas/schemas/alpha.py`) into one
+`risk_service.scenarios.Scenario` (price/demand/supply shocks summed, volatility multipliers
+compounded), then `run()` calls the existing, already-tested `risk_service.scenarios.
+run_scenario()` — the P&L/VaR math is never re-implemented. `run_standing_library()` runs
+every entry in the standing stress-test catalog in one pass; `compare()` ranks any result set
+worst-to-best. `AppState.run_alpha_scenario()`/`run_alpha_scenario_comparison()` persist via
+`ScenarioRunRow` and publish `SCENARIO_RUN`/`SCENARIO_COMPARISON_RUN`. Exposed via
+`GET /alpha/scenarios/library`, `POST /alpha/scenarios/run`, `POST /alpha/scenarios/compare`,
+`GET /alpha/scenarios/runs`/`GET /alpha/scenarios/runs/{id}` (new `alpha_scenarios.view`/
+`alpha_scenarios.run` permissions) — additive to, not a replacement for, the pre-existing
+`GET /risk/scenarios`/`POST /risk/scenarios/{id}/run` (single named scenario, no composition/
+comparison/persistence). The pre-existing `run_named_scenario` chat topic now composes an
+explicit percentage shock when one is named in the question; a new `"scenario_comparison"`
+topic runs the whole standing library. See `docs/alpha-intelligence.md` section 7 for the
+full design.

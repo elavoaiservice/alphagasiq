@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
+from risk_service.scenarios import SCENARIOS
+from schemas import ScenarioDefinition
 
 from ..auth import User
 from ..deps import AppStateDep
@@ -13,6 +15,8 @@ router = APIRouter(prefix="/alpha", tags=["alpha"])
 _RequireAlphaSignals = Depends(require_permission("alpha_signals.view"))
 _RequireAlphaImpacts = Depends(require_permission("alpha_impacts.view"))
 _RequireAlphaConsensus = Depends(require_permission("alpha_consensus.view"))
+_RequireAlphaScenariosView = Depends(require_permission("alpha_scenarios.view"))
+_RequireAlphaScenariosRun = Depends(require_permission("alpha_scenarios.run"))
 
 
 @router.get("/signals")
@@ -112,3 +116,63 @@ async def get_consensus(consensus_id: str, state: AppStateDep, user: User = _Req
     if consensus is None:
         raise HTTPException(status_code=404, detail="Consensus view not found")
     return consensus
+
+
+@router.get("/scenarios/library")
+async def list_scenario_library(user: User = _RequireAlphaScenariosView) -> list[dict]:
+    """The continuously-maintained standing stress-test library
+    (`risk_service.scenarios.SCENARIOS`, docs/alpha-intelligence.md section 7) --
+    lets a client populate a scenario picker without duplicating the catalog."""
+    return [s.__dict__ for s in SCENARIOS]
+
+
+@router.get("/scenarios/runs")
+async def list_scenario_runs(
+    state: AppStateDep,
+    user: User = _RequireAlphaScenariosView,
+    since_hours: int = 24,
+    limit: int = 50,
+) -> list[dict]:
+    organization_id = await resolve_organization_id(user, state)
+    since = datetime.now(timezone.utc) - timedelta(hours=since_hours)
+    return await state.repo.list_scenario_runs(organization_id=organization_id, since=since, limit=limit)
+
+
+@router.get("/scenarios/runs/{run_id}")
+async def get_scenario_run(run_id: str, state: AppStateDep, user: User = _RequireAlphaScenariosView) -> dict:
+    run = await state.repo.get_scenario_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Scenario run not found")
+    return run
+
+
+@router.post("/scenarios/run")
+async def run_alpha_scenario_endpoint(
+    definition: ScenarioDefinition, state: AppStateDep, user: User = _RequireAlphaScenariosRun
+) -> dict:
+    """Composes and runs a (possibly custom) scenario against the paper book --
+    AlphaScenario(TM)'s core capability (docs/alpha-intelligence.md section 7).
+    `definition.base_scenario_ids` may reference any entry in `GET
+    /alpha/scenarios/library`; `definition.variables` stacks additional custom
+    shocks on top of those named scenarios."""
+    organization_id = await resolve_organization_id(user, state)
+    try:
+        result = await state.run_alpha_scenario(definition, organization_id=organization_id, requested_by=user.user_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=400, detail=f"Unknown base scenario id: {exc}") from exc
+    return result.model_dump(mode="json")
+
+
+@router.post("/scenarios/compare")
+async def compare_scenarios(state: AppStateDep, user: User = _RequireAlphaScenariosRun) -> dict:
+    """Runs the entire standing stress-test library against the current paper book
+    in one pass and ranks the results -- the "base vs. A vs. B vs. C" comparison
+    from docs/alpha-intelligence.md section 7."""
+    organization_id = await resolve_organization_id(user, state)
+    results, comparison = await state.run_alpha_scenario_comparison(
+        organization_id=organization_id, requested_by=user.user_id
+    )
+    return {
+        "results": [r.model_dump(mode="json") for r in results],
+        "comparison": comparison.model_dump(mode="json"),
+    }

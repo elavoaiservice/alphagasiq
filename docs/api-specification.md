@@ -217,7 +217,7 @@ All list endpoints support `limit`/`cursor` pagination. All responses embed
 `data_sources`/`citations`/`freshness` metadata wherever the payload includes market or research
 facts, per the platform's explainability requirement.
 
-## Alpha Intelligence — AlphaSignal + AlphaImpact + AlphaConsensus (Alpha Intelligence Layer Milestones 1-3, `docs/alpha-intelligence.md`)
+## Alpha Intelligence — AlphaSignal + AlphaImpact + AlphaConsensus + AlphaScenario (Alpha Intelligence Layer Milestones 1-4, `docs/alpha-intelligence.md`)
 
 | Method | Path | Notes |
 |---|---|---|
@@ -228,8 +228,13 @@ facts, per the platform's explainability requirement.
 | GET | `/alpha/consensus` | requires `alpha_consensus.view`. Most-recent-first. Query params: `consensus_type`, `since_hours` (default 24), `limit` (default 50). Same organization-scoped-plus-platform-wide visibility rule as `/alpha/signals` |
 | GET | `/alpha/consensus/{market}` | requires `alpha_consensus.view`. Latest `ConsensusView` for the given market (e.g. `HENRY_HUB`) — the flagship "AlphaConsensus vs. Market Consensus" comparison. 404 if none computed yet |
 | GET | `/alpha/consensus/by-id/{consensus_id}` | requires `alpha_consensus.view`. 404 if unknown |
+| GET | `/alpha/scenarios/library` | requires `alpha_scenarios.view`. The standing stress-test catalog (`risk_service.scenarios.SCENARIOS`) |
+| POST | `/alpha/scenarios/run` | requires `alpha_scenarios.run`. Body: `ScenarioDefinition` (`base_scenario_ids`, `variables`). Composes and runs a named and/or custom scenario against the current paper book; 400 on an unknown base scenario id |
+| POST | `/alpha/scenarios/compare` | requires `alpha_scenarios.run`. Runs the entire standing library against the current paper book and returns ranked results plus a worst/best-case summary |
+| GET | `/alpha/scenarios/runs` | requires `alpha_scenarios.view`. Persisted run history, most-recent-first. Query params: `since_hours` (default 24), `limit` (default 50) |
+| GET | `/alpha/scenarios/runs/{run_id}` | requires `alpha_scenarios.view`. 404 if unknown |
 
-Only AlphaSignal, AlphaImpact, and AlphaConsensus are implemented so far. `docs/alpha-intelligence.md`
-documents the planned `/alpha/scenarios`, `/alpha/replay`, `/alpha/memory`, and `/enterprise/*`
-endpoint families for the remaining three components and the Enterprise Data Platform — not yet
-built.
+Only AlphaSignal, AlphaImpact, AlphaConsensus, and AlphaScenario are implemented so far.
+`docs/alpha-intelligence.md` documents the planned `/alpha/replay`, `/alpha/memory`, and
+`/enterprise/*` endpoint families for the remaining two components and the Enterprise Data
+Platform — not yet built.

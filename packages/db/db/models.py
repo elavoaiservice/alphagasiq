@@ -732,3 +732,28 @@ class ConsensusViewRow(Base):
     market_consensus_value: Mapped[float | None] = mapped_column(Float, nullable=True)
     variance_vs_market: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class ScenarioRunRow(Base):
+    """AlphaScenario(TM)'s output (docs/alpha-intelligence.md section 7) -- one
+    persisted execution of a (possibly composed) scenario against the paper-trading
+    book, produced by `alpha_service.scenario_engine.ScenarioEngine`."""
+
+    __tablename__ = "alpha_scenario_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    organization_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=True)
+    scenario_name: Mapped[str] = mapped_column(String, nullable=False)
+    scenario_description: Mapped[str] = mapped_column(String, nullable=False, default="")
+    base_scenario_ids: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    price_shock_pct: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    demand_shock_bcf_d: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    supply_shock_bcf_d: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    volatility_multiplier: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
+    portfolio_pnl: Mapped[float] = mapped_column(Float, nullable=False)
+    strategy_pnl: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    margin_impact: Mapped[float] = mapped_column(Float, nullable=False)
+    var_impact: Mapped[float] = mapped_column(Float, nullable=False)
+    largest_risk_contributor: Mapped[str] = mapped_column(String, nullable=False, default="")
+    requested_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    run_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
