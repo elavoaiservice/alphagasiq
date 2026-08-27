@@ -9,7 +9,7 @@ from schemas import LessonProposalStatus, ScenarioDefinition
 
 from ..auth import User
 from ..deps import AppStateDep
-from ..entitlements import require_permission, resolve_organization_id
+from ..entitlements import record_is_visible, require_permission, resolve_organization_id, resolve_organization_scope
 
 router = APIRouter(prefix="/alpha", tags=["alpha"])
 
@@ -37,10 +37,11 @@ async def list_signals(
     highest-materiality signals first, then most recent. Includes both the
     requester's organization-scoped signals and every platform-wide signal
     (`organization_id IS NULL`, the only kind Milestone 1's detector produces)."""
-    organization_id = await resolve_organization_id(user, state)
+    organization_id, unrestricted = await resolve_organization_scope(user, state)
     since = datetime.now(timezone.utc) - timedelta(hours=since_hours)
     return await state.repo.list_signals(
         organization_id=organization_id,
+        platform_only=not unrestricted,
         market=market,
         since=since,
         min_materiality=min_materiality,
@@ -52,6 +53,9 @@ async def list_signals(
 async def get_signal(signal_id: str, state: AppStateDep, user: User = _RequireAlphaSignals) -> dict:
     signal = await state.repo.get_signal(signal_id)
     if signal is None:
+        raise HTTPException(status_code=404, detail="Signal not found")
+    organization_id, unrestricted = await resolve_organization_scope(user, state)
+    if not record_is_visible(signal.get("organization_id"), organization_id, unrestricted):
         raise HTTPException(status_code=404, detail="Signal not found")
     return signal
 
@@ -68,10 +72,14 @@ async def list_impacts(
     most recent first. Includes both the requester's organization-scoped analyses and
     every platform-wide one (`organization_id IS NULL`, the only kind Milestone 2's
     engine produces)."""
-    organization_id = await resolve_organization_id(user, state)
+    organization_id, unrestricted = await resolve_organization_scope(user, state)
     since = datetime.now(timezone.utc) - timedelta(hours=since_hours)
     return await state.repo.list_impact_analyses(
-        signal_id=signal_id, organization_id=organization_id, since=since, limit=limit
+        signal_id=signal_id,
+        organization_id=organization_id,
+        platform_only=not unrestricted,
+        since=since,
+        limit=limit,
     )
 
 
@@ -79,6 +87,9 @@ async def list_impacts(
 async def get_impact(impact_id: str, state: AppStateDep, user: User = _RequireAlphaImpacts) -> dict:
     impact = await state.repo.get_impact_analysis(impact_id)
     if impact is None:
+        raise HTTPException(status_code=404, detail="Impact analysis not found")
+    organization_id, unrestricted = await resolve_organization_scope(user, state)
+    if not record_is_visible(impact.get("organization_id"), organization_id, unrestricted):
         raise HTTPException(status_code=404, detail="Impact analysis not found")
     return impact
 
@@ -95,10 +106,14 @@ async def list_consensus(
     section 6), most recent first. Includes both the requester's organization-scoped
     views and every platform-wide one (`organization_id IS NULL`, the only kind
     Milestone 3's engine produces)."""
-    organization_id = await resolve_organization_id(user, state)
+    organization_id, unrestricted = await resolve_organization_scope(user, state)
     since = datetime.now(timezone.utc) - timedelta(hours=since_hours)
     return await state.repo.list_consensus_views(
-        consensus_type=consensus_type, organization_id=organization_id, since=since, limit=limit
+        consensus_type=consensus_type,
+        organization_id=organization_id,
+        platform_only=not unrestricted,
+        since=since,
+        limit=limit,
     )
 
 
@@ -112,6 +127,9 @@ async def get_consensus_for_market(
     consensus = await state.repo.get_latest_consensus_view_for_market(market)
     if consensus is None:
         raise HTTPException(status_code=404, detail="No consensus view found for market")
+    organization_id, unrestricted = await resolve_organization_scope(user, state)
+    if not record_is_visible(consensus.get("organization_id"), organization_id, unrestricted):
+        raise HTTPException(status_code=404, detail="No consensus view found for market")
     return consensus
 
 
@@ -119,6 +137,9 @@ async def get_consensus_for_market(
 async def get_consensus(consensus_id: str, state: AppStateDep, user: User = _RequireAlphaConsensus) -> dict:
     consensus = await state.repo.get_consensus_view(consensus_id)
     if consensus is None:
+        raise HTTPException(status_code=404, detail="Consensus view not found")
+    organization_id, unrestricted = await resolve_organization_scope(user, state)
+    if not record_is_visible(consensus.get("organization_id"), organization_id, unrestricted):
         raise HTTPException(status_code=404, detail="Consensus view not found")
     return consensus
 
@@ -138,15 +159,20 @@ async def list_scenario_runs(
     since_hours: int = 24,
     limit: int = 50,
 ) -> list[dict]:
-    organization_id = await resolve_organization_id(user, state)
+    organization_id, unrestricted = await resolve_organization_scope(user, state)
     since = datetime.now(timezone.utc) - timedelta(hours=since_hours)
-    return await state.repo.list_scenario_runs(organization_id=organization_id, since=since, limit=limit)
+    return await state.repo.list_scenario_runs(
+        organization_id=organization_id, platform_only=not unrestricted, since=since, limit=limit
+    )
 
 
 @router.get("/scenarios/runs/{run_id}")
 async def get_scenario_run(run_id: str, state: AppStateDep, user: User = _RequireAlphaScenariosView) -> dict:
     run = await state.repo.get_scenario_run(run_id)
     if run is None:
+        raise HTTPException(status_code=404, detail="Scenario run not found")
+    organization_id, unrestricted = await resolve_organization_scope(user, state)
+    if not record_is_visible(run.get("organization_id"), organization_id, unrestricted):
         raise HTTPException(status_code=404, detail="Scenario run not found")
     return run
 
@@ -196,9 +222,12 @@ async def list_lesson_proposals(
 ) -> list[dict]:
     """Human-reviewable lesson proposals AlphaMemory(TM) drafted from closed-trade
     outcomes (docs/alpha-intelligence.md section 8), most recent first."""
-    organization_id = await resolve_organization_id(user, state)
+    organization_id, unrestricted = await resolve_organization_scope(user, state)
     return await state.repo.list_lesson_proposals(
-        status=status.value if status is not None else None, organization_id=organization_id, limit=limit
+        status=status.value if status is not None else None,
+        organization_id=organization_id,
+        platform_only=not unrestricted,
+        limit=limit,
     )
 
 
@@ -206,6 +235,9 @@ async def list_lesson_proposals(
 async def get_lesson_proposal(lesson_id: str, state: AppStateDep, user: User = _RequireAlphaMemoryView) -> dict:
     lesson = await state.repo.get_lesson_proposal(lesson_id)
     if lesson is None:
+        raise HTTPException(status_code=404, detail="Lesson proposal not found")
+    organization_id, unrestricted = await resolve_organization_scope(user, state)
+    if not record_is_visible(lesson.get("organization_id"), organization_id, unrestricted):
         raise HTTPException(status_code=404, detail="Lesson proposal not found")
     return lesson
 
@@ -237,10 +269,14 @@ async def list_memory_records(
     """AlphaMemory(TM)'s decision records (docs/alpha-intelligence.md section 8),
     most recent first. Defaults to a 30-day window since decision memory is meant
     to be looked back on, not just the last day's activity."""
-    organization_id = await resolve_organization_id(user, state)
+    organization_id, unrestricted = await resolve_organization_scope(user, state)
     since = datetime.now(timezone.utc) - timedelta(hours=since_hours)
     return await state.repo.list_memory_records(
-        memory_type=memory_type, organization_id=organization_id, since=since, limit=limit
+        memory_type=memory_type,
+        organization_id=organization_id,
+        platform_only=not unrestricted,
+        since=since,
+        limit=limit,
     )
 
 
@@ -248,6 +284,9 @@ async def list_memory_records(
 async def get_memory_record(memory_id: str, state: AppStateDep, user: User = _RequireAlphaMemoryView) -> dict:
     memory = await state.repo.get_memory_record(memory_id)
     if memory is None:
+        raise HTTPException(status_code=404, detail="Memory record not found")
+    organization_id, unrestricted = await resolve_organization_scope(user, state)
+    if not record_is_visible(memory.get("organization_id"), organization_id, unrestricted):
         raise HTTPException(status_code=404, detail="Memory record not found")
     return memory
 
@@ -267,9 +306,11 @@ async def replay_as_of(
     already-running system recorded at the time -- not a reconstruction of market
     reality from before Milestone 6 shipped; an `as_of` before then simply returns
     empty lists rather than fabricating a plausible-looking history."""
-    organization_id = await resolve_organization_id(user, state)
+    organization_id, unrestricted = await resolve_organization_scope(user, state)
     resolved_as_of = as_of or datetime.now(timezone.utc)
-    result = await state.compute_as_of_replay(market=market, as_of=resolved_as_of, organization_id=organization_id)
+    result = await state.compute_as_of_replay(
+        market=market, as_of=resolved_as_of, organization_id=organization_id, platform_only=not unrestricted
+    )
     return result.model_dump(mode="json")
 
 
@@ -281,8 +322,10 @@ async def latest_intelligence_brief(
     (docs/alpha-intelligence.md section 10) -- 404 if none has been generated
     yet (a full research cycle hasn't run). Registered before `/briefs/{brief_id}`
     so the literal `latest` isn't swallowed by that parameterized route."""
-    organization_id = await resolve_organization_id(user, state)
-    briefs = await state.repo.list_intelligence_briefs(market=market, organization_id=organization_id, limit=1)
+    organization_id, unrestricted = await resolve_organization_scope(user, state)
+    briefs = await state.repo.list_intelligence_briefs(
+        market=market, organization_id=organization_id, platform_only=not unrestricted, limit=1
+    )
     if not briefs:
         raise HTTPException(status_code=404, detail="No intelligence brief generated yet")
     return briefs[0]
@@ -296,13 +339,18 @@ async def list_intelligence_briefs(
     limit: int = 20,
 ) -> list[dict]:
     """History of generated Overnight Intelligence Briefs, most recent first."""
-    organization_id = await resolve_organization_id(user, state)
-    return await state.repo.list_intelligence_briefs(market=market, organization_id=organization_id, limit=limit)
+    organization_id, unrestricted = await resolve_organization_scope(user, state)
+    return await state.repo.list_intelligence_briefs(
+        market=market, organization_id=organization_id, platform_only=not unrestricted, limit=limit
+    )
 
 
 @router.get("/briefs/{brief_id}")
 async def get_intelligence_brief(brief_id: str, state: AppStateDep, user: User = _RequireAlphaBrief) -> dict:
     brief = await state.repo.get_intelligence_brief(brief_id)
     if brief is None:
+        raise HTTPException(status_code=404, detail="Intelligence brief not found")
+    organization_id, unrestricted = await resolve_organization_scope(user, state)
+    if not record_is_visible(brief.get("organization_id"), organization_id, unrestricted):
         raise HTTPException(status_code=404, detail="Intelligence brief not found")
     return brief

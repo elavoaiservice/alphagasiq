@@ -11,6 +11,7 @@ from .routers import (
     admin_agents,
     admin_console,
     admin_data_feeds,
+    admin_data_governance,
     admin_enterprise_data,
     admin_governance,
     admin_models,
@@ -91,6 +92,7 @@ def create_app() -> FastAPI:
         admin_governance.router,
         admin_workspaces.router,
         admin_enterprise_data.router,
+        admin_data_governance.router,
         alpha.router,
     ):
         api.include_router(router)

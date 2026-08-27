@@ -18,8 +18,10 @@ from schemas import (
     InvestmentCommitteeDecision,
     LessonProposal,
     MemoryRecord,
+    ModelRoutingPolicy,
     PostTradeAnalysis,
     PriceForecast,
+    RetentionPolicy,
     RiskCheckResult,
     RiskLimits,
     ScenarioRunResult,
@@ -59,10 +61,12 @@ from .models import (
     MarketObservationRow,
     MemoryRecordRow,
     ModelDefinitionRow,
+    ModelRoutingPolicyRow,
     OrganizationFeatureEntitlementRow,
     OrganizationRow,
     PermissionRow,
     PostTradeAnalysisRow,
+    RetentionPolicyRow,
     RiskCheckRow,
     RiskLimitsRow,
     RoleFeatureEntitlementRow,
@@ -129,6 +133,8 @@ _PERMISSION_KEYS = [
     "admin.data_feeds",
     "admin.workspaces",
     "admin.enterprise_data",
+    "admin.model_routing_policy",
+    "admin.retention_policy",
     "admin.system_settings",
     "admin.agent_management",
     "admin.agent_optimization",
@@ -785,6 +791,33 @@ def _intelligence_brief_row_to_dict(row: IntelligenceBriefRow) -> dict:
         "notable_scenario_runs": row.notable_scenario_runs,
         "pending_lessons": row.pending_lessons,
         "generated_at": row.generated_at,
+    }
+
+
+def _model_routing_policy_row_to_dict(row: ModelRoutingPolicyRow) -> dict:
+    return {
+        "id": row.id,
+        "organization_id": row.organization_id,
+        "data_classification": row.data_classification,
+        "allow_external_llm_processing": row.allow_external_llm_processing,
+        "allowed_provider": row.allowed_provider,
+        "allowed_region": row.allowed_region,
+        "logging_allowed": row.logging_allowed,
+        "created_by": row.created_by,
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
+    }
+
+
+def _retention_policy_row_to_dict(row: RetentionPolicyRow) -> dict:
+    return {
+        "id": row.id,
+        "organization_id": row.organization_id,
+        "data_classification": row.data_classification,
+        "retention_days": row.retention_days,
+        "created_by": row.created_by,
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
     }
 
 
@@ -2079,6 +2112,7 @@ class SqlAppRepository:
     async def save_trade_idea(self, trade: TradeIdea, forecast: PriceForecast | None) -> None:
         row = TradeIdeaRow(
             trade_id=str(trade.trade_id),
+            organization_id=trade.organization_id,
             strategy=trade.strategy,
             instrument=trade.instrument,
             instrument_type=trade.instrument_type.value,
@@ -2146,6 +2180,7 @@ class SqlAppRepository:
         self,
         *,
         organization_id: str | None = None,
+        platform_only: bool = False,
         market: str | None = None,
         since: datetime | None = None,
         until: datetime | None = None,
@@ -2158,12 +2193,17 @@ class SqlAppRepository:
         produces -- rather than hiding the global feed from every tenant. `until`
         (docs/alpha-intelligence.md section 9, AlphaReplay(TM)) filters to signals
         detected at-or-before that moment, for "what did we know as of <timestamp>"
-        queries."""
+        queries. `platform_only` (docs/alpha-intelligence.md section 11.1, Milestone
+        9) restricts to `organization_id IS NULL` rows only -- for a caller whose own
+        organization couldn't be resolved and who isn't a cross-organization admin,
+        so they see the platform-wide feed rather than every organization's data."""
         query = select(SignalRow).order_by(SignalRow.materiality_score.desc(), SignalRow.detected_at.desc()).limit(limit)
         if organization_id is not None:
             query = query.where(
                 (SignalRow.organization_id == organization_id) | (SignalRow.organization_id.is_(None))
             )
+        elif platform_only:
+            query = query.where(SignalRow.organization_id.is_(None))
         if market is not None:
             query = query.where(SignalRow.market == market)
         if until is not None:
@@ -2244,6 +2284,7 @@ class SqlAppRepository:
         *,
         signal_id: str | None = None,
         organization_id: str | None = None,
+        platform_only: bool = False,
         since: datetime | None = None,
         until: datetime | None = None,
         limit: int = 50,
@@ -2256,6 +2297,8 @@ class SqlAppRepository:
                 (ImpactAnalysisRow.organization_id == organization_id)
                 | (ImpactAnalysisRow.organization_id.is_(None))
             )
+        elif platform_only:
+            query = query.where(ImpactAnalysisRow.organization_id.is_(None))
         if until is not None:
             query = query.where(ImpactAnalysisRow.created_at <= _naive_utc(until))
         if since is not None:
@@ -2383,6 +2426,7 @@ class SqlAppRepository:
         consensus_type: str | None = None,
         market: str | None = None,
         organization_id: str | None = None,
+        platform_only: bool = False,
         since: datetime | None = None,
         until: datetime | None = None,
         limit: int = 50,
@@ -2396,6 +2440,8 @@ class SqlAppRepository:
             query = query.where(
                 (ConsensusViewRow.organization_id == organization_id) | (ConsensusViewRow.organization_id.is_(None))
             )
+        elif platform_only:
+            query = query.where(ConsensusViewRow.organization_id.is_(None))
         if until is not None:
             query = query.where(ConsensusViewRow.created_at <= _naive_utc(until))
         if since is not None:
@@ -2450,6 +2496,7 @@ class SqlAppRepository:
         self,
         *,
         organization_id: str | None = None,
+        platform_only: bool = False,
         since: datetime | None = None,
         until: datetime | None = None,
         limit: int = 50,
@@ -2459,6 +2506,8 @@ class SqlAppRepository:
             query = query.where(
                 (ScenarioRunRow.organization_id == organization_id) | (ScenarioRunRow.organization_id.is_(None))
             )
+        elif platform_only:
+            query = query.where(ScenarioRunRow.organization_id.is_(None))
         if until is not None:
             query = query.where(ScenarioRunRow.run_at <= _naive_utc(until))
         if since is not None:
@@ -2499,6 +2548,7 @@ class SqlAppRepository:
         memory_type: str | None = None,
         market: str | None = None,
         organization_id: str | None = None,
+        platform_only: bool = False,
         since: datetime | None = None,
         until: datetime | None = None,
         limit: int = 50,
@@ -2512,6 +2562,8 @@ class SqlAppRepository:
             query = query.where(
                 (MemoryRecordRow.organization_id == organization_id) | (MemoryRecordRow.organization_id.is_(None))
             )
+        elif platform_only:
+            query = query.where(MemoryRecordRow.organization_id.is_(None))
         if until is not None:
             query = query.where(MemoryRecordRow.created_at <= _naive_utc(until))
         if since is not None:
@@ -2548,6 +2600,7 @@ class SqlAppRepository:
         *,
         status: str | None = None,
         organization_id: str | None = None,
+        platform_only: bool = False,
         limit: int = 50,
     ) -> list[dict]:
         query = select(LessonProposalRow).order_by(LessonProposalRow.created_at.desc()).limit(limit)
@@ -2557,6 +2610,8 @@ class SqlAppRepository:
             query = query.where(
                 (LessonProposalRow.organization_id == organization_id) | (LessonProposalRow.organization_id.is_(None))
             )
+        elif platform_only:
+            query = query.where(LessonProposalRow.organization_id.is_(None))
         async with self.session_factory() as session:
             rows = (await session.execute(query)).scalars().all()
         return [_lesson_proposal_row_to_dict(r) for r in rows]
@@ -2690,8 +2745,13 @@ class SqlAppRepository:
         *,
         market: str | None = None,
         organization_id: str | None = None,
+        platform_only: bool = False,
         limit: int = 20,
     ) -> list[dict]:
+        """... platform_only (docs/alpha-intelligence.md section 11.1, Milestone
+        9) restricts to `organization_id IS NULL` rows only -- for a caller whose own
+        organization couldn't be resolved and who isn't a cross-organization admin,
+        so they see the platform-wide feed rather than every organization's data."""
         query = select(IntelligenceBriefRow).order_by(IntelligenceBriefRow.generated_at.desc()).limit(limit)
         if market is not None:
             query = query.where(IntelligenceBriefRow.market == market)
@@ -2700,6 +2760,8 @@ class SqlAppRepository:
                 (IntelligenceBriefRow.organization_id == organization_id)
                 | (IntelligenceBriefRow.organization_id.is_(None))
             )
+        elif platform_only:
+            query = query.where(IntelligenceBriefRow.organization_id.is_(None))
         async with self.session_factory() as session:
             rows = (await session.execute(query)).scalars().all()
         return [_intelligence_brief_row_to_dict(r) for r in rows]
@@ -3001,9 +3063,12 @@ class SqlAppRepository:
             rows = (await session.execute(query)).scalars().all()
         return [_enterprise_data_event_row_to_dict(r) for r in rows]
 
-    async def save_committee_decision(self, trade_id: UUID, decision: InvestmentCommitteeDecision) -> None:
+    async def save_committee_decision(
+        self, trade_id: UUID, decision: InvestmentCommitteeDecision, *, organization_id: str | None = None
+    ) -> None:
         row = CommitteeDecisionRow(
             original_trade_id=str(trade_id),
+            organization_id=organization_id,
             original_trade=decision.original_trade.model_dump(mode="json"),
             bull_case=decision.bull_case,
             bear_case=decision.bear_case,
@@ -3019,10 +3084,13 @@ class SqlAppRepository:
             session.add(row)
             await session.commit()
 
-    async def save_risk_check(self, trade_id: UUID, risk_check: RiskCheckResult) -> None:
+    async def save_risk_check(
+        self, trade_id: UUID, risk_check: RiskCheckResult, *, organization_id: str | None = None
+    ) -> None:
         row = RiskCheckRow(
             check_id=str(risk_check.check_id),
             trade_id=str(trade_id),
+            organization_id=organization_id,
             verdict=risk_check.verdict.value,
             rule_results=[r.model_dump(mode="json") for r in risk_check.rule_results],
             governor_version=risk_check.governor_version,
@@ -3040,10 +3108,12 @@ class SqlAppRepository:
         state: str,
         actions: list[dict],
         updated_at: datetime,
+        organization_id: str | None = None,
     ) -> None:
         row = ApprovalRow(
             id=str(approval_id),
             trade_id=str(trade_id),
+            organization_id=organization_id,
             state=state,
             actions=actions,
             updated_at=_naive_utc(updated_at),
@@ -3300,3 +3370,121 @@ class SqlAppRepository:
             "post_trade_analyses": post_trade_analyses,
             "risk_limits": risk_limits,
         }
+
+    # -- Tenant isolation retrofit (docs/alpha-intelligence.md section 11.1, Milestone 9) --
+
+    async def save_model_routing_policy(self, policy: ModelRoutingPolicy) -> None:
+        row = ModelRoutingPolicyRow(
+            id=str(policy.id),
+            organization_id=policy.organization_id,
+            data_classification=policy.data_classification.value,
+            allow_external_llm_processing=policy.allow_external_llm_processing,
+            allowed_provider=policy.allowed_provider,
+            allowed_region=policy.allowed_region,
+            logging_allowed=policy.logging_allowed,
+            created_by=policy.created_by,
+            created_at=_naive_utc(policy.created_at),
+            updated_at=_naive_utc(policy.updated_at),
+        )
+        async with self.session_factory() as session:
+            session.add(row)
+            await session.commit()
+
+    async def list_model_routing_policies(self, *, organization_id: str | None = None) -> list[dict]:
+        """Returns every policy visible to `organization_id` -- its own overrides plus
+        every platform-default policy (`organization_id IS NULL`) -- or, when
+        `organization_id` is `None`, every platform-default policy alone."""
+        query = select(ModelRoutingPolicyRow).order_by(ModelRoutingPolicyRow.created_at.desc())
+        if organization_id is not None:
+            query = query.where(
+                (ModelRoutingPolicyRow.organization_id == organization_id)
+                | (ModelRoutingPolicyRow.organization_id.is_(None))
+            )
+        else:
+            query = query.where(ModelRoutingPolicyRow.organization_id.is_(None))
+        async with self.session_factory() as session:
+            rows = (await session.execute(query)).scalars().all()
+        return [_model_routing_policy_row_to_dict(r) for r in rows]
+
+    async def get_model_routing_policy(self, policy_id: str) -> dict | None:
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(select(ModelRoutingPolicyRow).where(ModelRoutingPolicyRow.id == policy_id))
+            ).scalar_one_or_none()
+        return _model_routing_policy_row_to_dict(row) if row is not None else None
+
+    async def delete_model_routing_policy(self, policy_id: str) -> bool:
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(select(ModelRoutingPolicyRow).where(ModelRoutingPolicyRow.id == policy_id))
+            ).scalar_one_or_none()
+            if row is None:
+                return False
+            await session.delete(row)
+            await session.commit()
+            return True
+
+    async def save_retention_policy(self, policy: RetentionPolicy) -> None:
+        row = RetentionPolicyRow(
+            id=str(policy.id),
+            organization_id=policy.organization_id,
+            data_classification=policy.data_classification.value,
+            retention_days=policy.retention_days,
+            created_by=policy.created_by,
+            created_at=_naive_utc(policy.created_at),
+            updated_at=_naive_utc(policy.updated_at),
+        )
+        async with self.session_factory() as session:
+            session.add(row)
+            await session.commit()
+
+    async def list_retention_policies(self, *, organization_id: str | None = None) -> list[dict]:
+        query = select(RetentionPolicyRow).order_by(RetentionPolicyRow.created_at.desc())
+        if organization_id is not None:
+            query = query.where(
+                (RetentionPolicyRow.organization_id == organization_id) | (RetentionPolicyRow.organization_id.is_(None))
+            )
+        else:
+            query = query.where(RetentionPolicyRow.organization_id.is_(None))
+        async with self.session_factory() as session:
+            rows = (await session.execute(query)).scalars().all()
+        return [_retention_policy_row_to_dict(r) for r in rows]
+
+    async def get_retention_policy(self, policy_id: str) -> dict | None:
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(select(RetentionPolicyRow).where(RetentionPolicyRow.id == policy_id))
+            ).scalar_one_or_none()
+        return _retention_policy_row_to_dict(row) if row is not None else None
+
+    async def delete_retention_policy(self, policy_id: str) -> bool:
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(select(RetentionPolicyRow).where(RetentionPolicyRow.id == policy_id))
+            ).scalar_one_or_none()
+            if row is None:
+                return False
+            await session.delete(row)
+            await session.commit()
+            return True
+
+    async def purge_enterprise_records_for_retention(
+        self, *, dataset_id: str, cutoff: datetime
+    ) -> int:
+        """Deletes every `EnterpriseRecordRow` of `dataset_id` ingested before
+        `cutoff` -- the mechanical half of `apply_retention_policy`
+        (`enterprise_data_service.retention.apply_retention_policy` computes
+        `cutoff` from a `RetentionPolicy.retention_days`; this method just performs
+        the delete). Returns the number of rows purged."""
+        async with self.session_factory() as session:
+            rows = (
+                await session.execute(
+                    select(EnterpriseRecordRow).where(
+                        EnterpriseRecordRow.dataset_id == dataset_id, EnterpriseRecordRow.ingested_at < cutoff
+                    )
+                )
+            ).scalars().all()
+            for row in rows:
+                await session.delete(row)
+            await session.commit()
+            return len(rows)

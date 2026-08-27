@@ -221,27 +221,35 @@ facts, per the platform's explainability requirement.
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/alpha/signals` | requires `alpha_signals.view`. Ranked highest-materiality-first, then most recent. Query params: `market`, `since_hours` (default 24), `min_materiality` (default 0), `limit` (default 50). Includes both the requester's organization's own signals and every platform-wide signal (`organization_id IS NULL` — the only kind this milestone's detector produces) |
-| GET | `/alpha/signals/{signal_id}` | requires `alpha_signals.view`. 404 if unknown |
-| GET | `/alpha/impacts` | requires `alpha_impacts.view`. Most-recent-first. Query params: `signal_id`, `since_hours` (default 24), `limit` (default 50). Same organization-scoped-plus-platform-wide visibility rule as `/alpha/signals` |
-| GET | `/alpha/impacts/{impact_id}` | requires `alpha_impacts.view`. 404 if unknown |
-| GET | `/alpha/consensus` | requires `alpha_consensus.view`. Most-recent-first. Query params: `consensus_type`, `since_hours` (default 24), `limit` (default 50). Same organization-scoped-plus-platform-wide visibility rule as `/alpha/signals` |
-| GET | `/alpha/consensus/{market}` | requires `alpha_consensus.view`. Latest `ConsensusView` for the given market (e.g. `HENRY_HUB`) — the flagship "AlphaConsensus vs. Market Consensus" comparison. 404 if none computed yet |
-| GET | `/alpha/consensus/by-id/{consensus_id}` | requires `alpha_consensus.view`. 404 if unknown |
+Every `/alpha/*` list and get-by-id endpoint below follows the same tenant-isolation rule
+(docs/alpha-intelligence.md section 11.1, Milestone 9): a caller sees their own
+organization's rows plus every platform-wide row (`organization_id IS NULL`); a caller whose
+own organization can't be resolved sees platform-wide rows only, *unless* they hold
+`admin.organizations`, in which case they see every organization's rows. A get-by-id request
+for a record outside a caller's visibility 404s exactly like an unknown id would (never 403,
+so the endpoint never confirms a record's existence to an unauthorized caller).
+
+| GET | `/alpha/signals` | requires `alpha_signals.view`. Ranked highest-materiality-first, then most recent. Query params: `market`, `since_hours` (default 24), `min_materiality` (default 0), `limit` (default 50) |
+| GET | `/alpha/signals/{signal_id}` | requires `alpha_signals.view`. 404 if unknown or outside the caller's visibility |
+| GET | `/alpha/impacts` | requires `alpha_impacts.view`. Most-recent-first. Query params: `signal_id`, `since_hours` (default 24), `limit` (default 50) |
+| GET | `/alpha/impacts/{impact_id}` | requires `alpha_impacts.view`. 404 if unknown or outside the caller's visibility |
+| GET | `/alpha/consensus` | requires `alpha_consensus.view`. Most-recent-first. Query params: `consensus_type`, `since_hours` (default 24), `limit` (default 50) |
+| GET | `/alpha/consensus/{market}` | requires `alpha_consensus.view`. Latest `ConsensusView` for the given market (e.g. `HENRY_HUB`) — the flagship "AlphaConsensus vs. Market Consensus" comparison. 404 if none computed yet or outside the caller's visibility |
+| GET | `/alpha/consensus/by-id/{consensus_id}` | requires `alpha_consensus.view`. 404 if unknown or outside the caller's visibility |
 | GET | `/alpha/scenarios/library` | requires `alpha_scenarios.view`. The standing stress-test catalog (`risk_service.scenarios.SCENARIOS`) |
 | POST | `/alpha/scenarios/run` | requires `alpha_scenarios.run`. Body: `ScenarioDefinition` (`base_scenario_ids`, `variables`). Composes and runs a named and/or custom scenario against the current paper book; 400 on an unknown base scenario id |
 | POST | `/alpha/scenarios/compare` | requires `alpha_scenarios.run`. Runs the entire standing library against the current paper book and returns ranked results plus a worst/best-case summary |
 | GET | `/alpha/scenarios/runs` | requires `alpha_scenarios.view`. Persisted run history, most-recent-first. Query params: `since_hours` (default 24), `limit` (default 50) |
-| GET | `/alpha/scenarios/runs/{run_id}` | requires `alpha_scenarios.view`. 404 if unknown |
+| GET | `/alpha/scenarios/runs/{run_id}` | requires `alpha_scenarios.view`. 404 if unknown or outside the caller's visibility |
 | GET | `/alpha/memory` | requires `alpha_memory.view`. Decision memory records, most recent first. Query params: `memory_type`, `since_hours` (default 720 — a 30-day window), `limit` (default 50) |
-| GET | `/alpha/memory/{memory_id}` | requires `alpha_memory.view`. 404 if unknown |
+| GET | `/alpha/memory/{memory_id}` | requires `alpha_memory.view`. 404 if unknown or outside the caller's visibility |
 | GET | `/alpha/memory/lessons` | requires `alpha_memory.view`. Lesson proposals, most recent first. Query params: `status` (`PENDING`/`APPROVED`/`REJECTED`), `limit` (default 50) |
-| GET | `/alpha/memory/lessons/{lesson_id}` | requires `alpha_memory.view`. 404 if unknown |
+| GET | `/alpha/memory/lessons/{lesson_id}` | requires `alpha_memory.view`. 404 if unknown or outside the caller's visibility |
 | POST | `/alpha/memory/lessons/{lesson_id}/review` | requires `alpha_memory.review`. Body: `{"status": "APPROVED"\|"REJECTED"}`; 400 if asked to review back to `PENDING`; 404 if unknown |
-| GET | `/alpha/replay` | requires `alpha_replay.view`. Query params: `market` (default `HENRY_HUB`), `as_of` (defaults to now). Returns an `AsOfReplayResult` — every Alpha* series (price observations, signals, impacts, consensus views, scenario runs, decision memory) bitemporally filtered to what was already knowable at `as_of`. `mode` is always `CURRENT_MODEL_RETROSPECTIVE`; an `as_of` before Milestone 6's deployment returns empty lists rather than fabricating history |
+| GET | `/alpha/replay` | requires `alpha_replay.view`. Query params: `market` (default `HENRY_HUB`), `as_of` (defaults to now). Returns an `AsOfReplayResult` — every Alpha* series (price observations, signals, impacts, consensus views, scenario runs, decision memory) bitemporally filtered to what was already knowable at `as_of`, and tenant-isolation-filtered the same way as every other `/alpha/*` list endpoint. `mode` is always `CURRENT_MODEL_RETROSPECTIVE`; an `as_of` before Milestone 6's deployment returns empty lists rather than fabricating history |
 | GET | `/alpha/briefs/latest` | requires `alpha_brief.view`. The most recently generated Overnight Intelligence Brief. Query params: `market`. 404 if none generated yet |
 | GET | `/alpha/briefs` | requires `alpha_brief.view`. Brief history, most recent first. Query params: `market`, `limit` (default 20) |
-| GET | `/alpha/briefs/{brief_id}` | requires `alpha_brief.view`. 404 if unknown |
+| GET | `/alpha/briefs/{brief_id}` | requires `alpha_brief.view`. 404 if unknown or outside the caller's visibility |
 
 AlphaSignal, AlphaImpact, AlphaConsensus, AlphaScenario, AlphaMemory, AlphaReplay, and the Chief
 Trading Agent integration (AlphaSignal/AlphaConsensus feedback into trade generation, the
@@ -275,10 +283,18 @@ Overnight Intelligence Brief) are all implemented now.
 | GET | `/admin/enterprise-data/datasets/{dataset_id}/entitlements` | requires `admin.enterprise_data`. 404 if the dataset is unknown |
 | POST | `/admin/enterprise-data/datasets/{dataset_id}/entitlements` | requires `admin.enterprise_data`. Body: `{"principal_type", "principal_id"}` |
 | DELETE | `/admin/enterprise-data/datasets/{dataset_id}/entitlements/{entitlement_id}` | requires `admin.enterprise_data`. 204; 404 if unknown |
+| GET | `/admin/model-routing-policies` | requires `admin.model_routing_policy`. Query params: `organization_id`. Milestone 9 (docs/alpha-intelligence.md section 11.5) |
+| POST | `/admin/model-routing-policies` | requires `admin.model_routing_policy`; a `null`/omitted `organization_id` (a platform-default policy) additionally requires `admin.organizations`. Body: `{"organization_id"?, "data_classification", "allow_external_llm_processing", "allowed_provider"?, "allowed_region"?, "logging_allowed"?}`; 400 if `organization_id` is set but unknown |
+| DELETE | `/admin/model-routing-policies/{policy_id}` | requires `admin.model_routing_policy` (+ `admin.organizations` if the policy is a platform default). 204; 404 if unknown |
+| GET | `/admin/retention-policies` | requires `admin.retention_policy`. Query params: `organization_id`. Milestone 9 (docs/alpha-intelligence.md section 11.6) |
+| POST | `/admin/retention-policies` | requires `admin.retention_policy` (+ `admin.organizations` for a platform default). Body: `{"organization_id"?, "data_classification", "retention_days"?}`; 400 if `organization_id` is set but unknown |
+| DELETE | `/admin/retention-policies/{policy_id}` | requires `admin.retention_policy` (+ `admin.organizations` if the policy is a platform default). 204; 404 if unknown |
+| POST | `/admin/retention-policies/apply` | requires `admin.retention_policy` (+ `admin.organizations` for `organization_id: null`). Body: `{"organization_id"?, "data_classification"}`. Resolves the applicable retention policy and purges every `EnterpriseRecordRow` of that (organization, classification) pair's datasets older than the cutoff; returns `{"organization_id", "data_classification", "retention_days", "datasets_checked", "records_purged"}` — a no-op (zero purged) when no policy is configured |
 
 Milestone 8 is a foundation, honestly: only `MANUAL_UPLOAD` sources have a real connector
 implementation (`test-connection`/`preview`/`ingest` on any other `connector_type` return the
-connector's own honest `not_configured`/400 response, never a fabricated success). Real
-tenant-isolation enforcement, `ModelRoutingPolicy`, and most of the originally-envisioned admin
-tabs (Mappings/Lineage/Usage/Dependencies) remain Milestone 9-10 — see
-`docs/alpha-intelligence.md` section 11 for the exact built-vs-not-built line.
+connector's own honest `not_configured`/400 response, never a fabricated success). Milestone 9
+closes the application-layer tenant-isolation gap and adds `ModelRoutingPolicy`/
+`RetentionPolicy` (above); real database-level Row Level Security and most of the
+originally-envisioned admin tabs (Mappings/Lineage/Usage/Dependencies) remain Milestone 10+ —
+see `docs/alpha-intelligence.md` section 11 for the exact built-vs-not-built line.

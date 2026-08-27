@@ -184,6 +184,77 @@ def test_magic_link_super_admin_gets_the_real_super_admin_only_permissions(clien
     assert "admin.model_management" in permissions
 
 
+def test_resolve_organization_scope_for_magic_link_user_is_their_org_not_unrestricted(client):
+    """Milestone 9 (tenant isolation retrofit, docs/alpha-intelligence.md section
+    11.1): a magic-link user with a real, resolvable organization gets
+    `(their_organization_id, unrestricted=False)` -- never the platform-wide-admin
+    escape hatch, even though that same distinction only matters for callers whose
+    organization can't be resolved at all."""
+    import asyncio
+
+    from api_app import auth as auth_module
+    from api_app import state as state_module
+    from api_app.entitlements import resolve_organization_scope
+
+    session = _activate_via_magic_link(client, "realtrader@realcompany.com", "TRADER")
+    token = session["headers"]["Authorization"].split(" ", 1)[1]
+    state = state_module._state
+    user = asyncio.run(auth_module.decode_access_token(token, state))
+    organization_id, unrestricted = asyncio.run(resolve_organization_scope(user, state))
+    assert organization_id is not None
+    assert unrestricted is False
+
+
+def test_resolve_organization_scope_for_dev_mode_admin_is_unrestricted(client):
+    """A dev-mode caller has no resolvable organization at all, but the ADMIN dev
+    fixture holds `admin.organizations` -- so they must come back `unrestricted=True`
+    (a real cross-organization admin), not silently restricted to platform-wide-only
+    data the way any other unresolvable-org caller now is."""
+    import asyncio
+
+    from api_app.auth import Role, User
+    from api_app.entitlements import resolve_organization_scope
+
+    from api_app import state as state_module
+
+    user = User(user_id="dev-admin", email="admin@alphagasiq.local", display_name="Admin", roles=[Role.ADMIN])
+    organization_id, unrestricted = asyncio.run(resolve_organization_scope(user, state_module._state))
+    assert organization_id is None
+    assert unrestricted is True
+
+
+def test_resolve_organization_scope_for_dev_mode_trader_is_restricted_not_unrestricted(client):
+    """The core Milestone 9 fix, at the helper level: a dev-mode TRADER has no
+    resolvable organization and no `admin.organizations` grant, so they must come
+    back `unrestricted=False` -- restricted to platform-wide-only data -- rather
+    than the old behavior of skipping org filtering entirely."""
+    import asyncio
+
+    from api_app.auth import Role, User
+    from api_app.entitlements import resolve_organization_scope
+
+    from api_app import state as state_module
+
+    user = User(user_id="dev-trader", email="trader@alphagasiq.local", display_name="Trader", roles=[Role.TRADER])
+    organization_id, unrestricted = asyncio.run(resolve_organization_scope(user, state_module._state))
+    assert organization_id is None
+    assert unrestricted is False
+
+
+def test_record_is_visible():
+    from api_app.entitlements import record_is_visible
+
+    # Unrestricted (cross-org admin) sees everything, own-org or not.
+    assert record_is_visible("org-b", "org-a", True) is True
+    # Platform-wide data (organization_id is None) is visible to everyone.
+    assert record_is_visible(None, "org-a", False) is True
+    assert record_is_visible(None, None, False) is True
+    # A restricted caller sees their own organization's data.
+    assert record_is_visible("org-a", "org-a", False) is True
+    # A restricted caller cannot see another organization's data.
+    assert record_is_visible("org-b", "org-a", False) is False
+
+
 def test_magic_link_executive_gets_executive_permissions_not_bridged_viewer_only(client):
     """Same bug, different symptom: an EXECUTIVE magic-link user's `roles` claim is
     bridged down to `[VIEWER]` for route-gating purposes, but their entitlements must

@@ -62,19 +62,25 @@ No column for chain-of-thought. `reasoning_summary` is a concise, human-auditabl
 
 ## 3. Trading Objects
 
-- **`trade_ideas`** — mirrors `TradeIdea` (trade_id, strategy, instrument, instrument_type,
+- **`trade_ideas`** — mirrors `TradeIdea` (trade_id, organization_id (nullable — tenant-
+  isolation retrofit schema readiness, docs/alpha-intelligence.md section 11.1, Milestone 9;
+  always NULL today, see that section for why), strategy, instrument, instrument_type,
   direction, entry, target, stop_or_invalidation, time_horizon, expected_return, expected_loss,
   probability_success, confidence, thesis, catalysts (jsonb), risks (jsonb),
   invalidation_conditions (jsonb), supporting_data (jsonb), source_citations (jsonb),
   created_at, expires_at).
 - **`committee_decisions`** — mirrors `InvestmentCommitteeDecision`, FK to `trade_ideas`
-  (original_trade_id), plus bull_case/bear_case/skeptic_case/data_quality_assessment/
-  portfolio_effect (all text/jsonb), consensus_score, unresolved_questions (jsonb),
-  recommended_action enum (`APPROVE_FOR_REVIEW`/`REJECT`/`WAIT_FOR_MORE_DATA`/`REDUCE_SIZE`).
-- **`risk_checks`** — one row per Risk Governor evaluation: trade_idea_id, rule_results (jsonb),
-  verdict enum (`ALLOW`/`BLOCK`/`REQUIRE_HUMAN`/`HALT`/`REJECT`), evaluated_at, governor_version.
-- **`approvals`** — human approval workflow state machine instances: id, trade_idea_id, state
-  enum (`DRAFT`/`AI_REVIEW`/`RISK_REVIEW`/`HUMAN_REVIEW`/`APPROVED_FOR_PAPER_TRADING`/
+  (original_trade_id), organization_id (nullable, copied from the originating trade idea at
+  save time — same Milestone 9 readiness as above), plus bull_case/bear_case/skeptic_case/
+  data_quality_assessment/portfolio_effect (all text/jsonb), consensus_score,
+  unresolved_questions (jsonb), recommended_action enum
+  (`APPROVE_FOR_REVIEW`/`REJECT`/`WAIT_FOR_MORE_DATA`/`REDUCE_SIZE`).
+- **`risk_checks`** — one row per Risk Governor evaluation: trade_idea_id, organization_id
+  (nullable, same Milestone 9 readiness), rule_results (jsonb), verdict enum
+  (`ALLOW`/`BLOCK`/`REQUIRE_HUMAN`/`HALT`/`REJECT`), evaluated_at, governor_version.
+- **`approvals`** — human approval workflow state machine instances: id, trade_idea_id,
+  organization_id (nullable, same Milestone 9 readiness), state enum
+  (`DRAFT`/`AI_REVIEW`/`RISK_REVIEW`/`HUMAN_REVIEW`/`APPROVED_FOR_PAPER_TRADING`/
   `REJECTED`/`EXPIRED`/`EXECUTED_SIMULATION`/`CLOSED`), actions (jsonb array, append-only log of
   approve/reject/modify/challenge/request_more_analysis/reduce_position/change_invalidation),
   current_user_id, updated_at.
@@ -353,6 +359,18 @@ No column for chain-of-thought. `reasoning_summary` is a concise, human-auditabl
   already establishes for the built-in connectors. id, source_id (FK), event_type
   (`test_connection`/`ingest`), status (`success`/`error`), detail, rows_ingested (nullable),
   rows_rejected (nullable), latency_ms (nullable), occurred_at.
+- **`model_routing_policies`** — governs whether a given `EnterpriseDataClassification` may be
+  sent to an external LLM provider for an organization (docs/alpha-intelligence.md section
+  11.5, Milestone 9). id, organization_id (nullable FK — unlike every other enterprise table's
+  required organization_id, `NULL` here is meaningful: it's the platform default policy
+  consulted when an organization has no override), data_classification,
+  allow_external_llm_processing (bool), allowed_provider (nullable), allowed_region (nullable),
+  logging_allowed (bool, default true), created_by (nullable), created_at, updated_at.
+- **`retention_policies`** — how many days a given `EnterpriseDataClassification`'s data may be
+  retained for an organization (docs/alpha-intelligence.md section 11.6, Milestone 9). Same
+  nullable-organization_id platform-default convention as `model_routing_policies`. id,
+  organization_id (nullable FK), data_classification, retention_days (nullable — `NULL` means
+  retain indefinitely), created_by (nullable), created_at, updated_at.
 
 ## 5. TimescaleDB Specifics
 

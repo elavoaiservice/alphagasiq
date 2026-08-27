@@ -552,8 +552,13 @@ customers combine their own data with this layer — sequenced deliberately *aft
 components and the Chief Trading Agent integration (Milestones 8-10), since they deliver real
 value against today's shared public/simulated dataset first. Milestone 8 (a `Workspace`/
 `EnterpriseDataSource`/`EnterpriseDataset`/`EnterpriseDataEntitlement` foundation plus one real
-connector) is implemented; real multi-tenant row-level isolation (Milestone 9) is still new
-infrastructure this codebase doesn't have yet (see that doc's section 11 for the exact
+connector) is implemented. Milestone 9 (the Alpha Intelligence Layer's own Milestone 9, not the
+access-model track's) is also implemented at the application layer: every `/alpha/*` list and
+get-by-id endpoint now enforces cross-organization data-visibility correctly
+(`resolve_organization_scope`/`record_is_visible`, `apps/api/api_app/entitlements.py`), plus a
+`ModelRoutingPolicy`/`RetentionPolicy` governance layer and `organization_id` schema readiness
+on the core trading tables — but there is still no database-level Row Level Security backstop,
+and `AppState` remains a process-wide singleton (see that doc's section 11 for the exact
 built-vs-not-built line).
 
 ### AlphaSignal™ (implemented)
@@ -707,13 +712,15 @@ top-level nav link now points here instead of straight to `/signals`. See
 ### Enterprise Data Platform foundation (implemented — Milestone 8)
 
 A genuine, testable foundation, honest that most of the originally-envisioned scope (real
-tenant-isolation enforcement, `ModelRoutingPolicy`, most admin tabs) is still Milestone 9-10,
-not built here. `Workspace`/`WorkspaceMemberRow` (`packages/db/db/models.py`) group users
-inside an `Organization`. `EnterpriseDataSourceRow`/`EnterpriseDatasetRow`/
-`EnterpriseDataEntitlementRow`/`EnterpriseRecordRow`/`EnterpriseDataEventRow` back an admin-
-registered connection to a customer's proprietary data, its registered datasets, dataset-level
-access grants (`principal_type` unifies `AgentDataEntitlement` into the same table rather than
-a parallel one), ingested rows, and a test-connection/ingest event log. `services/
+tenant-isolation enforcement, `ModelRoutingPolicy`, most admin tabs) was still Milestone 9-10
+at the time this section was written; Milestone 9 (below) has since closed the tenant-isolation
+gap at the application layer and added `ModelRoutingPolicy`/`RetentionPolicy`. `Workspace`/
+`WorkspaceMemberRow` (`packages/db/db/models.py`) group users inside an `Organization`.
+`EnterpriseDataSourceRow`/`EnterpriseDatasetRow`/`EnterpriseDataEntitlementRow`/
+`EnterpriseRecordRow`/`EnterpriseDataEventRow` back an admin-registered connection to a
+customer's proprietary data, its registered datasets, dataset-level access grants
+(`principal_type` unifies `AgentDataEntitlement` into the same table rather than a parallel
+one), ingested rows, and a test-connection/ingest event log. `services/
 enterprise_data/enterprise_data_service/connector.py`'s `BaseEnterpriseDataConnector` mirrors
 `data_sdk.provider.BaseDataProvider`'s shape (`test_connection`/`discover_schema`/`preview`/
 `ingest`/`health_check`); only `ManualUploadConnector` (`MANUAL_UPLOAD` — an admin supplies
@@ -725,3 +732,36 @@ establishes. `EnterpriseDataSourceRow` deliberately carries no credential field,
 datasets/{id}(/preview|/ingest|/records|/entitlements)` (new `admin.workspaces`/
 `admin.enterprise_data` permissions), plus new "Workspaces" and "Enterprise Data" admin console
 tabs. See `docs/alpha-intelligence.md` section 11 for the full built-vs-not-built design.
+
+### Tenant isolation retrofit + model routing/retention policy (implemented — Milestone 9)
+
+Closes the two cross-organization data-visibility gaps Milestone 8's own write-up flagged:
+every `/alpha/*` list endpoint previously skipped organization filtering entirely for a caller
+whose own organization couldn't be resolved (rather than restricting to platform-wide data),
+and every `/alpha/*` get-by-id endpoint performed no organization check at all.
+`resolve_organization_scope(user, state) -> (organization_id, unrestricted)`
+(`apps/api/api_app/entitlements.py`) replaces `resolve_organization_id` at every Alpha* read
+call site; `unrestricted=True` only for a caller with no resolvable organization *and*
+`admin.organizations`. Every affected `Repository.list_*` method gained a `platform_only: bool`
+parameter, and `record_is_visible(record_org, caller_org, unrestricted) -> bool`
+(`apps/api/api_app/entitlements.py`) gates every get-by-id endpoint post-fetch, 404ing (never
+403ing) on an invisible record. `tests/api/test_alpha_tenant_isolation.py` proves the fix
+end-to-end. Also new: `ModelRoutingPolicy`/`RetentionPolicy`
+(`packages/schemas/schemas/enterprise.py`, `model_routing_policies`/`retention_policies`
+tables) — per-`(organization_id, EnterpriseDataClassification)` governance rows, with
+`organization_id=None` as the platform default. `ModelRoutingEngine`/`RetentionEngine`
+(`services/enterprise_data/enterprise_data_service/`) are pure policy-resolution functions;
+`PolicyGatedLLMProvider` (`packages/agent-sdk/agent_sdk/llm.py`) is the enforcement primitive
+for `ModelRoutingPolicy` (no agent call site constructs one with a real classification yet —
+that's Milestone 10's job, once enterprise data actually flows into agent prompts);
+`AppState.apply_retention_policy()` is the I/O half of `RetentionPolicy`, purging expired
+`EnterpriseRecordRow`s. Both exposed via `/admin/model-routing-policies`/
+`/admin/retention-policies(/apply)` (new `admin.model_routing_policy`/`admin.retention_policy`
+permissions) — API-only, no admin UI yet. Finally, `trade_ideas`/`committee_decisions`/
+`risk_checks`/`approvals` each gained a nullable `organization_id` column, and
+`TradeIdea.organization_id` now round-trips onto all four through
+`AppState.submit_trade_idea()` — schema readiness only, since every trade idea today still
+comes from the single process-wide `AppState`'s system-generated research cycle, never a
+per-organization submission path. See `docs/alpha-intelligence.md` section 11.1/11.5/11.6 for
+the full built-vs-not-built design, including what real database-level RLS enforcement would
+still add on top of this.

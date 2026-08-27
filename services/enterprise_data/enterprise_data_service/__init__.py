@@ -7,6 +7,8 @@ from .connector import (
     SchemaField,
     build_connector,
 )
+from .model_routing import ModelRoutingEngine, RoutingDecision
+from .retention import RetentionEngine
 
 __all__ = [
     "BaseEnterpriseDataConnector",
@@ -16,4 +18,7 @@ __all__ = [
     "NotImplementedConnector",
     "ManualUploadConnector",
     "build_connector",
+    "ModelRoutingEngine",
+    "RoutingDecision",
+    "RetentionEngine",
 ]

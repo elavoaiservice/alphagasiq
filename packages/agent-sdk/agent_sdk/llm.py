@@ -68,6 +68,52 @@ class MockLLMProvider(LLMProvider):
         return LLMResponse(content=content, model=self.model, stop_reason="end_turn")
 
 
+class PolicyGatedLLMProvider(LLMProvider):
+    """Tenant-isolation retrofit (docs/alpha-intelligence.md section 11.1,
+    Milestone 9): wraps a `primary` provider (typically an external one, e.g.
+    `AnthropicLLMProvider`) and a `fallback` provider (typically a local/mock
+    one), and consults a pre-resolved `RoutingDecision`
+    (`enterprise_data_service.model_routing.ModelRoutingEngine.evaluate()`) to
+    decide which one actually handles `complete()`. `decision.allowed=False`
+    routes to `fallback` instead of `primary` -- e.g. so `CUSTOMER_RESTRICTED`
+    content can be kept off an external LLM provider entirely when an
+    organization's `ModelRoutingPolicy` says so.
+
+    Honest about scope: nothing constructs this today with a real, non-trivial
+    `RoutingDecision` -- no agent call site classifies the content it's about
+    to send an LLM (see `model_routing.py`'s module docstring for why). This
+    class is the real, testable enforcement primitive that integration will
+    use; it has no live caller yet."""
+
+    def __init__(self, *, primary: LLMProvider, fallback: LLMProvider, decision: Any) -> None:
+        """`decision` is an `enterprise_data_service.model_routing.RoutingDecision`
+        (or anything duck-typed with an `.allowed: bool` attribute) -- typed as
+        `Any` rather than imported, since `agent_sdk` is a lower-level package
+        that `enterprise_data_service` depends on, not the reverse."""
+        self._primary = primary
+        self._fallback = fallback
+        self._decision = decision
+
+    @property
+    def model(self) -> str:
+        provider = self._primary if self._decision.allowed else self._fallback
+        return getattr(provider, "model", provider.__class__.__name__)
+
+    async def complete(
+        self,
+        messages: list[LLMMessage],
+        *,
+        system: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        max_tokens: int = 1024,
+        temperature: float = 0.2,
+    ) -> LLMResponse:
+        provider = self._primary if self._decision.allowed else self._fallback
+        return await provider.complete(
+            messages, system=system, tools=tools, max_tokens=max_tokens, temperature=temperature
+        )
+
+
 def get_default_llm_provider() -> LLMProvider:
     """Factory used across services: returns a real Anthropic-backed provider when
     ANTHROPIC_API_KEY is set, otherwise the deterministic mock."""

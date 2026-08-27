@@ -19,6 +19,9 @@ class TradeIdeaRow(Base):
     __tablename__ = "trade_ideas"
 
     trade_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    # Tenant-isolation retrofit (docs/alpha-intelligence.md section 11.1, Milestone
+    # 9): schema readiness only -- always NULL today, see `TradeIdea.organization_id`.
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     strategy: Mapped[str] = mapped_column(String, nullable=False)
     instrument: Mapped[str] = mapped_column(String, nullable=False)
     instrument_type: Mapped[str] = mapped_column(String, nullable=False)
@@ -52,6 +55,10 @@ class CommitteeDecisionRow(Base):
     original_trade_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("trade_ideas.trade_id"), nullable=False
     )
+    # Tenant-isolation retrofit (docs/alpha-intelligence.md section 11.1, Milestone
+    # 9): schema readiness only -- always NULL today (copied from the originating
+    # `TradeIdea.organization_id` at save time, which is itself always NULL).
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     original_trade: Mapped[dict] = mapped_column(JSON, nullable=False)
     bull_case: Mapped[str] = mapped_column(String, nullable=False)
     bear_case: Mapped[str] = mapped_column(String, nullable=False)
@@ -71,6 +78,9 @@ class RiskCheckRow(Base):
     trade_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("trade_ideas.trade_id"), nullable=False
     )
+    # Tenant-isolation retrofit (docs/alpha-intelligence.md section 11.1, Milestone
+    # 9): schema readiness only -- always NULL today, same as `CommitteeDecisionRow`.
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     verdict: Mapped[str] = mapped_column(String, nullable=False)
     rule_results: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     governor_version: Mapped[str] = mapped_column(String, nullable=False)
@@ -84,6 +94,9 @@ class ApprovalRow(Base):
     trade_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("trade_ideas.trade_id"), nullable=False
     )
+    # Tenant-isolation retrofit (docs/alpha-intelligence.md section 11.1, Milestone
+    # 9): schema readiness only -- always NULL today, same as `CommitteeDecisionRow`.
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     state: Mapped[str] = mapped_column(String, nullable=False)
     actions: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     current_user_id: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -981,3 +994,43 @@ class EnterpriseDataEventRow(Base):
     rows_rejected: Mapped[int | None] = mapped_column(nullable=True)
     latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
     occurred_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class ModelRoutingPolicyRow(Base):
+    """Tenant-isolation retrofit (docs/alpha-intelligence.md section 11.1,
+    Milestone 9): governs whether a given `EnterpriseDataClassification` may be
+    sent to an external LLM provider for a given organization.
+    `organization_id` is nullable -- unlike every other enterprise table's
+    required `organization_id`, `NULL` here is meaningful: it is the platform
+    default policy consulted when an organization has no override for that
+    classification, not "not yet organization-scoped"."""
+
+    __tablename__ = "model_routing_policies"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    organization_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=True)
+    data_classification: Mapped[str] = mapped_column(String, nullable=False)
+    allow_external_llm_processing: Mapped[bool] = mapped_column(nullable=False)
+    allowed_provider: Mapped[str | None] = mapped_column(String, nullable=True)
+    allowed_region: Mapped[str | None] = mapped_column(String, nullable=True)
+    logging_allowed: Mapped[bool] = mapped_column(nullable=False, default=True)
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class RetentionPolicyRow(Base):
+    """Tenant-isolation retrofit (docs/alpha-intelligence.md section 11.1,
+    Milestone 9): how many days a given `EnterpriseDataClassification`'s data
+    may be retained for an organization. Same nullable-`organization_id`
+    platform-default convention as `ModelRoutingPolicyRow`."""
+
+    __tablename__ = "retention_policies"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    organization_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=True)
+    data_classification: Mapped[str] = mapped_column(String, nullable=False)
+    retention_days: Mapped[int | None] = mapped_column(nullable=True)
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)

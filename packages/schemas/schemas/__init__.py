@@ -63,6 +63,8 @@ from .enterprise import (
     EnterpriseDataSource,
     EnterpriseEntitlementPrincipalType,
     EnterpriseSourceStatus,
+    ModelRoutingPolicy,
+    RetentionPolicy,
     Workspace,
 )
 
@@ -136,4 +138,6 @@ __all__ = [
     "EnterpriseDataset",
     "EnterpriseEntitlementPrincipalType",
     "EnterpriseDataEntitlement",
+    "ModelRoutingPolicy",
+    "RetentionPolicy",
 ]

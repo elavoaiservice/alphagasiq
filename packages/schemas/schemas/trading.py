@@ -14,6 +14,13 @@ class TradeIdea(BaseModel):
     approval before it can become a paper order."""
 
     trade_id: UUID = Field(default_factory=uuid4)
+    # Tenant-isolation retrofit (docs/alpha-intelligence.md section 11.1, Milestone
+    # 9): schema readiness only. `None` (the only value ever set today) is unchanged
+    # behavior -- every trade idea today comes from the single process-wide
+    # `AppState`'s system-generated research cycle (`worker.py`), never from a
+    # per-organization submission path, so real per-org separate trading books
+    # remain future work, not something this field alone provides.
+    organization_id: str | None = None
     strategy: str
     instrument: str
     instrument_type: InstrumentType

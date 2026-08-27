@@ -350,11 +350,14 @@ test doubles (`tests/fundamentals/test_pipeline_graph_neo4j.py`).
 Agents — all six components (AlphaSignal™/AlphaImpact™/AlphaConsensus™/AlphaScenario™/
 AlphaMemory™/AlphaReplay™) plus their integration back into the Chief Trading Agent
 (AlphaSignal/AlphaConsensus feedback into trade generation, the Overnight Intelligence Brief,
-an Overview dashboard) are now implemented, plus a foundation of the multi-tenant Enterprise
-Data Platform (Workspace, one real connector, admin onboarding UI).** See
-`docs/alpha-intelligence.md` for the full target architecture and what's still planned
-(Milestones 9-10: real tenant-isolation enforcement, enterprise-specific Chief Trading Agent
-overlays), sequenced across 10 milestones the same incremental way the access-model spec was.
+an Overview dashboard) are now implemented, plus the multi-tenant Enterprise Data Platform
+(Workspace, one real connector, admin onboarding UI) and a tenant-isolation retrofit
+(cross-organization data-visibility fix on every Alpha* endpoint, `ModelRoutingPolicy`,
+`RetentionPolicy`, `organization_id` schema readiness on core trading tables) — application-
+layer only, no database-level Row Level Security yet.** See `docs/alpha-intelligence.md` for
+the full target architecture and what's still planned (Milestone 10: enterprise-specific Chief
+Trading Agent overlays, database-level RLS), sequenced across 10 milestones the same
+incremental way the access-model spec was.
 AlphaSignal
 (new `services/alpha` package) is a deterministic materiality engine
 (`alpha_service.materiality.MaterialityEngine`, in the same pure-function/exhaustively-tested
@@ -485,9 +488,8 @@ plus six link cards tying the whole layer together; the top-level "Alpha Intelli
 now points here instead of straight to the AlphaSignal tab, and the sub-nav gained a leading
 "Overview" tab. All six Alpha* components and this integration layer are now implemented.
 
-**Enterprise Data Platform foundation (Milestone 8) is a genuine, testable foundation — honest
-that real tenant-isolation enforcement, a `ModelRoutingPolicy`, and most of the
-originally-envisioned admin tabs are still Milestone 9-10, not built here.** `Workspace`/
+**Enterprise Data Platform foundation (Milestone 8) is a genuine, testable foundation.**
+`Workspace`/
 `WorkspaceMemberRow` (`packages/db/db/models.py`) group users inside an `Organization`.
 `EnterpriseDataSourceRow`/`EnterpriseDatasetRow`/`EnterpriseDataEntitlementRow`/
 `EnterpriseRecordRow`/`EnterpriseDataEventRow` back an admin-registered connection to a
@@ -506,6 +508,35 @@ their connector honestly reports `not_configured` rather than pretending to work
 `/admin/enterprise-data/sources(/{id}/test-connection|/datasets)`/`/admin/enterprise-data/
 datasets/{id}(/preview|/ingest|/records|/entitlements)` (new `admin.workspaces`/
 `admin.enterprise_data` permissions), plus new "Workspaces" and "Enterprise Data" admin console
-tabs. The only planned work left in `docs/alpha-intelligence.md` is Milestones 9-10 — real
-multi-tenant row-level isolation, a `ModelRoutingPolicy`, and enterprise-specific Chief Trading
-Agent overlays.
+tabs.
+
+**Tenant isolation retrofit (Milestone 9) closes the two cross-organization data-visibility
+gaps Milestone 8's own write-up flagged, and adds the governance layer it deferred — at the
+application layer only, no database-level Row Level Security yet.**
+`resolve_organization_scope(user, state) -> (organization_id, unrestricted)`
+(`apps/api/api_app/entitlements.py`) replaces `resolve_organization_id` at every `/alpha/*`
+read call site: previously a caller whose own organization couldn't be resolved got *every*
+organization's rows on a list endpoint (the filter was simply skipped), and a get-by-id
+endpoint performed no organization check at all. Every affected `Repository.list_*` method
+gained a `platform_only: bool` parameter (restricting a non-admin, no-resolvable-org caller to
+`organization_id IS NULL` rows), and `record_is_visible(record_org, caller_org, unrestricted)`
+gates every get-by-id endpoint, 404ing on an invisible record rather than 403ing (never
+confirming a record's existence to an unauthorized caller).
+`tests/api/test_alpha_tenant_isolation.py` proves the fix end-to-end. New `ModelRoutingPolicy`/
+`RetentionPolicy` tables (`packages/schemas/schemas/enterprise.py`) govern, per
+`(organization_id, EnterpriseDataClassification)`, whether content may reach an external LLM
+provider and how long data may be retained — `ModelRoutingEngine`/`RetentionEngine`
+(`services/enterprise_data/enterprise_data_service/`) resolve policy purely (organization
+override winning over a platform default), `PolicyGatedLLMProvider`
+(`packages/agent-sdk/agent_sdk/llm.py`) and `AppState.apply_retention_policy()` are the real
+enforcement primitives — honest that no agent call site constructs a `PolicyGatedLLMProvider`
+with a real classification yet, since no agent reads classified enterprise data into a prompt
+today (Milestone 10's job). Exposed via `/admin/model-routing-policies`/
+`/admin/retention-policies(/apply)` (new `admin.model_routing_policy`/`admin.retention_policy`
+permissions) — API-only, no admin UI yet. Finally, `trade_ideas`/`committee_decisions`/
+`risk_checks`/`approvals` each gained a nullable `organization_id` column that now round-trips
+from `TradeIdea.organization_id` through `AppState.submit_trade_idea()` — schema readiness
+only, since every trade idea today still comes from the single process-wide `AppState`'s
+system-generated research cycle, never a per-organization submission path. The only planned
+work left in `docs/alpha-intelligence.md` is Milestone 10 — real database-level RLS enforcement
+and enterprise-specific Chief Trading Agent overlays.

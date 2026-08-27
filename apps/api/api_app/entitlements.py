@@ -33,11 +33,47 @@ async def _resolve_user_record(user: User, state) -> dict | None:
 async def resolve_organization_id(user: User, state) -> str | None:
     """A magic-link user's `user_id` is a real `UserRow.id`; a dev-mode/OIDC user's
     is a synthetic string with no matching row. Either way this just returns `None`
-    on a miss rather than raising — an unresolvable organization means no org-level
-    restriction applies, which is the correct, safe default (see
-    `get_effective_features`)."""
+    on a miss rather than raising — an unresolvable organization means no
+    organization-scoped *feature override* applies to this caller (see
+    `get_effective_features`), which is the correct, safe default there. It is
+    deliberately NOT safe to reuse this same `None` for filtering *data visibility*
+    (a `list_X(organization_id=None)` call skips organization filtering entirely on
+    most repository methods) — use `resolve_organization_scope` for that instead."""
     record = await _resolve_user_record(user, state)
     return record["organization_id"] if record is not None else None
+
+
+async def resolve_organization_scope(user: User, state) -> tuple[str | None, bool]:
+    """Tenant-isolation retrofit (docs/alpha-intelligence.md section 11.1, Milestone
+    9): returns `(organization_id, unrestricted)` for filtering *data visibility* —
+    distinct from `resolve_organization_id` above, which is safe to return `None` on
+    a miss only for feature-override lookups, never for deciding what data a caller
+    can see. `unrestricted=True` only when the caller both has no resolvable
+    organization *and* holds `admin.organizations` (a real cross-organization
+    admin) — every other caller with no resolvable organization gets
+    `unrestricted=False`, meaning callers must filter to platform-wide-only data
+    (`organization_id IS NULL`) rather than silently returning every organization's
+    scoped rows to someone `resolve_organization_id` simply couldn't identify."""
+    organization_id = await resolve_organization_id(user, state)
+    if organization_id is not None:
+        return organization_id, False
+    permissions = await get_effective_permissions(user, state)
+    return None, "admin.organizations" in permissions
+
+
+def record_is_visible(record_organization_id: str | None, caller_organization_id: str | None, unrestricted: bool) -> bool:
+    """Whether a single already-fetched record (its own `organization_id`, `None`
+    meaning platform-wide) is visible to a caller resolved via
+    `resolve_organization_scope`. Used by every `get_{signal,impact,...}_by_id`
+    endpoint (docs/alpha-intelligence.md section 11.1, Milestone 9) to close the gap
+    those endpoints previously had: fetching a record by id performed no
+    organization check at all, so any caller with the base view permission could
+    read any organization's specific record regardless of their own."""
+    if unrestricted:
+        return True
+    if record_organization_id is None:
+        return True
+    return record_organization_id == caller_organization_id
 
 
 async def get_effective_permissions(user: User, state) -> set[str]:

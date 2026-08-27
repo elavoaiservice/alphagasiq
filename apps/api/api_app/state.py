@@ -49,6 +49,7 @@ from data_service.providers.mock_market_data import MockCMEProvider, MockICEProv
 from data_service.providers.mock_news import MockNewsProvider
 from data_service.registry import build_default_registry
 from db import SqlAppRepository
+from enterprise_data_service import ModelRoutingEngine, RetentionEngine
 from fundamentals_service.lng import LNGTerminalState, compute_netback
 from fundamentals_service.pipeline_graph import PipelineGraph, build_default_pipeline_graph
 from fundamentals_service.pipeline_graph_neo4j import sync_pipeline_graph_via_neo4j
@@ -75,6 +76,7 @@ from schemas import (
     ConsensusView,
     DataClassification,
     DomainEvent,
+    EnterpriseDataClassification,
     EventType,
     ForecastHorizon,
     ImpactAnalysis,
@@ -89,6 +91,7 @@ from schemas import (
     PriceForecast,
     RegimeResult,
     RelativeValueSignal,
+    RetentionPolicy,
     RiskCheckResult,
     RiskLimits,
     RiskVerdict,
@@ -147,6 +150,8 @@ class AppState:
         self.alpha_replay_engine = ReplayEngine()
         self.alpha_corroboration_engine = AlphaCorroborationEngine()
         self.alpha_brief_engine = BriefEngine()
+        self.model_routing_engine = ModelRoutingEngine()
+        self.retention_engine = RetentionEngine()
         # Bounded caches of the most recently detected signals/impact analyses/
         # consensus views, kept in-memory alongside the durable `alpha_signals`/
         # `alpha_impact_analyses`/`alpha_consensus_views` tables so the (synchronous)
@@ -304,12 +309,14 @@ class AppState:
         needs updating here. Also the single choke point every approval state
         transition passes through, so it doubles as where TRADE_APPROVED/
         TRADE_REJECTED domain events are published."""
+        trade = self.trade_ideas.get(approval.trade_id)
         await self.repo.save_approval(
             approval_id=approval.id,
             trade_id=approval.trade_id,
             state=approval.state.value,
             actions=[a.model_dump(mode="json") for a in approval.actions],
             updated_at=approval.updated_at,
+            organization_id=trade.organization_id if trade is not None else None,
         )
         event_type = {
             # EXECUTED_SIMULATION is included because a normal APPROVE action moves
@@ -892,7 +899,7 @@ class AppState:
             disabled_agent_types=disabled,
         )
         self.committee_decisions[trade.trade_id] = decision
-        await self.repo.save_committee_decision(trade.trade_id, decision)
+        await self.repo.save_committee_decision(trade.trade_id, decision, organization_id=trade.organization_id)
 
         ctx = RiskContext(
             trade=trade,
@@ -907,7 +914,7 @@ class AppState:
         )
         risk_check = self.risk_governor.evaluate_fail_closed(ctx)
         self.risk_checks[trade.trade_id] = risk_check
-        await self.repo.save_risk_check(trade.trade_id, risk_check)
+        await self.repo.save_risk_check(trade.trade_id, risk_check, organization_id=trade.organization_id)
         if risk_check.verdict != RiskVerdict.ALLOW:
             await self.event_bus.publish(
                 DomainEvent(
@@ -1140,7 +1147,12 @@ class AppState:
                 )
 
     async def compute_as_of_replay(
-        self, *, market: str | None = None, as_of: datetime, organization_id: str | None = None
+        self,
+        *,
+        market: str | None = None,
+        as_of: datetime,
+        organization_id: str | None = None,
+        platform_only: bool = False,
     ) -> AsOfReplayResult:
         """AlphaReplay(TM)'s integration point (docs/alpha-intelligence.md section
         9): reconstructs everything the Alpha Intelligence Layer itself knew and
@@ -1148,19 +1160,26 @@ class AppState:
         already enforce "no look-ahead" (`list_market_observations_as_of()`'s
         `as_of` filter, and the `until` parameter on every other Alpha* list
         method) -- this method performs no additional filtering of its own, so
-        there is exactly one place look-ahead bias could be introduced."""
+        there is exactly one place look-ahead bias could be introduced.
+        `platform_only` (docs/alpha-intelligence.md section 11.1, Milestone 9)
+        threads the same tenant-isolation restriction as every other Alpha* list
+        endpoint into the replay reconstruction."""
         market = market or self.primary_instrument()
         price_observations_raw = await self.repo.list_market_observations_as_of(as_of=as_of)
         signals_raw = await self.repo.list_signals(
-            market=market, until=as_of, organization_id=organization_id, limit=50
+            market=market, until=as_of, organization_id=organization_id, platform_only=platform_only, limit=50
         )
-        impacts_raw = await self.repo.list_impact_analyses(organization_id=organization_id, until=as_of, limit=50)
+        impacts_raw = await self.repo.list_impact_analyses(
+            organization_id=organization_id, platform_only=platform_only, until=as_of, limit=50
+        )
         consensus_raw = await self.repo.list_consensus_views(
-            market=market, organization_id=organization_id, until=as_of, limit=50
+            market=market, organization_id=organization_id, platform_only=platform_only, until=as_of, limit=50
         )
-        scenario_raw = await self.repo.list_scenario_runs(organization_id=organization_id, until=as_of, limit=50)
+        scenario_raw = await self.repo.list_scenario_runs(
+            organization_id=organization_id, platform_only=platform_only, until=as_of, limit=50
+        )
         memory_raw = await self.repo.list_memory_records(
-            market=market, organization_id=organization_id, until=as_of, limit=50
+            market=market, organization_id=organization_id, platform_only=platform_only, until=as_of, limit=50
         )
         return self.alpha_replay_engine.assemble(
             market=market,
@@ -1229,6 +1248,51 @@ class AppState:
             )
         )
         return brief
+
+    async def apply_retention_policy(
+        self, *, organization_id: str | None, data_classification: EnterpriseDataClassification
+    ) -> dict:
+        """Tenant-isolation retrofit (docs/alpha-intelligence.md section 11.1,
+        Milestone 9): resolves the retention policy visible to `organization_id`
+        for `data_classification` (`RetentionEngine.resolve_retention_days`,
+        organization override winning over the platform default), then purges
+        every `EnterpriseRecordRow` older than the resulting cutoff across every
+        dataset of that (organization, classification) pair. Returns a summary
+        dict rather than raising when no policy is configured -- no purge is a
+        legitimate, common outcome, not an error."""
+        policies_raw = await self.repo.list_retention_policies(organization_id=organization_id)
+        policies = [RetentionPolicy.model_validate(p) for p in policies_raw]
+        retention_days = self.retention_engine.resolve_retention_days(
+            data_classification=data_classification, policies=policies, organization_id=organization_id
+        )
+        cutoff = self.retention_engine.compute_cutoff(retention_days, now=datetime.now(timezone.utc))
+        if cutoff is None:
+            return {
+                "organization_id": organization_id,
+                "data_classification": data_classification.value,
+                "retention_days": None,
+                "datasets_checked": 0,
+                "records_purged": 0,
+            }
+
+        datasets = await self.repo.list_enterprise_datasets(organization_id=organization_id)
+        matching = [d for d in datasets if d["classification"] == data_classification.value]
+        total_purged = 0
+        for dataset in matching:
+            total_purged += await self.repo.purge_enterprise_records_for_retention(
+                dataset_id=dataset["id"], cutoff=cutoff
+            )
+        result = {
+            "organization_id": organization_id,
+            "data_classification": data_classification.value,
+            "retention_days": retention_days,
+            "datasets_checked": len(matching),
+            "records_purged": total_purged,
+        }
+        await self.event_bus.publish(
+            DomainEvent(event_type=EventType.RETENTION_PURGE_COMPLETED, source_service="enterprise_data_service", payload=result)
+        )
+        return result
 
     @staticmethod
     def _forecast_model_type_and_version(forecast: PriceForecast) -> tuple[ModelType, str]:

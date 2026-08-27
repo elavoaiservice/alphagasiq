@@ -175,3 +175,49 @@ class EnterpriseDataEntitlement(BaseModel):
     principal_id: str
     granted_by: str | None = None
     granted_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ModelRoutingPolicy(BaseModel):
+    """Tenant-isolation retrofit (docs/alpha-intelligence.md section 11.1,
+    Milestone 9): governs whether content of a given `EnterpriseDataClassification`
+    may be sent to an *external* LLM provider for a given organization, and if so
+    which provider/region/logging posture applies. `organization_id=None` is the
+    platform default policy, consulted when an organization has registered no
+    override for that classification -- the same nullable-organization_id
+    "platform-wide unless overridden" convention every Alpha*/enterprise table
+    already uses. Enforced by `enterprise_data_service.model_routing.
+    ModelRoutingEngine` / `agent_sdk.llm.PolicyGatedLLMProvider`; see those modules'
+    docstrings for why no agent call site threads a classification through this
+    yet (no agent consumes classified enterprise data in its prompts today -- that
+    integration is Milestone 10's job)."""
+
+    id: UUID = Field(default_factory=uuid4)
+    organization_id: str | None = None
+    data_classification: EnterpriseDataClassification
+    allow_external_llm_processing: bool
+    allowed_provider: str | None = Field(
+        default=None, description="e.g. 'anthropic' -- None means no restriction beyond the allow/deny gate."
+    )
+    allowed_region: str | None = None
+    logging_allowed: bool = True
+    created_by: str | None = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class RetentionPolicy(BaseModel):
+    """Tenant-isolation retrofit (docs/alpha-intelligence.md section 11.1,
+    Milestone 9): how many days a given `EnterpriseDataClassification`'s data may
+    be retained for an organization before `apply_retention_policy` purges it.
+    Same `organization_id=None` platform-default convention as
+    `ModelRoutingPolicy`. `retention_days=None` means retain indefinitely (no
+    purge) -- an explicit choice, not an oversight, since not every
+    classification needs a mandatory expiry."""
+
+    id: UUID = Field(default_factory=uuid4)
+    organization_id: str | None = None
+    data_classification: EnterpriseDataClassification
+    retention_days: int | None = None
+    created_by: str | None = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)

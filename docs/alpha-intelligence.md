@@ -14,9 +14,13 @@ Agent Alpha Score™, AlphaScenario™, AlphaMemory™, AlphaReplay™, and Chie
 integration) are implemented. Milestone 8 (Enterprise Data Platform foundation — `Workspace`,
 `EnterpriseDataSource`/`EnterpriseDataset`/`EnterpriseDataEntitlement`, one real connector) is
 implemented as a foundation only — see section 11 for exactly what that does and does not
-include. Milestones 9-10 below (tenant isolation retrofit, enterprise-specific Chief Trading
-Agent overlays) are architecture + roadmap only — not yet built. Do not assume any capability
-described here beyond the "Implemented" sections actually exists in the codebase yet.
+include. Milestone 9 (tenant isolation retrofit — cross-org data-visibility fix on every
+Alpha* endpoint, `ModelRoutingPolicy`, `RetentionPolicy`, `organization_id` readiness on core
+trading tables) is implemented at the *application* layer only — no database-level Row Level
+Security backstop yet; see section 11.1/11.5/11.6 for the exact line. Milestone 10
+(enterprise-specific Chief Trading Agent overlays, database-level RLS) is architecture +
+roadmap only — not yet built. Do not assume any capability described here beyond the
+"Implemented" sections actually exists in the codebase yet.
 
 ## 1. Where this sits in the pipeline
 
@@ -122,7 +126,7 @@ can ship.
 | 6 | AlphaReplay™ — bitemporal historical reconstruction | **Implemented** |
 | 7 | Chief Trading Agent full integration — AlphaSignal/AlphaConsensus feedback into trade generation, Overnight Intelligence Brief, Overview dashboard | **Implemented** |
 | 8 | Enterprise Data Platform foundation — Workspace, connectors, admin onboarding UI | **Implemented (foundation)** |
-| 9 | Tenant isolation retrofit — real `organization_id`/`workspace_id` enforcement, model routing policy, retention policy | Planned |
+| 9 | Tenant isolation retrofit — cross-org data-visibility fix on every Alpha* endpoint, model routing policy, retention policy, `organization_id` readiness on core trading tables | **Implemented (application-layer)** |
 | 10 | Enterprise-specific Chief Trading Agent + Enterprise Digital Twin overlays + Opportunity Engine | Planned |
 
 AlphaImpact through the Chief Trading Agent integration (2-7) are sequenced before the
@@ -137,9 +141,12 @@ other component already existing to have something real to feed back into trade 
 summarize into a brief. Milestone 8 is marked "Implemented (foundation)" rather than a bare
 "Implemented" deliberately: it delivers a genuine, testable `Workspace`/`EnterpriseDataSource`/
 `EnterpriseDataset`/`EnterpriseDataEntitlement` foundation with one real connector
-(`MANUAL_UPLOAD`), but real tenant-isolation enforcement, a `ModelRoutingPolicy`, and most of
-the originally-envisioned admin tabs (Mappings/Lineage/Usage/Dependencies) are honestly still
-Milestone 9-10 scope — see section 11 for the exact built-vs-not-built line.
+(`MANUAL_UPLOAD`), while application-layer tenant-isolation enforcement and a
+`ModelRoutingPolicy`/`RetentionPolicy` were honestly still Milestone 9 scope at the time this
+paragraph was written (Milestone 9 has since closed that gap — see section 11.1/11.5/11.6).
+Database-level Row Level Security and most of the originally-envisioned admin tabs
+(Mappings/Lineage/Usage/Dependencies) remain Milestone 10+ scope — see section 11 for the
+exact built-vs-not-built line.
 
 ## 4. AlphaSignal™ (implemented)
 
@@ -678,36 +685,92 @@ points here instead of straight to `/signals`; the sub-nav gained a leading "Ove
 once per boot/full research cycle, not on a fixed schedule); brief-to-brief diffing ("what
 changed since yesterday's brief").
 
-## 11. Enterprise Data Platform (foundation implemented — Milestone 8; Milestones 9-10 planned)
+## 11. Enterprise Data Platform (foundation implemented — Milestone 8; tenant isolation
+implemented at the application layer — Milestone 9; Milestone 10 planned)
 
 **Milestone 8 delivers a genuine, testable foundation**: an admin can register a `Workspace`,
 register an `EnterpriseDataSource`, run it through a real `BaseEnterpriseDataConnector`
 (schema discovery, preview, ingest), register `EnterpriseDataset`s, and grant
-`EnterpriseDataEntitlement`s — all persisted, all API- and UI-reachable. It is honest about
-scope: real multi-tenant *row-level isolation* (Postgres RLS or equivalent), a
-`ModelRoutingPolicy`, and most of the originally-envisioned admin tabs remain Milestones 9-10,
-not silently assumed to already exist.
+`EnterpriseDataEntitlement`s — all persisted, all API- and UI-reachable.
+
+**Milestone 9 closes the two real cross-organization data-visibility gaps Milestone 8's
+own honest write-up flagged**, and adds the `ModelRoutingPolicy`/`RetentionPolicy`
+governance layer, at the *application* layer (every read goes through `Repository`/FastAPI
+route handlers — there is no bypass path today, but there is also no database-level backstop
+yet; see below for exactly what that means).
 
 ### 11.1 Multi-tenant architecture
 
-**Implemented**: `Workspace` (`packages/schemas/schemas/enterprise.py`) — a grouping inside an
-`Organization`, layered on top of the existing `Organization`/`Role`/`Permission`/`Feature`
-tables rather than replacing them, with membership (`WorkspaceMemberRow`) managed via
-`POST/DELETE /admin/workspaces/{id}/members`. Every enterprise data object carries
-`organization_id`, `workspace_id` (where applicable), and a security-tier classification.
-`AgentDataEntitlement` from the original plan is unified into one `EnterpriseDataEntitlement`
-table via a `principal_type` discriminator (`USER`/`ROLE`/`WORKSPACE`/`AGENT`) rather than a
-structurally-identical parallel table — recording the grant is Milestone 8's scope; no agent
-reads an enterprise dataset today, so per-agent runtime enforcement of an `AGENT`-typed grant
-remains future work, honestly undocumented as built until it exists.
+**Implemented (Milestone 8)**: `Workspace` (`packages/schemas/schemas/enterprise.py`) — a
+grouping inside an `Organization`, layered on top of the existing
+`Organization`/`Role`/`Permission`/`Feature` tables rather than replacing them, with
+membership (`WorkspaceMemberRow`) managed via `POST/DELETE /admin/workspaces/{id}/members`.
+Every enterprise data object carries `organization_id`, `workspace_id` (where applicable), and
+a security-tier classification. `AgentDataEntitlement` from the original plan is unified into
+one `EnterpriseDataEntitlement` table via a `principal_type` discriminator
+(`USER`/`ROLE`/`WORKSPACE`/`AGENT`) rather than a structurally-identical parallel table —
+recording the grant is Milestone 8's scope; no agent reads an enterprise dataset today, so
+per-agent runtime enforcement of an `AGENT`-typed grant remains future work.
 
-**Not yet built**: `DataEntitlement`/`ModelEntitlement`/`Portfolio` as originally sketched
-(subsumed or deferred), and — the significant gap — **real tenant isolation is not enforced**.
-Every `organization_id`/`workspace_id` column exists and every admin list endpoint filters by
-it when given, but there is no PostgreSQL Row Level Security (or equivalent) making that
-filtering unbypassable at the database layer, and no verified-tenant-context propagation
-through every service call. That retrofit — across both these new tables and every existing
-trading table — is Milestone 9's job specifically, not assumed here.
+**Implemented (Milestone 9) — the cross-organization data-visibility fix**: Milestone 8's own
+write-up of this section flagged a real, specific gap rather than a vague "isolation isn't
+done yet" — `resolve_organization_id()` (`apps/api/api_app/entitlements.py`) returns `None`
+for a caller whose organization can't be resolved, and every `GET /alpha/*` list/get-by-id
+endpoint (`apps/api/api_app/routers/alpha.py`) was written when that `None` was still safe to
+treat as "skip organization filtering," a holdover from before Milestone 7/8 introduced
+org-scoped Alpha\*/enterprise rows. Two concrete gaps followed from that: (a) every list
+endpoint returned *every* organization's rows to a caller whose own organization couldn't be
+resolved, instead of restricting to the platform-wide feed; (b) every get-by-id endpoint
+(`GET /alpha/signals/{id}`, `/impacts/{id}`, `/consensus/by-id/{id}`, `/scenarios/runs/{id}`,
+`/memory/lessons/{id}`, `/memory/{id}`, `/briefs/{id}`, plus `GET /alpha/consensus/{market}`)
+performed **zero** organization check at all — any caller holding the base `alpha_*.view`
+permission could fetch any organization's specific record by id regardless of their own.
+
+Both are now closed:
+
+- `resolve_organization_scope(user, state) -> (organization_id, unrestricted)`
+  (`apps/api/api_app/entitlements.py`) replaces `resolve_organization_id` at every Alpha\*
+  read call site. `unrestricted=True` only when the caller both has no resolvable organization
+  *and* holds `admin.organizations` (a real cross-organization admin); every other caller with
+  no resolvable organization gets `unrestricted=False`.
+- Every affected `Repository.list_*` method (`list_signals`/`list_impact_analyses`/
+  `list_consensus_views`/`list_scenario_runs`/`list_memory_records`/`list_lesson_proposals`/
+  `list_intelligence_briefs`, plus `AppState.compute_as_of_replay`'s replay reconstruction)
+  gained a `platform_only: bool` parameter — `platform_only=not unrestricted` restricts a
+  non-admin, no-resolvable-org caller to `organization_id IS NULL` rows instead of skipping
+  the filter.
+- `record_is_visible(record_organization_id, caller_organization_id, unrestricted) -> bool`
+  is checked in every get-by-id endpoint after the fetch; a caller with the base view
+  permission but no visibility into that specific record's organization gets the same `404`
+  an unknown id would (never a `403`, so the endpoint never confirms a record's existence to
+  an unauthorized prober).
+- `tests/api/test_alpha_tenant_isolation.py` proves both fixes end-to-end (an org-scoped
+  caller cannot list or fetch-by-id another organization's `Signal`, a no-resolvable-org
+  caller sees only platform-wide data, an `unrestricted` admin sees everything);
+  `tests/api/test_entitlements.py` unit-tests `resolve_organization_scope`/`record_is_visible`
+  directly.
+
+**Honest about what this is not**: this is application-layer enforcement — every one of the
+call sites above is now correct, and there is no bypass path through the current codebase —
+but there is still no PostgreSQL Row Level Security (or equivalent) making it unbypassable at
+the database layer itself, and `AppState` remains a single process-wide singleton rather than
+a per-tenant-context service. A future direct-SQL script or a new endpoint that forgets to
+call `resolve_organization_scope` would not be caught by a database-level backstop today. RLS
+enforcement, and `DataEntitlement`/`ModelEntitlement`/`Portfolio` as originally sketched
+(subsumed or deferred), remain Milestone 10+ scope.
+
+**Implemented (Milestone 9) — `organization_id` readiness on the core trading tables**:
+`trade_ideas`/`committee_decisions`/`risk_checks`/`approvals` each gained a nullable
+`organization_id` column, and `TradeIdea.organization_id` (set at submission) now round-trips
+onto all four rows through `AppState.submit_trade_idea()`
+(`tests/db/test_trading_organization_id_readiness.py` proves the round trip, and that the
+unset case still lands `NULL` everywhere unchanged). This is schema and plumbing readiness
+only: every trade idea today is still generated by the single process-wide `AppState`'s
+system-wide research cycle (`apps/api/api_app/worker.py`), never through a per-organization
+submission path, so `organization_id` is `None` on every row that exists in practice — real
+per-organization separate trading books (a caller submitting a trade idea *as* their
+organization, and only ever seeing their own organization's book) remain future work, not
+something this column alone provides.
 
 ### 11.2 Security-tier data classification
 
@@ -758,17 +821,68 @@ is no per-domain typed table, and wiring ingested rows into the same rich, typed
 `ObservationDraft` canonical model market data already uses is future work, documented here
 rather than silently assumed.
 
+### 11.5 Model routing policy (implemented — Milestone 9)
+
+**Implemented**: `ModelRoutingPolicy` (`packages/schemas/schemas/enterprise.py`) — per
+`(organization_id, EnterpriseDataClassification)`, whether content of that classification may
+be sent to an external LLM provider (`allow_external_llm_processing`), plus an optional
+`allowed_provider`/`allowed_region`/`logging_allowed`. `organization_id=None` is the platform
+default, consulted when an organization has registered no override for that classification —
+the same nullable-`organization_id` convention every other Alpha\*/enterprise table uses.
+`ModelRoutingEngine.evaluate()` (`services/enterprise_data/enterprise_data_service/
+model_routing.py`) resolves `(organization override, then platform default, then a built-in
+default)` into a `RoutingDecision` — pure, zero I/O, exhaustively unit-tested
+(`tests/enterprise_data/test_model_routing.py`). The built-in default is conservative:
+`PUBLIC`/`LICENSED_MARKET_DATA`/`ALPHAGASIQ_PROPRIETARY`/`SIMULATED` default to allowed; every
+`CUSTOMER_*` tier defaults to *blocked* absent an explicit organization opt-in — a documented
+judgment call (same discipline as AlphaSignal's provisional materiality weights), not derived
+from real customer usage yet. `PolicyGatedLLMProvider` (`packages/agent-sdk/agent_sdk/
+llm.py`) is the enforcement primitive: wraps a primary (external) and fallback (local)
+`LLMProvider`, and routes `complete()` to whichever the pre-resolved `RoutingDecision.allowed`
+says to use. `GET/POST/DELETE /admin/model-routing-policies` is the admin CRUD surface,
+gated by `admin.model_routing_policy`.
+
+**Honest about what this is not**: nothing in the codebase constructs a `PolicyGatedLLMProvider`
+with a real, non-trivial `RoutingDecision` today — no agent call site (`ChatAgent`, the
+Chief Trading Agent, any fundamental/quant agent) classifies the content it's about to send an
+LLM, because no agent reads a classified `EnterpriseRecordRow` into its prompt yet (that
+integration — enterprise data actually flowing into agent reasoning — is Milestone 10's job).
+The engine and the gated provider are real, tested infrastructure with no live caller yet, not
+theater: the day an agent starts reading `CUSTOMER_RESTRICTED` data, this is what it calls.
+
+### 11.6 Retention policy (implemented — Milestone 9)
+
+**Implemented**: `RetentionPolicy` (`packages/schemas/schemas/enterprise.py`) — per
+`(organization_id, EnterpriseDataClassification)`, how many days that classification's data
+may be retained (`retention_days`, `None` = retain indefinitely). Same
+nullable-`organization_id` platform-default convention as `ModelRoutingPolicy`.
+`RetentionEngine` (`services/enterprise_data/enterprise_data_service/retention.py`) resolves
+the applicable `retention_days` (organization override winning over platform default, `None`
+absent any configured policy — a deliberately conservative default: nothing is purged absent
+an explicit policy) and computes the resulting cutoff timestamp, both pure functions
+(`tests/enterprise_data/test_retention.py`). `AppState.apply_retention_policy()` does the I/O:
+finds every `EnterpriseDataset` of that `(organization_id, classification)` pair and purges
+every `EnterpriseRecordRow` ingested before the cutoff
+(`Repository.purge_enterprise_records_for_retention`), publishing `RETENTION_PURGE_COMPLETED`.
+`POST /admin/retention-policies/apply` is the trigger endpoint (gated by
+`admin.retention_policy`); `tests/api/test_admin_data_governance_router.py` proves the full
+register-source → register-dataset → ingest → set-policy → apply → purge round trip.
+
+**Honest about what this is not**: retention purging is admin-triggered only — there is no
+scheduled/automatic purge job (a cron-style trigger calling `POST
+/admin/retention-policies/apply` on a schedule is a small, deliberately deferred follow-up, not
+built here) — and it only covers `EnterpriseRecordRow`; no Alpha\* table (signals, impacts,
+consensus views, etc.) has a retention policy applied to it yet.
+
 **Not yet built**: a Mappings tab (field/unit/timezone mapping UI — schema discovery exists,
 but there's no UI to remap a discovered field to a canonical name/unit); a dedicated Lineage
 tab; a Usage analytics tab; a Dependencies tab (which agents/features depend on which dataset —
 `EnterpriseDataEntitlement`'s `AGENT` principal type records a grant, but nothing surfaces "what
 depends on this dataset" the way `admin/data-feeds/dependency-map` does for the built-in feeds);
-retention-policy fields/enforcement; a `ModelRoutingPolicy` gating `LLMProvider`
-(`packages/agent-sdk/agent_sdk/llm.py`) by classification — every `CUSTOMER_RESTRICTED` dataset
-today is exactly as reachable by any configured LLM provider as any other, since nothing reads
-this classification at LLM-call time yet; and the broader data-loss-prevention posture (logs,
-monitoring payloads, cross-organization vector search never leaking one customer's confidential
-data into another's outputs) the original plan described. All of this is Milestone 9/10 scope.
+admin UI for `ModelRoutingPolicy`/`RetentionPolicy` (API-only today — no dashboard page yet);
+and the broader data-loss-prevention posture (logs, monitoring payloads, cross-organization
+vector search never leaking one customer's confidential data into another's outputs) the
+original plan described. All of this is Milestone 10+ scope.
 
 ## 12. Transparency and explainability
 
