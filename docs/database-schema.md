@@ -233,6 +233,23 @@ No column for chain-of-thought. `reasoning_summary` is a concise, human-auditabl
   `list_audit_events` — there is no update or delete method for this table, in the repository or
   the API, ever.
 
+## 4b. Alpha Intelligence Tables (Alpha Intelligence Layer Milestone 1 — `docs/alpha-intelligence.md`)
+
+- **`alpha_signals`** — one row per `Signal` AlphaSignal(TM) detected and persisted. id,
+  organization_id (nullable FK to `organizations`, NULL = platform-wide — the only kind
+  Milestone 1 produces), workspace_id (nullable, reserved for a future Workspace entity),
+  signal_type, category, subcategory, source_ids (jsonb), detected_at, effective_at (nullable),
+  market, geography (nullable), asset_ids (jsonb), headline, description, previous_value,
+  current_value, absolute_change, percent_change, z_score, historical_percentile,
+  materiality_score, novelty_score, confidence, direction, time_horizon, data_quality,
+  citations (jsonb), affected_agents (jsonb), affected_business_functions (jsonb), status,
+  created_at.
+- **`alpha_signal_baselines`** — the last-known value + bounded rolling window per detector
+  metric key (e.g. `"STORAGE.forecast_bcf"`), natural-key PK `key`, so
+  `alpha_service.signal_detector.SignalDetector` can diff cycle-over-cycle without holding
+  that state in the process-wide `AppState` singleton itself: key, value, rolling_window
+  (jsonb), observed_at.
+
 ## 5. TimescaleDB Specifics
 
 - Hypertables: `observations`, `market_ticks`, `gas_balance_daily`, `weather_demand_impacts`.

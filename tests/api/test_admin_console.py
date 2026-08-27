@@ -116,7 +116,8 @@ def test_list_features_returns_the_full_catalog(client):
     assert r.status_code == 200
     keys = {f["key"] for f in r.json()}
     assert "paper_trading" in keys
-    assert len(keys) == 18
+    assert "alpha_intelligence" in keys
+    assert len(keys) == 19
 
 
 def test_toggle_feature_globally(client):

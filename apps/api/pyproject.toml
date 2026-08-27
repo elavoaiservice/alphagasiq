@@ -15,6 +15,7 @@ dependencies = [
   "alphagasiq-service-quant",
   "alphagasiq-service-risk",
   "alphagasiq-service-paper-execution",
+  "alphagasiq-service-alpha",
   "fastapi>=0.110",
   "uvicorn[standard]>=0.29",
   "pyjwt[crypto]>=2.8",

@@ -561,3 +561,58 @@ class RiskLimitsRow(Base):
     )
     effective_to: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     set_by_user_id: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class SignalRow(Base):
+    """A single material change detected by AlphaSignal(TM) (docs/alpha-intelligence.md
+    section 2). `organization_id`/`workspace_id` are nullable -- NULL means a
+    platform-wide signal derived from shared public/simulated data, the only kind the
+    Milestone 1 detector produces; a future enterprise-data-aware detector can stamp a
+    real tenant id here without a schema change."""
+
+    __tablename__ = "alpha_signals"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    organization_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=True)
+    workspace_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    signal_type: Mapped[str] = mapped_column(String, nullable=False)
+    category: Mapped[str] = mapped_column(String, nullable=False)
+    subcategory: Mapped[str] = mapped_column(String, nullable=False, default="")
+    source_ids: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    detected_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    effective_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    market: Mapped[str] = mapped_column(String, nullable=False, default="HENRY_HUB")
+    geography: Mapped[str | None] = mapped_column(String, nullable=True)
+    asset_ids: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    headline: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str] = mapped_column(String, nullable=False)
+    previous_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    current_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    absolute_change: Mapped[float | None] = mapped_column(Float, nullable=True)
+    percent_change: Mapped[float | None] = mapped_column(Float, nullable=True)
+    z_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    historical_percentile: Mapped[float | None] = mapped_column(Float, nullable=True)
+    materiality_score: Mapped[float] = mapped_column(Float, nullable=False)
+    novelty_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    direction: Mapped[str] = mapped_column(String, nullable=False, default="NEUTRAL")
+    time_horizon: Mapped[str] = mapped_column(String, nullable=False, default="")
+    data_quality: Mapped[str] = mapped_column(String, nullable=False)
+    citations: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    affected_agents: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    affected_business_functions: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="ACTIVE")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class SignalBaselineRow(Base):
+    """The last-known value + rolling window per `SignalDetector` key (e.g.
+    `"STORAGE.forecast_bcf"`), so AlphaSignal can diff cycle-over-cycle without holding
+    that state in the process-wide `AppState` singleton itself."""
+
+    __tablename__ = "alpha_signal_baselines"
+
+    key: Mapped[str] = mapped_column(String, primary_key=True)
+    value: Mapped[float] = mapped_column(Float, nullable=False)
+    rolling_window: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    observed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)

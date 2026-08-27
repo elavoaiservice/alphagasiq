@@ -25,6 +25,8 @@ from .models import (
     RolePermissionRow,
     RoleRow,
     SessionRow,
+    SignalBaselineRow,
+    SignalRow,
     SystemSettingHistoryRow,
     SystemSettingRow,
     TradeIdeaRow,
@@ -66,5 +68,7 @@ __all__ = [
     "SystemSettingHistoryRow",
     "DataFeedConfigRow",
     "DataFeedEventRow",
+    "SignalRow",
+    "SignalBaselineRow",
     "SqlAppRepository",
 ]

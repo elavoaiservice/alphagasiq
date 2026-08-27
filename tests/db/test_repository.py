@@ -523,10 +523,11 @@ async def test_seed_feature_defaults_creates_the_full_catalog_and_role_grants(re
     await repo.seed_feature_defaults()
 
     features = await repo.list_features()
-    assert len(features) == 18
+    assert len(features) == 19
     keys = {f["key"] for f in features}
     assert "chief_trading_agent_chat" in keys
     assert "paper_trading" in keys
+    assert "alpha_intelligence" in keys
 
     sensitive = {f["key"] for f in features if f["security_sensitive"]}
     assert "chief_trading_agent_chat" in sensitive
@@ -544,7 +545,7 @@ async def test_seed_feature_defaults_is_idempotent(repo):
     first = await repo.list_features()
     await repo.seed_feature_defaults()
     second = await repo.list_features()
-    assert len(first) == len(second) == 18
+    assert len(first) == len(second) == 19
 
 
 async def test_organization_and_user_feature_overrides_round_trip(repo):

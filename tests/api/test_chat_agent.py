@@ -77,3 +77,52 @@ async def test_declined_topic_never_calls_the_llm(monkeypatch, user):
 
     result = await agent.ask("Why are we bullish?", _FakeState(), user)
     assert result.access_granted is False
+
+
+async def test_what_changed_overnight_routes_to_alphasignal_tool(monkeypatch, user):
+    """AlphaSignalTool (docs/alpha-intelligence.md section 43): "overnight"/"material
+    change" phrasing routes to the new topic, requires `alpha_signals.view`, and reads
+    `state.recent_signals` -- distinct from the pre-existing `_what_changed` topic,
+    which reads the raw agent execution log instead."""
+    from schemas import Signal, SignalType
+
+    async def fake_permissions(_user, _state):
+        return {"alpha_signals.view"}
+
+    monkeypatch.setattr(chat_agent_module, "get_effective_permissions", fake_permissions)
+    agent = ChatAgent(llm=MockLLMProvider())
+
+    state = _FakeState()
+    state.recent_signals = [
+        Signal(
+            signal_type=SignalType.STORAGE_CHANGE,
+            category="fundamentals",
+            headline="Storage forecast shifted",
+            description="test signal",
+            materiality_score=91.0,
+            confidence=0.8,
+        )
+    ]
+
+    result = await agent.ask("What changed overnight?", state, user)
+
+    assert result.access_granted is True
+    assert result.tool_used == "what_changed_overnight"
+    assert result.permission_required == "alpha_signals.view"
+    assert "Storage forecast shifted" in result.content
+
+
+async def test_what_changed_overnight_declined_without_permission(monkeypatch, user):
+    async def fake_permissions(_user, _state):
+        return set()
+
+    monkeypatch.setattr(chat_agent_module, "get_effective_permissions", fake_permissions)
+    agent = ChatAgent(llm=MockLLMProvider())
+
+    # _FakeState has no `recent_signals` attribute -- a wrongly-dispatched tool call
+    # would raise AttributeError instead of returning a declined result.
+    result = await agent.ask("What changed overnight?", _FakeState(), user)
+
+    assert result.access_granted is False
+    assert result.tool_used == "what_changed_overnight"
+    assert "alpha_signals.view" in result.content

@@ -216,3 +216,15 @@ create a `User` or `Organization` — see `docs/access-model.md` "No Self-Regist
 All list endpoints support `limit`/`cursor` pagination. All responses embed
 `data_sources`/`citations`/`freshness` metadata wherever the payload includes market or research
 facts, per the platform's explainability requirement.
+
+## Alpha Intelligence — AlphaSignal (Alpha Intelligence Layer Milestone 1, `docs/alpha-intelligence.md`)
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/alpha/signals` | requires `alpha_signals.view`. Ranked highest-materiality-first, then most recent. Query params: `market`, `since_hours` (default 24), `min_materiality` (default 0), `limit` (default 50). Includes both the requester's organization's own signals and every platform-wide signal (`organization_id IS NULL` — the only kind this milestone's detector produces) |
+| GET | `/alpha/signals/{signal_id}` | requires `alpha_signals.view`. 404 if unknown |
+
+Only AlphaSignal is implemented so far. `docs/alpha-intelligence.md` documents the planned
+`/alpha/impacts`, `/alpha/consensus`, `/alpha/scenarios`, `/alpha/replay`, `/alpha/memory`, and
+`/enterprise/*` endpoint families for the remaining five components and the Enterprise Data
+Platform — not yet built.

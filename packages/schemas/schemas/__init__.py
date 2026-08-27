@@ -29,6 +29,7 @@ from .fundamentals import GasBalanceDaily, StorageForecast
 from .events import DomainEvent, EventType, topic_for_event_type
 from .post_trade import PostTradeAnalysis
 from .quant import BacktestResult, ForecastHorizon, ModelType, PriceForecast, RegimeResult, RelativeValueSignal
+from .alpha import Signal, SignalDirection, SignalStatus, SignalType
 
 __all__ = [
     "AgentStatus",
@@ -68,4 +69,8 @@ __all__ = [
     "PriceForecast",
     "RegimeResult",
     "RelativeValueSignal",
+    "Signal",
+    "SignalDirection",
+    "SignalStatus",
+    "SignalType",
 ]

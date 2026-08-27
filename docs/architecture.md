@@ -519,3 +519,53 @@ Several follow-up hardening items from the MVP status are now closed out:
   implementation, and database connectivity from data this platform already tracks — nothing
   fabricated, and a full graphical pipeline visualization is frontend work building on this
   endpoint, honestly not yet built.
+
+## 9. Alpha Intelligence Layer
+
+A proprietary layer sitting between the Natural Gas Digital Twin (`services/data` +
+`services/fundamentals`) and the Specialized AI Agents, so the pipeline is:
+
+```
+DATA → NATURAL GAS DIGITAL TWIN → ALPHA INTELLIGENCE LAYER → SPECIALIZED AI AGENTS →
+AI INVESTMENT COMMITTEE → CHIEF TRADING AGENT → INDEPENDENT RISK GOVERNOR → HUMAN TRADER
+```
+
+Six components, documented in full in `docs/alpha-intelligence.md`:
+
+- **AlphaSignal™** — detects material changes (`services/alpha`). **Implemented (Milestone 1
+  of this layer).**
+- **AlphaImpact™** — event-to-market causal chain. Planned (Milestone 2).
+- **AlphaConsensus™ + Agent Alpha Score™** — calibrated, dynamically-weighted multi-agent
+  forecast aggregation. Planned (Milestone 3).
+- **AlphaScenario™** — counterfactual/stress-test engine, extending `services/risk/
+  risk_service/scenarios.py`. Planned (Milestone 4).
+- **AlphaMemory™** — decision/institutional memory. Planned (Milestone 5).
+- **AlphaReplay™** — bitemporal historical reconstruction ("as-known-at" querying, no
+  look-ahead bias). Planned (Milestone 6, the most invasive since it retrofits bitemporal
+  columns onto existing observation tables).
+
+`docs/alpha-intelligence.md` also covers the planned Enterprise Data Platform (multi-tenant
+`Organization` → `Workspace` → `User`, proprietary data connectors, tenant isolation) that lets
+enterprise customers combine their own data with this layer — sequenced deliberately *after*
+the six Alpha components (Milestones 7-10), since they deliver real value against today's
+shared public/simulated dataset first, and real multi-tenant row-level isolation is new
+infrastructure this codebase doesn't have yet (see that doc's "Baseline" section for the exact
+gap analysis).
+
+### AlphaSignal™ (implemented)
+
+`services/alpha/alpha_service/materiality.py`'s `MaterialityEngine` is a deterministic,
+non-LLM rules engine in the same design philosophy as `risk_service.governor.RiskGovernor` —
+pure function of its input, exhaustively unit-tested (`tests/alpha/test_materiality.py`) — that
+scores a candidate signal 0-100 from four weighted components (magnitude, historical rarity via
+z-score, confidence, data quality). `alpha_service/signal_detector.py`'s `SignalDetector` is
+also pure: it diffs the current research cycle's already-computed fundamental-agent outputs
+(Supply/Demand/Storage/Weather/LNG/Power/Pipeline) against the previous cycle's stored
+baseline for the same metric, and returns any `Signal` (`packages/schemas/schemas/alpha.py`)
+that clears the materiality threshold, plus updated baselines — no DB or event-bus access
+happens inside either class; `AppState._run_alpha_signal_detection()` (`apps/api/api_app/
+state.py`) owns all I/O (loading/saving `SignalBaselineRow`/`SignalRow` via `SqlAppRepository`,
+publishing `SIGNAL_DETECTED`/`SIGNAL_ESCALATED` events). Exposed via `GET /alpha/signals` and
+`GET /alpha/signals/{id}` (`admin`/`alpha_signals.view` permission, `alpha_intelligence`
+feature), an `AlphaSignalTool` chat topic ("What changed overnight?"), and a new
+"Alpha Intelligence" dashboard nav section.

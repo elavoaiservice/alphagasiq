@@ -344,3 +344,23 @@ up` provisions one). Every default environment keeps the plain in-memory graph, 
 failure at boot falls back to it rather than crashing. Same validation posture as the event bus
 above: no live Neo4j server is reachable here, so it's tested against faithful `neo4j` driver
 test doubles (`tests/fundamentals/test_pipeline_graph_neo4j.py`).
+
+**A new proprietary Alpha Intelligence Layer sits between the digital twin and the Specialized AI
+Agents — Milestone 1 (AlphaSignal™) is implemented.** See `docs/alpha-intelligence.md` for the
+full six-component target architecture (AlphaSignal™/AlphaImpact™/AlphaConsensus™/
+AlphaScenario™/AlphaReplay™/AlphaMemory™) and the planned multi-tenant Enterprise Data Platform,
+sequenced across 10 milestones the same incremental way the access-model spec was. AlphaSignal
+(new `services/alpha` package) is a deterministic materiality engine
+(`alpha_service.materiality.MaterialityEngine`, in the same pure-function/exhaustively-tested
+philosophy as the Risk Governor) plus a signal detector
+(`alpha_service.signal_detector.SignalDetector`) that diffs each research cycle's
+Supply/Demand/Storage/Weather/LNG/Power/Pipeline agent outputs against the previous cycle's
+stored baseline and flags cycle-over-cycle changes that clear a materiality threshold — not
+every tick. Exposed via `GET /alpha/signals`/`GET /alpha/signals/{id}` (`alpha_signals.view`
+permission), a new "AlphaSignal" chat tool ("What changed overnight?"), and a new
+"Alpha Intelligence" dashboard nav section. `organization_id`/`workspace_id` columns exist on
+the new `alpha_signals` table from day one (nullable, unenforced) so the schema is
+tenant-ready without forcing a premature multi-tenant rearchitecture before this milestone
+could ship — real row-level tenant isolation doesn't exist anywhere in this codebase yet
+(see `docs/alpha-intelligence.md`'s baseline section for the honest gap analysis) and is a
+later milestone in that roadmap, not a Milestone 1 dependency.

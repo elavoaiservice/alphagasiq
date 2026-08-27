@@ -28,6 +28,7 @@ from agents_service import (
     RegimeDetectionAgent,
     RelativeValueAgent,
 )
+from alpha_service import BaselineSnapshot, MaterialityEngine, SignalDetector
 from config import get_settings
 from data_sdk import FetchRequest, ProviderRegistry
 from data_service.providers.mock_market_data import MockCMEProvider, MockICEProvider
@@ -69,6 +70,7 @@ from schemas import (
     RiskCheckResult,
     RiskLimits,
     RiskVerdict,
+    Signal,
     TimeSeriesObservation,
     TradeIdea,
 )
@@ -109,6 +111,13 @@ class AppState:
         self.relative_value_agent = RelativeValueAgent(llm=llm)
         self.backtesting_agent = BacktestingAgent(llm=llm)
         self.risk_governor = RiskGovernor()
+        self.alpha_signal_detector = SignalDetector(MaterialityEngine())
+        # Bounded cache of the most recently detected signals, kept in-memory alongside
+        # the durable `alpha_signals` table so the (synchronous) chat-tool dispatch
+        # methods in chat_agent.py can read them the same way every other tool method
+        # reads AppState — without making that dispatch path async-aware for just this
+        # one topic (docs/alpha-intelligence.md Milestone 1 provisional decisions).
+        self.recent_signals: list[Signal] = []
 
         from .email_service import get_email_provider
         from .rate_limit import SlidingWindowRateLimiter
@@ -355,6 +364,7 @@ class AppState:
             if res is not None:
                 self.agent_execution_log.append(res)
 
+        pipeline_result = None
         if self.pipeline_graph is not None:
             pipeline_result = (
                 self.pipeline_agent.skipped_result("Disabled by admin.")
@@ -380,6 +390,13 @@ class AppState:
             else await self.power_market_agent.run(markets=self.power_markets)
         )
         self.agent_execution_log.append(power_market_result)
+
+        await self._run_alpha_signal_detection(
+            research_result=result,
+            lng_result=lng_result,
+            power_result=power_market_result,
+            pipeline_result=pipeline_result,
+        )
 
         await self._run_quant_research(result, disabled_agent_types=disabled)
 
@@ -502,6 +519,10 @@ class AppState:
             if res is not None:
                 self.agent_execution_log.append(res)
 
+        await self._run_alpha_signal_detection(
+            research_result=result, lng_result=None, power_result=None, pipeline_result=None
+        )
+
         new_approvals = []
         for trade in result.trade_ideas:
             approval = await self.submit_trade_idea(trade)
@@ -521,6 +542,55 @@ class AppState:
         being recorded as disabled."""
         configs = await self.repo.list_agent_configs()
         return frozenset(c["agent_type"] for c in configs if c["status"] in ("PAUSED", "DISABLED"))
+
+    async def _run_alpha_signal_detection(
+        self,
+        *,
+        research_result,
+        lng_result: AgentResult | None,
+        power_result: AgentResult | None,
+        pipeline_result: AgentResult | None,
+    ) -> None:
+        """AlphaSignal(TM)'s integration point (docs/alpha-intelligence.md section 2):
+        diffs this cycle's already-computed fundamental-agent outputs against the
+        previous cycle's stored baselines, persists any signal that clears the
+        materiality threshold, and publishes a domain event for it. Called from both
+        `_run_initial_research_cycle` and `run_chief_trading_cycle` -- the latter
+        doesn't re-run LNG/power/pipeline, so those three arguments are `None` there,
+        and the detector simply skips the rules that need them."""
+        raw_baselines = await self.repo.get_signal_baselines()
+        baselines = {
+            key: BaselineSnapshot(
+                key=key, value=b["value"], rolling_window=b["rolling_window"], observed_at=b["observed_at"]
+            )
+            for key, b in raw_baselines.items()
+        }
+        signals, updated_baselines = self.alpha_signal_detector.detect(
+            research_result=research_result,
+            lng_result=lng_result,
+            power_result=power_result,
+            pipeline_result=pipeline_result,
+            market_curve=self.market_curve,
+            baselines=baselines,
+        )
+        await self.repo.save_signal_baselines(
+            {
+                key: {"value": snap.value, "rolling_window": snap.rolling_window, "observed_at": snap.observed_at}
+                for key, snap in updated_baselines.items()
+            }
+        )
+        for sig in signals:
+            await self.repo.save_signal(sig)
+            self.recent_signals.append(sig)
+            await self.event_bus.publish(
+                DomainEvent(
+                    event_type=EventType.SIGNAL_ESCALATED if sig.materiality_score >= 85 else EventType.SIGNAL_DETECTED,
+                    source_service="alpha_service",
+                    payload=sig.model_dump(mode="json"),
+                )
+            )
+        if signals:
+            self.recent_signals = self.recent_signals[-50:]
 
     async def submit_trade_idea(self, trade: TradeIdea) -> Approval:
         self.trade_ideas[trade.trade_id] = trade

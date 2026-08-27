@@ -12,6 +12,7 @@ from schemas import (
     PriceForecast,
     RiskCheckResult,
     RiskLimits,
+    Signal,
     TradeIdea,
 )
 
@@ -42,6 +43,8 @@ from .models import (
     RolePermissionRow,
     RoleRow,
     SessionRow,
+    SignalBaselineRow,
+    SignalRow,
     SystemSettingHistoryRow,
     SystemSettingRow,
     TradeIdeaRow,
@@ -102,6 +105,7 @@ _PERMISSION_KEYS = [
     "admin.audit_logs",
     "admin.feature_management",
     "admin.risk_settings",
+    "alpha_signals.view",
 ]
 
 # Permissions reserved for SUPER_ADMIN: the system-level/risk/model/agent-optimization
@@ -133,6 +137,7 @@ _ROLE_PERMISSIONS: dict[str, list[str]] = {
         "power.view",
         "news.view",
         "trading_recommendations.view",
+        "alpha_signals.view",
         "trading_recommendations.challenge",
         "chief_agent.chat",
         "portfolio.view",
@@ -150,6 +155,7 @@ _ROLE_PERMISSIONS: dict[str, list[str]] = {
         "power.view",
         "news.view",
         "trading_recommendations.view",
+        "alpha_signals.view",
         "chief_agent.chat",
         "portfolio.view",
         "risk.view",
@@ -166,6 +172,7 @@ _ROLE_PERMISSIONS: dict[str, list[str]] = {
         "power.view",
         "news.view",
         "trading_recommendations.view",
+        "alpha_signals.view",
         "trading_recommendations.challenge",
         "chief_agent.chat",
         "portfolio.view",
@@ -182,6 +189,7 @@ _ROLE_PERMISSIONS: dict[str, list[str]] = {
         "power.view",
         "news.view",
         "trading_recommendations.view",
+        "alpha_signals.view",
         "portfolio.view",
         "risk.view",
         "chief_agent.chat",
@@ -196,6 +204,7 @@ _ROLE_PERMISSIONS: dict[str, list[str]] = {
         "power.view",
         "news.view",
         "trading_recommendations.view",
+        "alpha_signals.view",
     ],
     "API_USER": [
         "market_data.view",
@@ -223,6 +232,7 @@ _FEATURES: list[tuple[str, str, bool]] = [
     ("power_market_intelligence", "Power Market Intelligence", False),
     ("news_intelligence", "News Intelligence", False),
     ("ai_trade_recommendations", "AI Trade Recommendations", False),
+    ("alpha_intelligence", "Alpha Intelligence", False),
     ("chief_trading_agent_chat", "Chief Trading Agent Chat", True),
     ("portfolio_analytics", "Portfolio Analytics", True),
     ("risk_analytics", "Risk Analytics", True),
@@ -250,6 +260,7 @@ _ROLE_FEATURES: dict[str, list[str]] = {
         "power_market_intelligence",
         "news_intelligence",
         "ai_trade_recommendations",
+        "alpha_intelligence",
         "chief_trading_agent_chat",
         "portfolio_analytics",
         "ng_digital_twin",
@@ -265,6 +276,7 @@ _ROLE_FEATURES: dict[str, list[str]] = {
         "power_market_intelligence",
         "news_intelligence",
         "ai_trade_recommendations",
+        "alpha_intelligence",
         "chief_trading_agent_chat",
         "portfolio_analytics",
         "risk_analytics",
@@ -280,6 +292,7 @@ _ROLE_FEATURES: dict[str, list[str]] = {
         "power_market_intelligence",
         "news_intelligence",
         "ai_trade_recommendations",
+        "alpha_intelligence",
         "chief_trading_agent_chat",
         "ng_digital_twin",
         "historical_research",
@@ -295,6 +308,7 @@ _ROLE_FEATURES: dict[str, list[str]] = {
         "power_market_intelligence",
         "news_intelligence",
         "ai_trade_recommendations",
+        "alpha_intelligence",
         "chief_trading_agent_chat",
         "portfolio_analytics",
         "risk_analytics",
@@ -472,6 +486,42 @@ def _model_definition_to_dict(row: ModelDefinitionRow) -> dict:
         "updated_by": row.updated_by,
         "updated_at": row.updated_at,
         "approved_at": row.approved_at,
+    }
+
+
+def _signal_row_to_dict(row: SignalRow) -> dict:
+    return {
+        "id": row.id,
+        "organization_id": row.organization_id,
+        "workspace_id": row.workspace_id,
+        "signal_type": row.signal_type,
+        "category": row.category,
+        "subcategory": row.subcategory,
+        "source_ids": row.source_ids,
+        "detected_at": row.detected_at,
+        "effective_at": row.effective_at,
+        "market": row.market,
+        "geography": row.geography,
+        "asset_ids": row.asset_ids,
+        "headline": row.headline,
+        "description": row.description,
+        "previous_value": row.previous_value,
+        "current_value": row.current_value,
+        "absolute_change": row.absolute_change,
+        "percent_change": row.percent_change,
+        "z_score": row.z_score,
+        "historical_percentile": row.historical_percentile,
+        "materiality_score": row.materiality_score,
+        "novelty_score": row.novelty_score,
+        "confidence": row.confidence,
+        "direction": row.direction,
+        "time_horizon": row.time_horizon,
+        "data_quality": row.data_quality,
+        "citations": row.citations,
+        "affected_agents": row.affected_agents,
+        "affected_business_functions": row.affected_business_functions,
+        "status": row.status,
+        "created_at": row.created_at,
     }
 
 
@@ -1713,6 +1763,99 @@ class SqlAppRepository:
         )
         async with self.session_factory() as session:
             await session.merge(row)
+            await session.commit()
+
+    async def save_signal(self, signal: Signal) -> None:
+        row = SignalRow(
+            id=str(signal.id),
+            organization_id=signal.organization_id,
+            workspace_id=signal.workspace_id,
+            signal_type=signal.signal_type.value,
+            category=signal.category,
+            subcategory=signal.subcategory,
+            source_ids=signal.source_ids,
+            detected_at=_naive_utc(signal.detected_at),
+            effective_at=_naive_utc(signal.effective_at),
+            market=signal.market,
+            geography=signal.geography,
+            asset_ids=signal.asset_ids,
+            headline=signal.headline,
+            description=signal.description,
+            previous_value=signal.previous_value,
+            current_value=signal.current_value,
+            absolute_change=signal.absolute_change,
+            percent_change=signal.percent_change,
+            z_score=signal.z_score,
+            historical_percentile=signal.historical_percentile,
+            materiality_score=signal.materiality_score,
+            novelty_score=signal.novelty_score,
+            confidence=signal.confidence,
+            direction=signal.direction.value,
+            time_horizon=signal.time_horizon,
+            data_quality=signal.data_quality.value,
+            citations=[c.model_dump(mode="json") for c in signal.citations],
+            affected_agents=signal.affected_agents,
+            affected_business_functions=signal.affected_business_functions,
+            status=signal.status.value,
+        )
+        async with self.session_factory() as session:
+            session.add(row)
+            await session.commit()
+
+    async def list_signals(
+        self,
+        *,
+        organization_id: str | None = None,
+        market: str | None = None,
+        since: datetime | None = None,
+        min_materiality: float | None = None,
+        limit: int = 50,
+    ) -> list[dict]:
+        """Ranked by materiality (highest first), then recency. `organization_id`, when
+        given, includes both that organization's own signals AND every platform-wide
+        signal (`organization_id IS NULL`) -- the only kind Milestone 1's detector
+        produces -- rather than hiding the global feed from every tenant."""
+        query = select(SignalRow).order_by(SignalRow.materiality_score.desc(), SignalRow.detected_at.desc()).limit(limit)
+        if organization_id is not None:
+            query = query.where(
+                (SignalRow.organization_id == organization_id) | (SignalRow.organization_id.is_(None))
+            )
+        if market is not None:
+            query = query.where(SignalRow.market == market)
+        if since is not None:
+            query = query.where(SignalRow.detected_at >= _naive_utc(since))
+        if min_materiality is not None:
+            query = query.where(SignalRow.materiality_score >= min_materiality)
+        async with self.session_factory() as session:
+            rows = (await session.execute(query)).scalars().all()
+        return [_signal_row_to_dict(r) for r in rows]
+
+    async def get_signal(self, signal_id: str) -> dict | None:
+        async with self.session_factory() as session:
+            row = (await session.execute(select(SignalRow).where(SignalRow.id == signal_id))).scalar_one_or_none()
+        return _signal_row_to_dict(row) if row is not None else None
+
+    async def get_signal_baselines(self) -> dict[str, dict]:
+        """Every `SignalBaselineRow`, keyed by its detector key -- a small, bounded
+        table (one row per tracked metric), so no filtering is needed to keep this
+        cheap."""
+        async with self.session_factory() as session:
+            rows = (await session.execute(select(SignalBaselineRow))).scalars().all()
+        return {
+            r.key: {"value": r.value, "rolling_window": r.rolling_window, "observed_at": r.observed_at}
+            for r in rows
+        }
+
+    async def save_signal_baselines(self, baselines: dict[str, dict]) -> None:
+        async with self.session_factory() as session:
+            for key, snapshot in baselines.items():
+                row = SignalBaselineRow(
+                    key=key,
+                    value=snapshot["value"],
+                    rolling_window=snapshot["rolling_window"],
+                    observed_at=_naive_utc(snapshot["observed_at"]),
+                )
+                await session.merge(row)
             await session.commit()
 
     async def save_committee_decision(self, trade_id: UUID, decision: InvestmentCommitteeDecision) -> None:

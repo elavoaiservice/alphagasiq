@@ -63,6 +63,7 @@ _TOOL_PERMISSIONS: dict[str, str] = {
     "show_evidence": "trading_recommendations.view",
     "compare_forecast_vs_consensus": "storage.view",
     "top_risks": "portfolio.view",
+    "what_changed_overnight": "alpha_signals.view",
     "what_changed": "dashboard.view",
     "todays_move": "news.view",
     "general_status": "dashboard.view",
@@ -90,6 +91,8 @@ class ChatAgent:
             return "compare_forecast_vs_consensus"
         elif "largest risk" in q or "biggest risk" in q or "risk in the portfolio" in q:
             return "top_risks"
+        elif "overnight" in q or "material change" in q or "alphasignal" in q:
+            return "what_changed_overnight"
         elif "what changed" in q or "last six hours" in q or "recent" in q:
             return "what_changed"
         elif "caused today" in q or "today's move" in q or "why did" in q and "move" in q:
@@ -116,6 +119,8 @@ class ChatAgent:
             return self._compare_forecast_vs_consensus(state)
         elif topic == "top_risks":
             return self._top_risks(state)
+        elif topic == "what_changed_overnight":
+            return self._what_changed_overnight(state)
         elif topic == "what_changed":
             return self._what_changed(q, state)
         elif topic == "todays_move":
@@ -309,6 +314,22 @@ class ChatAgent:
             f"largest single-position share {summary.largest_position_share:.1%}."
         )
         return ToolResult(content, [{"source": "risk_service.metrics", "reference": "portfolio_risk_summary"}], {})
+
+    def _what_changed_overnight(self, state: AppState) -> ToolResult:
+        """AlphaSignalTool (docs/alpha-intelligence.md section 43) -- the highest-
+        materiality changes AlphaSignal(TM) detected, ranked, not the raw agent
+        activity log `_what_changed` below reads."""
+        if not state.recent_signals:
+            return ToolResult("No material changes detected recently.", [], {})
+        top = sorted(state.recent_signals, key=lambda s: s.materiality_score, reverse=True)[:5]
+        lines = [
+            f"[{s.materiality_score:.0f}] {s.headline} ({s.direction.value}) — {s.description}" for s in top
+        ]
+        return ToolResult(
+            "\n".join(lines),
+            [{"source": "alpha_service.signal_detector", "reference": str(s.id)} for s in top],
+            {"signal_count": len(state.recent_signals)},
+        )
 
     def _what_changed(self, q: str, state: AppState) -> ToolResult:
         hours = 6

@@ -26,6 +26,8 @@ class EventType(str, Enum):
     TRADE_REJECTED = "TRADE_REJECTED"
     RISK_LIMIT_BREACHED = "RISK_LIMIT_BREACHED"
     POSITION_UPDATED = "POSITION_UPDATED"
+    SIGNAL_DETECTED = "SIGNAL_DETECTED"
+    SIGNAL_ESCALATED = "SIGNAL_ESCALATED"
 
 
 def topic_for_event_type(event_type: EventType | str) -> str:
