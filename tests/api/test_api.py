@@ -1,6 +1,8 @@
 import pytest
 from fastapi.testclient import TestClient
 
+from .trade_test_helpers import create_deterministic_trade_idea, get_approval_for_trade
+
 
 @pytest.fixture
 def client():
@@ -170,9 +172,8 @@ def test_chief_trading_run_with_researcher_role(client):
 
 
 def test_trade_idea_lifecycle_and_explainability(client):
-    trades = client.get("/api/v1/trade-ideas").json()
-    assert len(trades) >= 1
-    trade_id = trades[0]["trade_id"]
+    trade = create_deterministic_trade_idea(client)
+    trade_id = trade["trade_id"]
 
     detail = client.get(f"/api/v1/trade-ideas/{trade_id}")
     assert detail.status_code == 200
@@ -234,15 +235,14 @@ def test_unknown_scenario_returns_404(client):
 
 
 def test_approvals_listed_and_actionable(client):
-    approvals = client.get("/api/v1/approvals").json()
-    assert len(approvals) >= 1
+    trade = create_deterministic_trade_idea(client)
+    approval = get_approval_for_trade(client, trade["trade_id"])
 
     admin_login = client.post(
         "/api/v1/auth/login", json={"email": "admin@alphagasiq.local", "password": "admin-dev-password"}
     )
     token = admin_login.json()["access_token"]
 
-    approval = approvals[0]
     r = client.post(
         f"/api/v1/approvals/{approval['id']}/action",
         json={"action": "REQUEST_MORE_ANALYSIS", "payload": {}},
@@ -254,8 +254,8 @@ def test_approvals_listed_and_actionable(client):
 
 
 def test_approvals_action_requires_auth(client):
-    approvals = client.get("/api/v1/approvals").json()
-    approval = approvals[0]
+    trade = create_deterministic_trade_idea(client)
+    approval = get_approval_for_trade(client, trade["trade_id"])
     r = client.post(f"/api/v1/approvals/{approval['id']}/action", json={"action": "APPROVE", "payload": {}})
     assert r.status_code == 401
 
@@ -335,29 +335,26 @@ def _admin_headers(client) -> dict:
 
 
 def test_close_trade_requires_auth(client):
-    trades = client.get("/api/v1/trade-ideas").json()
-    trade_id = trades[0]["trade_id"]
-    r = client.post(f"/api/v1/trade-ideas/{trade_id}/close", json={})
+    trade = create_deterministic_trade_idea(client)
+    r = client.post(f"/api/v1/trade-ideas/{trade['trade_id']}/close", json={})
     assert r.status_code == 401
 
 
 def test_close_trade_before_execution_is_conflict(client):
     headers = _admin_headers(client)
-    trades = client.get("/api/v1/trade-ideas").json()
-    trade_id = trades[0]["trade_id"]
-    r = client.post(f"/api/v1/trade-ideas/{trade_id}/close", json={}, headers=headers)
+    trade = create_deterministic_trade_idea(client)
+    r = client.post(f"/api/v1/trade-ideas/{trade['trade_id']}/close", json={}, headers=headers)
     assert r.status_code == 409
 
 
 def test_full_lifecycle_execute_then_close_then_post_trade_and_performance(client):
     headers = _admin_headers(client)
 
-    trades = client.get("/api/v1/trade-ideas").json()
-    trade_id = trades[0]["trade_id"]
-    entry_price = trades[0]["entry"]
+    trade = create_deterministic_trade_idea(client)
+    trade_id = trade["trade_id"]
+    entry_price = trade["entry"]
 
-    approvals = client.get("/api/v1/approvals").json()
-    approval = next(a for a in approvals if a["trade_id"] == trade_id)
+    approval = get_approval_for_trade(client, trade_id)
 
     approve = client.post(
         f"/api/v1/approvals/{approval['id']}/action",
@@ -366,13 +363,13 @@ def test_full_lifecycle_execute_then_close_then_post_trade_and_performance(clien
     )
     if approval["state"] == "RISK_REVIEW":
         assert approve.status_code == 409
-        return  # Risk Governor blocked this seed's trade; nothing further to exercise.
+        return  # Risk Governor blocked this trade; nothing further to exercise.
 
     assert approve.status_code == 200
     assert approve.json()["state"] == "EXECUTED_SIMULATION"
 
     positions = client.get("/api/v1/portfolio/positions", headers=headers).json()
-    position = next(p for p in positions if p["instrument"] == trades[0]["instrument"])
+    position = next(p for p in positions if p["instrument"] == trade["instrument"])
     assert position["quantity"] != 0
     # Entry price recorded on the trade idea should closely match the actual paper
     # fill price (small gap only from simulated slippage/spread) — regression guard
@@ -454,9 +451,8 @@ def test_model_performance_endpoint_empty_before_any_close(client):
 
 
 def test_post_trade_reports_open_before_close(client):
-    trades = client.get("/api/v1/trade-ideas").json()
-    trade_id = trades[0]["trade_id"]
-    r = client.get(f"/api/v1/post-trade/{trade_id}")
+    trade = create_deterministic_trade_idea(client)
+    r = client.get(f"/api/v1/post-trade/{trade['trade_id']}")
     assert r.status_code == 200
     assert r.json()["status"] == "OPEN"
 

@@ -13,6 +13,8 @@ import pytest
 from fastapi.testclient import TestClient
 from schemas import EventType
 
+from .trade_test_helpers import create_deterministic_trade_idea, get_approval_for_trade
+
 
 @pytest.fixture
 def client():
@@ -32,7 +34,12 @@ def _published_types(client) -> list[str]:
     return [e.event_type.value for e in state_module._state.event_bus.published]
 
 
-def test_boot_research_cycle_publishes_trade_idea_created(client):
+def test_submitting_a_trade_idea_publishes_trade_idea_created(client):
+    # Not "boot's research cycle" specifically -- boot's cycle depends on the
+    # calendar-sensitive DirectionalStrategyAgent signal, which can legitimately
+    # produce zero trade ideas on some dates. Submitting our own deterministic trade
+    # idea exercises the exact same `AppState.submit_trade_idea()` publish call.
+    create_deterministic_trade_idea(client)
     published = _published_types(client)
     assert EventType.TRADE_IDEA_CREATED.value in published
 
@@ -45,8 +52,9 @@ def test_approving_a_trade_publishes_trade_approved_or_rejected(client):
     )
     token = admin_login.json()["access_token"]
 
-    approvals = client.get("/api/v1/approvals").json()
-    approval = next(a for a in approvals if a["state"] == "HUMAN_REVIEW")
+    trade = create_deterministic_trade_idea(client)
+    approval = get_approval_for_trade(client, trade["trade_id"])
+    assert approval["state"] == "HUMAN_REVIEW"
     r = client.post(
         f"/api/v1/approvals/{approval['id']}/action",
         json={"action": "APPROVE", "payload": {}},
@@ -74,8 +82,9 @@ def test_full_close_lifecycle_publishes_position_updated(client):
     token = admin_login.json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
-    approvals = client.get("/api/v1/approvals").json()
-    approval = next(a for a in approvals if a["state"] == "HUMAN_REVIEW")
+    trade = create_deterministic_trade_idea(client)
+    approval = get_approval_for_trade(client, trade["trade_id"])
+    assert approval["state"] == "HUMAN_REVIEW"
     client.post(f"/api/v1/approvals/{approval['id']}/action", json={"action": "APPROVE", "payload": {}}, headers=headers)
 
     trade_id = approval["trade_id"]
