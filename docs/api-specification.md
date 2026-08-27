@@ -245,6 +245,40 @@ facts, per the platform's explainability requirement.
 
 AlphaSignal, AlphaImpact, AlphaConsensus, AlphaScenario, AlphaMemory, AlphaReplay, and the Chief
 Trading Agent integration (AlphaSignal/AlphaConsensus feedback into trade generation, the
-Overnight Intelligence Brief) are all implemented now. `docs/alpha-intelligence.md` documents
-the remaining planned work — `/enterprise/*` for the Enterprise Data Platform — not yet
-built.
+Overnight Intelligence Brief) are all implemented now.
+
+## Admin: Enterprise Data Platform foundation (Milestone 8, `docs/alpha-intelligence.md` section 11)
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/admin/workspaces` | requires `admin.workspaces`. Query params: `organization_id` |
+| POST | `/admin/workspaces` | requires `admin.workspaces`. Body: `{"organization_id", "name", "description"?}`; 400 if `organization_id` is unknown |
+| GET | `/admin/workspaces/{workspace_id}` | requires `admin.workspaces`. 404 if unknown |
+| PATCH | `/admin/workspaces/{workspace_id}` | requires `admin.workspaces`. Body: `{"name"?, "description"?}`; 404 if unknown |
+| DELETE | `/admin/workspaces/{workspace_id}` | requires `admin.workspaces`. 204; 404 if unknown |
+| GET | `/admin/workspaces/{workspace_id}/members` | requires `admin.workspaces`. 404 if the workspace is unknown |
+| POST | `/admin/workspaces/{workspace_id}/members` | requires `admin.workspaces`. Body: `{"user_id"}`; adding an existing member is a no-op, not a duplicate |
+| DELETE | `/admin/workspaces/{workspace_id}/members/{user_id}` | requires `admin.workspaces`. 204; 404 if not a member |
+| GET | `/admin/enterprise-data/sources` | requires `admin.enterprise_data`. Query params: `organization_id`, `workspace_id` |
+| POST | `/admin/enterprise-data/sources` | requires `admin.enterprise_data`. Body: `{"organization_id", "workspace_id"?, "name", "connector_type", "classification", "description"?, "connection_config"?}`; 400 if `organization_id` is unknown or `connector_type` isn't a valid `EnterpriseConnectorType`. No credential/secret field exists on this object at all |
+| GET | `/admin/enterprise-data/sources/{source_id}` | requires `admin.enterprise_data`. 404 if unknown |
+| PATCH | `/admin/enterprise-data/sources/{source_id}` | requires `admin.enterprise_data`. Body: `{"name"?, "status"?, "description"?, "connection_config"?}`; 404 if unknown |
+| DELETE | `/admin/enterprise-data/sources/{source_id}` | requires `admin.enterprise_data`. 204; 404 if unknown |
+| POST | `/admin/enterprise-data/sources/{source_id}/test-connection` | requires `admin.enterprise_data`. Body: `{"sample_rows"?}` (only meaningful for `MANUAL_UPLOAD`). Runs the source's connector's `test_connection()` and records the result as an event |
+| GET | `/admin/enterprise-data/sources/{source_id}/events` | requires `admin.enterprise_data`. Test-connection/ingest event log, most recent first |
+| GET | `/admin/enterprise-data/sources/{source_id}/datasets` | requires `admin.enterprise_data`. 404 if the source is unknown |
+| POST | `/admin/enterprise-data/sources/{source_id}/datasets` | requires `admin.enterprise_data`. Body: `{"name", "domain", "classification", "sample_rows"?}`. Runs the connector's `discover_schema()` on `sample_rows` to populate `schema_summary`; an unimplemented connector type still creates the dataset, just without a discovered schema |
+| GET | `/admin/enterprise-data/datasets/{dataset_id}` | requires `admin.enterprise_data`. 404 if unknown |
+| POST | `/admin/enterprise-data/datasets/{dataset_id}/preview` | requires `admin.enterprise_data`. Body: `{"rows"}`. Returns `{"schema", "preview_rows"}`; 400 if the dataset's connector type has no implementation |
+| POST | `/admin/enterprise-data/datasets/{dataset_id}/ingest` | requires `admin.enterprise_data`. Body: `{"rows"}`. Persists accepted rows, updates `row_count`/`schema_summary`, records an event; 400 if the connector type has no implementation |
+| GET | `/admin/enterprise-data/datasets/{dataset_id}/records` | requires `admin.enterprise_data`. Query params: `limit` (default 50) |
+| GET | `/admin/enterprise-data/datasets/{dataset_id}/entitlements` | requires `admin.enterprise_data`. 404 if the dataset is unknown |
+| POST | `/admin/enterprise-data/datasets/{dataset_id}/entitlements` | requires `admin.enterprise_data`. Body: `{"principal_type", "principal_id"}` |
+| DELETE | `/admin/enterprise-data/datasets/{dataset_id}/entitlements/{entitlement_id}` | requires `admin.enterprise_data`. 204; 404 if unknown |
+
+Milestone 8 is a foundation, honestly: only `MANUAL_UPLOAD` sources have a real connector
+implementation (`test-connection`/`preview`/`ingest` on any other `connector_type` return the
+connector's own honest `not_configured`/400 response, never a fabricated success). Real
+tenant-isolation enforcement, `ModelRoutingPolicy`, and most of the originally-envisioned admin
+tabs (Mappings/Lineage/Usage/Dependencies) remain Milestone 9-10 — see
+`docs/alpha-intelligence.md` section 11 for the exact built-vs-not-built line.

@@ -321,6 +321,38 @@ No column for chain-of-thought. `reasoning_summary` is a concise, human-auditabl
   a brief is a point-in-time digest that shouldn't reflect edits made after it was generated),
   top_impacts (jsonb), consensus_highlights (jsonb), notable_scenario_runs (jsonb),
   pending_lessons (jsonb), generated_at.
+- **`workspaces`** — a grouping inside an `Organization` (docs/alpha-intelligence.md section
+  11.1, Milestone 8). id, organization_id (FK to `organizations`), name, description,
+  created_by (nullable), created_at.
+- **`workspace_members`** — one user's membership in one workspace. Composite PK
+  (workspace_id, user_id) — a user can belong to more than one workspace, but only once per
+  workspace. added_by (nullable), added_at.
+- **`enterprise_data_sources`** — an admin-registered connection to a customer's proprietary
+  data (docs/alpha-intelligence.md section 11.3/11.4). id, organization_id (FK), workspace_id
+  (nullable FK), name, connector_type (`MANUAL_UPLOAD`/`REST_API`/`SFTP`/`DATABASE`/`S3`/
+  `WEBHOOK` — only `MANUAL_UPLOAD` has a real connector implementation), classification (an
+  `EnterpriseDataClassification`, not the pre-existing `DataClassification`), status
+  (`DRAFT`/`ACTIVE`/`PAUSED`/`ERROR`), description, connection_config (jsonb — non-secret
+  config only, e.g. a bucket name; deliberately no credential/secret field, mirroring
+  `DataFeedConfigRow`'s existing posture), created_by (nullable), created_at, updated_at.
+- **`enterprise_datasets`** — one registered dataset within an `enterprise_data_sources` row,
+  normalized into a canonical `EnterpriseDataDomain`. id, source_id (FK), organization_id (FK),
+  name, domain, classification, schema_summary (jsonb — field name → inferred type, from the
+  connector's `discover_schema()`), row_count, last_synced_at (nullable), created_at.
+- **`enterprise_data_entitlements`** — grants a principal (`USER`/`ROLE`/`WORKSPACE`/`AGENT` —
+  the `AgentDataEntitlement` concept from the original plan is unified into this same table via
+  `principal_type` rather than a structurally-identical parallel table) read access to one
+  dataset. id, dataset_id (FK), principal_type, principal_id, granted_by (nullable),
+  granted_at.
+- **`enterprise_records`** — one ingested row of a dataset's data, as accepted by that
+  dataset's connector's `ingest()`. id, dataset_id (FK), row_data (jsonb — an opaque blob;
+  there is no per-domain typed table yet, and wiring ingested rows into the same rich, typed
+  `ObservationDraft` canonical model market data already uses is future work), ingested_at.
+- **`enterprise_data_events`** — an ingestion-log entry for an enterprise data source, written
+  by the admin "Test Connection" and "Ingest" actions, the same pattern `data_feed_events`
+  already establishes for the built-in connectors. id, source_id (FK), event_type
+  (`test_connection`/`ingest`), status (`success`/`error`), detail, rows_ingested (nullable),
+  rows_rejected (nullable), latency_ms (nullable), occurred_at.
 
 ## 5. TimescaleDB Specifics
 

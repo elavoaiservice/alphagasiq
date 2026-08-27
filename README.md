@@ -49,7 +49,8 @@ report `not_configured`), and market data / news default to `MockCMEProvider` /
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e packages/schemas -e packages/data-sdk -e packages/agent-sdk -e packages/config \
             -e packages/db -e services/data -e services/fundamentals -e services/risk \
-            -e services/paper-execution -e services/agents -e services/quant -e apps/api
+            -e services/paper-execution -e services/agents -e services/quant -e services/alpha \
+            -e services/enterprise_data -e apps/api
 uvicorn api_app.main:app --reload --app-dir apps/api   # http://localhost:8000
 
 cd apps/web && npm install && npm run dev               # http://localhost:3000
@@ -349,9 +350,11 @@ test doubles (`tests/fundamentals/test_pipeline_graph_neo4j.py`).
 Agents — all six components (AlphaSignal™/AlphaImpact™/AlphaConsensus™/AlphaScenario™/
 AlphaMemory™/AlphaReplay™) plus their integration back into the Chief Trading Agent
 (AlphaSignal/AlphaConsensus feedback into trade generation, the Overnight Intelligence Brief,
-an Overview dashboard) are now implemented.** See `docs/alpha-intelligence.md` for the full
-target architecture and the planned multi-tenant Enterprise Data Platform (Milestones 8-10),
-sequenced across 10 milestones the same incremental way the access-model spec was.
+an Overview dashboard) are now implemented, plus a foundation of the multi-tenant Enterprise
+Data Platform (Workspace, one real connector, admin onboarding UI).** See
+`docs/alpha-intelligence.md` for the full target architecture and what's still planned
+(Milestones 9-10: real tenant-isolation enforcement, enterprise-specific Chief Trading Agent
+overlays), sequenced across 10 milestones the same incremental way the access-model spec was.
 AlphaSignal
 (new `services/alpha` package) is a deterministic materiality engine
 (`alpha_service.materiality.MaterialityEngine`, in the same pure-function/exhaustively-tested
@@ -480,6 +483,29 @@ generate_intelligence_brief()`. Exposed via `GET /alpha/briefs/latest`/`GET /alp
 A new root page at `/platform/alpha-intelligence` (`AlphaOverview.tsx`) renders the latest brief
 plus six link cards tying the whole layer together; the top-level "Alpha Intelligence" nav link
 now points here instead of straight to the AlphaSignal tab, and the sub-nav gained a leading
-"Overview" tab. All six Alpha* components and this integration layer are now implemented — the
-only planned work left in `docs/alpha-intelligence.md` is the Enterprise Data Platform
-(Milestones 8-10).
+"Overview" tab. All six Alpha* components and this integration layer are now implemented.
+
+**Enterprise Data Platform foundation (Milestone 8) is a genuine, testable foundation — honest
+that real tenant-isolation enforcement, a `ModelRoutingPolicy`, and most of the
+originally-envisioned admin tabs are still Milestone 9-10, not built here.** `Workspace`/
+`WorkspaceMemberRow` (`packages/db/db/models.py`) group users inside an `Organization`.
+`EnterpriseDataSourceRow`/`EnterpriseDatasetRow`/`EnterpriseDataEntitlementRow`/
+`EnterpriseRecordRow`/`EnterpriseDataEventRow` back an admin-registered connection to a
+customer's proprietary data, its registered datasets, dataset-level access grants
+(`principal_type` unifies the plan's `AgentDataEntitlement` into the same table rather than a
+structurally-identical parallel one), ingested rows, and a test-connection/ingest event log.
+The new `services/enterprise_data` package's `BaseEnterpriseDataConnector`
+(`test_connection`/`discover_schema`/`preview`/`ingest`/`health_check`) mirrors `data_sdk.
+provider.BaseDataProvider`'s shape; only `ManualUploadConnector` (`MANUAL_UPLOAD` — an admin
+supplies already-parsed rows, no external network call or credential) is implemented
+end-to-end, the same "must work with zero paid subscriptions" discipline every `Mock*Provider`
+already establishes — `REST_API`/`SFTP`/`DATABASE`/`S3`/`WEBHOOK` sources can be registered but
+their connector honestly reports `not_configured` rather than pretending to work.
+`EnterpriseDataSourceRow` deliberately carries no credential field, mirroring
+`DataFeedConfigRow`'s existing posture. Exposed via `/admin/workspaces(/{id}/members)` and
+`/admin/enterprise-data/sources(/{id}/test-connection|/datasets)`/`/admin/enterprise-data/
+datasets/{id}(/preview|/ingest|/records|/entitlements)` (new `admin.workspaces`/
+`admin.enterprise_data` permissions), plus new "Workspaces" and "Enterprise Data" admin console
+tabs. The only planned work left in `docs/alpha-intelligence.md` is Milestones 9-10 — real
+multi-tenant row-level isolation, a `ModelRoutingPolicy`, and enterprise-specific Chief Trading
+Agent overlays.

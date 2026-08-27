@@ -1,0 +1,13 @@
+[project]
+name = "alphagasiq-service-enterprise-data"
+version = "0.1.0"
+description = "Enterprise Data Platform: BaseEnterpriseDataConnector framework for AlphaGasIQ"
+requires-python = ">=3.11"
+dependencies = ["alphagasiq-schemas"]
+
+[tool.setuptools.packages.find]
+include = ["enterprise_data_service*"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"

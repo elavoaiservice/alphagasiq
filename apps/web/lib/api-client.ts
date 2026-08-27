@@ -23,6 +23,23 @@ export async function apiPatch<T>(path: string, body?: unknown, token?: string):
   return apiMutate<T>("PATCH", path, body, token);
 }
 
+export async function apiDelete(path: string, token?: string): Promise<void> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "DELETE",
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    let detail = "";
+    try {
+      detail = (await res.json())?.detail ?? "";
+    } catch {
+      // response body wasn't JSON -- fall through with the bare status
+    }
+    throw new Error(`DELETE ${path} failed: ${res.status}${detail ? ` — ${detail}` : ""}`);
+  }
+}
+
 async function apiMutate<T>(
   method: "POST" | "PUT" | "PATCH",
   path: string,

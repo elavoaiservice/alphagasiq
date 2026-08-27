@@ -10,6 +10,9 @@ from schemas import (
     AgentAlphaScore,
     AgentForecast,
     ConsensusView,
+    EnterpriseDataEntitlement,
+    EnterpriseDataset,
+    EnterpriseDataSource,
     ImpactAnalysis,
     IntelligenceBrief,
     InvestmentCommitteeDecision,
@@ -23,6 +26,7 @@ from schemas import (
     Signal,
     TimeSeriesObservation,
     TradeIdea,
+    Workspace,
 )
 
 from .engine import build_engine, build_sessionmaker
@@ -42,6 +46,11 @@ from .models import (
     DataFeedConfigRow,
     DataFeedEventRow,
     DecisionJournalRow,
+    EnterpriseDataEntitlementRow,
+    EnterpriseDataEventRow,
+    EnterpriseDatasetRow,
+    EnterpriseDataSourceRow,
+    EnterpriseRecordRow,
     FeatureRow,
     ImpactAnalysisRow,
     IntelligenceBriefRow,
@@ -68,6 +77,8 @@ from .models import (
     TradeIdeaRow,
     UserFeatureOverrideRow,
     UserRow,
+    WorkspaceMemberRow,
+    WorkspaceRow,
 )
 
 # The 8 fixed roles from docs/access-model.md §5 (spec §23). Roles are DB rows (not a
@@ -116,6 +127,8 @@ _PERMISSION_KEYS = [
     "admin.users.sessions",
     "admin.organizations",
     "admin.data_feeds",
+    "admin.workspaces",
+    "admin.enterprise_data",
     "admin.system_settings",
     "admin.agent_management",
     "admin.agent_optimization",
@@ -772,6 +785,83 @@ def _intelligence_brief_row_to_dict(row: IntelligenceBriefRow) -> dict:
         "notable_scenario_runs": row.notable_scenario_runs,
         "pending_lessons": row.pending_lessons,
         "generated_at": row.generated_at,
+    }
+
+
+def _workspace_row_to_dict(row: WorkspaceRow) -> dict:
+    return {
+        "id": row.id,
+        "organization_id": row.organization_id,
+        "name": row.name,
+        "description": row.description,
+        "created_by": row.created_by,
+        "created_at": row.created_at,
+    }
+
+
+def _enterprise_data_source_row_to_dict(row: EnterpriseDataSourceRow) -> dict:
+    return {
+        "id": row.id,
+        "organization_id": row.organization_id,
+        "workspace_id": row.workspace_id,
+        "name": row.name,
+        "connector_type": row.connector_type,
+        "classification": row.classification,
+        "status": row.status,
+        "description": row.description,
+        "connection_config": row.connection_config,
+        "created_by": row.created_by,
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
+    }
+
+
+def _enterprise_dataset_row_to_dict(row: EnterpriseDatasetRow) -> dict:
+    return {
+        "id": row.id,
+        "source_id": row.source_id,
+        "organization_id": row.organization_id,
+        "name": row.name,
+        "domain": row.domain,
+        "classification": row.classification,
+        "schema_summary": row.schema_summary,
+        "row_count": row.row_count,
+        "last_synced_at": row.last_synced_at,
+        "created_at": row.created_at,
+    }
+
+
+def _enterprise_data_entitlement_row_to_dict(row: EnterpriseDataEntitlementRow) -> dict:
+    return {
+        "id": row.id,
+        "dataset_id": row.dataset_id,
+        "principal_type": row.principal_type,
+        "principal_id": row.principal_id,
+        "granted_by": row.granted_by,
+        "granted_at": row.granted_at,
+    }
+
+
+def _enterprise_record_row_to_dict(row: EnterpriseRecordRow) -> dict:
+    return {
+        "id": row.id,
+        "dataset_id": row.dataset_id,
+        "row_data": row.row_data,
+        "ingested_at": row.ingested_at,
+    }
+
+
+def _enterprise_data_event_row_to_dict(row: EnterpriseDataEventRow) -> dict:
+    return {
+        "id": row.id,
+        "source_id": row.source_id,
+        "event_type": row.event_type,
+        "status": row.status,
+        "detail": row.detail,
+        "rows_ingested": row.rows_ingested,
+        "rows_rejected": row.rows_rejected,
+        "latency_ms": row.latency_ms,
+        "occurred_at": row.occurred_at,
     }
 
 
@@ -2620,6 +2710,296 @@ class SqlAppRepository:
                 await session.execute(select(IntelligenceBriefRow).where(IntelligenceBriefRow.id == brief_id))
             ).scalar_one_or_none()
         return _intelligence_brief_row_to_dict(row) if row is not None else None
+
+    # -- Enterprise Data Platform (docs/alpha-intelligence.md section 11, Milestone 8) --
+
+    async def save_workspace(self, workspace: Workspace) -> None:
+        row = WorkspaceRow(
+            id=str(workspace.id),
+            organization_id=workspace.organization_id,
+            name=workspace.name,
+            description=workspace.description,
+            created_by=workspace.created_by,
+            created_at=_naive_utc(workspace.created_at),
+        )
+        async with self.session_factory() as session:
+            session.add(row)
+            await session.commit()
+
+    async def list_workspaces(self, *, organization_id: str | None = None) -> list[dict]:
+        query = select(WorkspaceRow).order_by(WorkspaceRow.created_at.desc())
+        if organization_id is not None:
+            query = query.where(WorkspaceRow.organization_id == organization_id)
+        async with self.session_factory() as session:
+            rows = (await session.execute(query)).scalars().all()
+        return [_workspace_row_to_dict(r) for r in rows]
+
+    async def get_workspace(self, workspace_id: str) -> dict | None:
+        async with self.session_factory() as session:
+            row = (await session.execute(select(WorkspaceRow).where(WorkspaceRow.id == workspace_id))).scalar_one_or_none()
+        return _workspace_row_to_dict(row) if row is not None else None
+
+    async def update_workspace(self, workspace_id: str, **fields) -> dict | None:
+        async with self.session_factory() as session:
+            row = (await session.execute(select(WorkspaceRow).where(WorkspaceRow.id == workspace_id))).scalar_one_or_none()
+            if row is None:
+                return None
+            for key, value in fields.items():
+                setattr(row, key, value)
+            await session.commit()
+            return _workspace_row_to_dict(row)
+
+    async def delete_workspace(self, workspace_id: str) -> bool:
+        async with self.session_factory() as session:
+            row = (await session.execute(select(WorkspaceRow).where(WorkspaceRow.id == workspace_id))).scalar_one_or_none()
+            if row is None:
+                return False
+            await session.delete(row)
+            await session.commit()
+            return True
+
+    async def add_workspace_member(self, workspace_id: str, user_id: str, *, added_by: str | None = None) -> None:
+        async with self.session_factory() as session:
+            existing = (
+                await session.execute(
+                    select(WorkspaceMemberRow).where(
+                        WorkspaceMemberRow.workspace_id == workspace_id, WorkspaceMemberRow.user_id == user_id
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing is not None:
+                return
+            session.add(WorkspaceMemberRow(workspace_id=workspace_id, user_id=user_id, added_by=added_by))
+            await session.commit()
+
+    async def remove_workspace_member(self, workspace_id: str, user_id: str) -> bool:
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(
+                    select(WorkspaceMemberRow).where(
+                        WorkspaceMemberRow.workspace_id == workspace_id, WorkspaceMemberRow.user_id == user_id
+                    )
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                return False
+            await session.delete(row)
+            await session.commit()
+            return True
+
+    async def list_workspace_members(self, workspace_id: str) -> list[dict]:
+        async with self.session_factory() as session:
+            rows = (
+                await session.execute(select(WorkspaceMemberRow).where(WorkspaceMemberRow.workspace_id == workspace_id))
+            ).scalars().all()
+        return [
+            {"workspace_id": r.workspace_id, "user_id": r.user_id, "added_by": r.added_by, "added_at": r.added_at}
+            for r in rows
+        ]
+
+    async def save_enterprise_data_source(self, source: EnterpriseDataSource) -> None:
+        row = EnterpriseDataSourceRow(
+            id=str(source.id),
+            organization_id=source.organization_id,
+            workspace_id=str(source.workspace_id) if source.workspace_id is not None else None,
+            name=source.name,
+            connector_type=source.connector_type.value,
+            classification=source.classification.value,
+            status=source.status.value,
+            description=source.description,
+            connection_config=source.connection_config,
+            created_by=source.created_by,
+            created_at=_naive_utc(source.created_at),
+            updated_at=_naive_utc(source.updated_at),
+        )
+        async with self.session_factory() as session:
+            session.add(row)
+            await session.commit()
+
+    async def list_enterprise_data_sources(
+        self, *, organization_id: str | None = None, workspace_id: str | None = None
+    ) -> list[dict]:
+        query = select(EnterpriseDataSourceRow).order_by(EnterpriseDataSourceRow.created_at.desc())
+        if organization_id is not None:
+            query = query.where(EnterpriseDataSourceRow.organization_id == organization_id)
+        if workspace_id is not None:
+            query = query.where(EnterpriseDataSourceRow.workspace_id == workspace_id)
+        async with self.session_factory() as session:
+            rows = (await session.execute(query)).scalars().all()
+        return [_enterprise_data_source_row_to_dict(r) for r in rows]
+
+    async def get_enterprise_data_source(self, source_id: str) -> dict | None:
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(select(EnterpriseDataSourceRow).where(EnterpriseDataSourceRow.id == source_id))
+            ).scalar_one_or_none()
+        return _enterprise_data_source_row_to_dict(row) if row is not None else None
+
+    async def update_enterprise_data_source(self, source_id: str, **fields) -> dict | None:
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(select(EnterpriseDataSourceRow).where(EnterpriseDataSourceRow.id == source_id))
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            for key, value in fields.items():
+                setattr(row, key, value)
+            row.updated_at = datetime.utcnow()
+            await session.commit()
+            return _enterprise_data_source_row_to_dict(row)
+
+    async def delete_enterprise_data_source(self, source_id: str) -> bool:
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(select(EnterpriseDataSourceRow).where(EnterpriseDataSourceRow.id == source_id))
+            ).scalar_one_or_none()
+            if row is None:
+                return False
+            await session.delete(row)
+            await session.commit()
+            return True
+
+    async def save_enterprise_dataset(self, dataset: EnterpriseDataset) -> None:
+        row = EnterpriseDatasetRow(
+            id=str(dataset.id),
+            source_id=str(dataset.source_id),
+            organization_id=dataset.organization_id,
+            name=dataset.name,
+            domain=dataset.domain.value,
+            classification=dataset.classification.value,
+            schema_summary=dataset.schema_summary,
+            row_count=dataset.row_count,
+            last_synced_at=_naive_utc(dataset.last_synced_at) if dataset.last_synced_at is not None else None,
+            created_at=_naive_utc(dataset.created_at),
+        )
+        async with self.session_factory() as session:
+            session.add(row)
+            await session.commit()
+
+    async def list_enterprise_datasets(
+        self, *, source_id: str | None = None, organization_id: str | None = None
+    ) -> list[dict]:
+        query = select(EnterpriseDatasetRow).order_by(EnterpriseDatasetRow.created_at.desc())
+        if source_id is not None:
+            query = query.where(EnterpriseDatasetRow.source_id == source_id)
+        if organization_id is not None:
+            query = query.where(EnterpriseDatasetRow.organization_id == organization_id)
+        async with self.session_factory() as session:
+            rows = (await session.execute(query)).scalars().all()
+        return [_enterprise_dataset_row_to_dict(r) for r in rows]
+
+    async def get_enterprise_dataset(self, dataset_id: str) -> dict | None:
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(select(EnterpriseDatasetRow).where(EnterpriseDatasetRow.id == dataset_id))
+            ).scalar_one_or_none()
+        return _enterprise_dataset_row_to_dict(row) if row is not None else None
+
+    async def update_enterprise_dataset_sync(
+        self, dataset_id: str, *, schema_summary: dict | None = None, row_count: int
+    ) -> dict | None:
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(select(EnterpriseDatasetRow).where(EnterpriseDatasetRow.id == dataset_id))
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            if schema_summary is not None:
+                row.schema_summary = schema_summary
+            row.row_count = row_count
+            row.last_synced_at = datetime.utcnow()
+            await session.commit()
+            return _enterprise_dataset_row_to_dict(row)
+
+    async def save_enterprise_data_entitlement(self, entitlement: EnterpriseDataEntitlement) -> None:
+        row = EnterpriseDataEntitlementRow(
+            id=str(entitlement.id),
+            dataset_id=str(entitlement.dataset_id),
+            principal_type=entitlement.principal_type.value,
+            principal_id=entitlement.principal_id,
+            granted_by=entitlement.granted_by,
+            granted_at=_naive_utc(entitlement.granted_at),
+        )
+        async with self.session_factory() as session:
+            session.add(row)
+            await session.commit()
+
+    async def list_enterprise_data_entitlements(self, dataset_id: str) -> list[dict]:
+        async with self.session_factory() as session:
+            rows = (
+                await session.execute(
+                    select(EnterpriseDataEntitlementRow).where(EnterpriseDataEntitlementRow.dataset_id == dataset_id)
+                )
+            ).scalars().all()
+        return [_enterprise_data_entitlement_row_to_dict(r) for r in rows]
+
+    async def delete_enterprise_data_entitlement(self, entitlement_id: str) -> bool:
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(
+                    select(EnterpriseDataEntitlementRow).where(EnterpriseDataEntitlementRow.id == entitlement_id)
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                return False
+            await session.delete(row)
+            await session.commit()
+            return True
+
+    async def save_enterprise_records(self, dataset_id: str, rows: list[dict]) -> int:
+        async with self.session_factory() as session:
+            for row_data in rows:
+                session.add(EnterpriseRecordRow(dataset_id=dataset_id, row_data=row_data))
+            await session.commit()
+        return len(rows)
+
+    async def list_enterprise_records(self, dataset_id: str, *, limit: int = 50) -> list[dict]:
+        query = (
+            select(EnterpriseRecordRow)
+            .where(EnterpriseRecordRow.dataset_id == dataset_id)
+            .order_by(EnterpriseRecordRow.ingested_at.desc())
+            .limit(limit)
+        )
+        async with self.session_factory() as session:
+            rows = (await session.execute(query)).scalars().all()
+        return [_enterprise_record_row_to_dict(r) for r in rows]
+
+    async def record_enterprise_data_event(
+        self,
+        *,
+        source_id: str,
+        event_type: str,
+        status: str,
+        detail: str = "",
+        rows_ingested: int | None = None,
+        rows_rejected: int | None = None,
+        latency_ms: float | None = None,
+    ) -> dict:
+        row = EnterpriseDataEventRow(
+            source_id=source_id,
+            event_type=event_type,
+            status=status,
+            detail=detail,
+            rows_ingested=rows_ingested,
+            rows_rejected=rows_rejected,
+            latency_ms=latency_ms,
+        )
+        async with self.session_factory() as session:
+            session.add(row)
+            await session.commit()
+            await session.refresh(row)
+            return _enterprise_data_event_row_to_dict(row)
+
+    async def list_enterprise_data_events(self, source_id: str, *, limit: int = 50) -> list[dict]:
+        query = (
+            select(EnterpriseDataEventRow)
+            .where(EnterpriseDataEventRow.source_id == source_id)
+            .order_by(EnterpriseDataEventRow.occurred_at.desc())
+            .limit(limit)
+        )
+        async with self.session_factory() as session:
+            rows = (await session.execute(query)).scalars().all()
+        return [_enterprise_data_event_row_to_dict(r) for r in rows]
 
     async def save_committee_decision(self, trade_id: UUID, decision: InvestmentCommitteeDecision) -> None:
         row = CommitteeDecisionRow(

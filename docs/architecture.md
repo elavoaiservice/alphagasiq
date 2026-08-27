@@ -546,13 +546,15 @@ Six components plus a Chief Trading Agent integration layer, all documented in f
   look-ahead bias). **Implemented (Milestone 6 of this layer, `CURRENT_MODEL_RETROSPECTIVE`
   mode only — see below).**
 
-`docs/alpha-intelligence.md` also covers the planned Enterprise Data Platform (multi-tenant
-`Organization` → `Workspace` → `User`, proprietary data connectors, tenant isolation) that lets
-enterprise customers combine their own data with this layer — sequenced deliberately *after*
-the six Alpha components and the Chief Trading Agent integration (Milestones 8-10), since they
-deliver real value against today's shared public/simulated dataset first, and real multi-tenant
-row-level isolation is new infrastructure this codebase doesn't have yet (see that doc's
-"Baseline" section for the exact gap analysis).
+`docs/alpha-intelligence.md` also covers the Enterprise Data Platform (multi-tenant
+`Organization` → `Workspace` → `User`, proprietary data connectors) that lets enterprise
+customers combine their own data with this layer — sequenced deliberately *after* the six Alpha
+components and the Chief Trading Agent integration (Milestones 8-10), since they deliver real
+value against today's shared public/simulated dataset first. Milestone 8 (a `Workspace`/
+`EnterpriseDataSource`/`EnterpriseDataset`/`EnterpriseDataEntitlement` foundation plus one real
+connector) is implemented; real multi-tenant row-level isolation (Milestone 9) is still new
+infrastructure this codebase doesn't have yet (see that doc's section 11 for the exact
+built-vs-not-built line).
 
 ### AlphaSignal™ (implemented)
 
@@ -701,3 +703,25 @@ Intelligence Brief — a cross-component digest generated once per full research
 (`AlphaOverview.tsx`) renders the latest brief plus six link cards tying the layer together; the
 top-level nav link now points here instead of straight to `/signals`. See
 `docs/alpha-intelligence.md` section 10 for the full design.
+
+### Enterprise Data Platform foundation (implemented — Milestone 8)
+
+A genuine, testable foundation, honest that most of the originally-envisioned scope (real
+tenant-isolation enforcement, `ModelRoutingPolicy`, most admin tabs) is still Milestone 9-10,
+not built here. `Workspace`/`WorkspaceMemberRow` (`packages/db/db/models.py`) group users
+inside an `Organization`. `EnterpriseDataSourceRow`/`EnterpriseDatasetRow`/
+`EnterpriseDataEntitlementRow`/`EnterpriseRecordRow`/`EnterpriseDataEventRow` back an admin-
+registered connection to a customer's proprietary data, its registered datasets, dataset-level
+access grants (`principal_type` unifies `AgentDataEntitlement` into the same table rather than
+a parallel one), ingested rows, and a test-connection/ingest event log. `services/
+enterprise_data/enterprise_data_service/connector.py`'s `BaseEnterpriseDataConnector` mirrors
+`data_sdk.provider.BaseDataProvider`'s shape (`test_connection`/`discover_schema`/`preview`/
+`ingest`/`health_check`); only `ManualUploadConnector` (`MANUAL_UPLOAD` — an admin supplies
+already-parsed rows, no external network call or credential) is implemented end-to-end, the
+same "must work with zero paid subscriptions" discipline every `Mock*Provider` already
+establishes. `EnterpriseDataSourceRow` deliberately carries no credential field, mirroring
+`DataFeedConfigRow`'s existing posture. Exposed via `/admin/workspaces(/{id}/members)` and
+`/admin/enterprise-data/sources(/{id}/test-connection|/datasets)`/`/admin/enterprise-data/
+datasets/{id}(/preview|/ingest|/records|/entitlements)` (new `admin.workspaces`/
+`admin.enterprise_data` permissions), plus new "Workspaces" and "Enterprise Data" admin console
+tabs. See `docs/alpha-intelligence.md` section 11 for the full built-vs-not-built design.

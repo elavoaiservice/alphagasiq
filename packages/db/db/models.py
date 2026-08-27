@@ -862,3 +862,122 @@ class IntelligenceBriefRow(Base):
     notable_scenario_runs: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     pending_lessons: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     generated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class WorkspaceRow(Base):
+    """A grouping inside an `Organization` (docs/alpha-intelligence.md section
+    11.1, Milestone 8) -- e.g. a trading desk -- that enterprise data sources/
+    datasets/entitlements can be scoped to."""
+
+    __tablename__ = "workspaces"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    organization_id: Mapped[str] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str] = mapped_column(String, nullable=False, default="")
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class WorkspaceMemberRow(Base):
+    """One user's membership in one `WorkspaceRow`. Composite PK -- a user can
+    belong to more than one workspace, but only once per workspace."""
+
+    __tablename__ = "workspace_members"
+
+    workspace_id: Mapped[str] = mapped_column(String(36), ForeignKey("workspaces.id"), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), primary_key=True)
+    added_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    added_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class EnterpriseDataSourceRow(Base):
+    """An admin-registered connection to a customer's proprietary data
+    (docs/alpha-intelligence.md section 11.3/11.4, Milestone 8). Deliberately
+    carries no credential/secret field -- exactly `DataFeedConfigRow`'s
+    existing posture: real secrets are environment-provisioned and never touch
+    this table or the admin API."""
+
+    __tablename__ = "enterprise_data_sources"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    organization_id: Mapped[str] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=False)
+    workspace_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("workspaces.id"), nullable=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    connector_type: Mapped[str] = mapped_column(String, nullable=False)
+    classification: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="DRAFT")
+    description: Mapped[str] = mapped_column(String, nullable=False, default="")
+    connection_config: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class EnterpriseDatasetRow(Base):
+    """One registered dataset within an `EnterpriseDataSourceRow`, normalized
+    into a canonical `EnterpriseDataDomain` (docs/alpha-intelligence.md section
+    11.4)."""
+
+    __tablename__ = "enterprise_datasets"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    source_id: Mapped[str] = mapped_column(String(36), ForeignKey("enterprise_data_sources.id"), nullable=False)
+    organization_id: Mapped[str] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    domain: Mapped[str] = mapped_column(String, nullable=False)
+    classification: Mapped[str] = mapped_column(String, nullable=False)
+    schema_summary: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    row_count: Mapped[int] = mapped_column(nullable=False, default=0)
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class EnterpriseDataEntitlementRow(Base):
+    """Grants a principal (USER/ROLE/WORKSPACE/AGENT -- the `AgentDataEntitlement`
+    concept from docs/alpha-intelligence.md section 11.1 is unified into this
+    same table via `principal_type` rather than a structurally-identical
+    parallel table) read access to one `EnterpriseDatasetRow`."""
+
+    __tablename__ = "enterprise_data_entitlements"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    dataset_id: Mapped[str] = mapped_column(String(36), ForeignKey("enterprise_datasets.id"), nullable=False)
+    principal_type: Mapped[str] = mapped_column(String, nullable=False)
+    principal_id: Mapped[str] = mapped_column(String, nullable=False)
+    granted_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    granted_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class EnterpriseRecordRow(Base):
+    """One ingested row of an `EnterpriseDatasetRow`'s data, as accepted by
+    that dataset's connector's `ingest()` (docs/alpha-intelligence.md section
+    11.3, Milestone 8). Stored as an opaque JSON blob -- there is no per-domain
+    typed table yet; wiring ingested rows into the same rich, typed
+    `ObservationDraft` canonical model market data already uses remains future
+    work, documented here rather than silently assumed."""
+
+    __tablename__ = "enterprise_records"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    dataset_id: Mapped[str] = mapped_column(String(36), ForeignKey("enterprise_datasets.id"), nullable=False)
+    row_data: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    ingested_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class EnterpriseDataEventRow(Base):
+    """An ingestion-log entry for an `EnterpriseDataSourceRow` -- written by
+    the admin "Test Connection" and "Sync Now" actions, the same pattern
+    `DataFeedEventRow` already establishes for the built-in connectors."""
+
+    __tablename__ = "enterprise_data_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    source_id: Mapped[str] = mapped_column(String(36), ForeignKey("enterprise_data_sources.id"), nullable=False)
+    event_type: Mapped[str] = mapped_column(String, nullable=False)  # test_connection | ingest
+    status: Mapped[str] = mapped_column(String, nullable=False)  # success | error
+    detail: Mapped[str] = mapped_column(String, nullable=False, default="")
+    rows_ingested: Mapped[int | None] = mapped_column(nullable=True)
+    rows_rejected: Mapped[int | None] = mapped_column(nullable=True)
+    latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)

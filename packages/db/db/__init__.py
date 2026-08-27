@@ -15,6 +15,11 @@ from .models import (
     DataFeedConfigRow,
     DataFeedEventRow,
     DecisionJournalRow,
+    EnterpriseDataEntitlementRow,
+    EnterpriseDataEventRow,
+    EnterpriseDatasetRow,
+    EnterpriseDataSourceRow,
+    EnterpriseRecordRow,
     FeatureRow,
     ImpactAnalysisRow,
     IntelligenceBriefRow,
@@ -41,6 +46,8 @@ from .models import (
     TradeIdeaRow,
     UserFeatureOverrideRow,
     UserRow,
+    WorkspaceMemberRow,
+    WorkspaceRow,
 )
 from .repository import SqlAppRepository
 
@@ -88,5 +95,12 @@ __all__ = [
     "LessonProposalRow",
     "MarketObservationRow",
     "IntelligenceBriefRow",
+    "WorkspaceRow",
+    "WorkspaceMemberRow",
+    "EnterpriseDataSourceRow",
+    "EnterpriseDatasetRow",
+    "EnterpriseDataEntitlementRow",
+    "EnterpriseRecordRow",
+    "EnterpriseDataEventRow",
     "SqlAppRepository",
 ]

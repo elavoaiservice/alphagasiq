@@ -54,6 +54,17 @@ from .alpha import (
     SignalStatus,
     SignalType,
 )
+from .enterprise import (
+    EnterpriseConnectorType,
+    EnterpriseDataDomain,
+    EnterpriseDataEntitlement,
+    EnterpriseDataClassification,
+    EnterpriseDataset,
+    EnterpriseDataSource,
+    EnterpriseEntitlementPrincipalType,
+    EnterpriseSourceStatus,
+    Workspace,
+)
 
 __all__ = [
     "AgentStatus",
@@ -116,4 +127,13 @@ __all__ = [
     "ReplayMode",
     "AsOfReplayResult",
     "IntelligenceBrief",
+    "EnterpriseDataClassification",
+    "EnterpriseDataDomain",
+    "EnterpriseConnectorType",
+    "EnterpriseSourceStatus",
+    "Workspace",
+    "EnterpriseDataSource",
+    "EnterpriseDataset",
+    "EnterpriseEntitlementPrincipalType",
+    "EnterpriseDataEntitlement",
 ]

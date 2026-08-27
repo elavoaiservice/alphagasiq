@@ -11,9 +11,12 @@ time, each planned, built, tested, documented, and committed before the next beg
 
 **Status as of this document**: Milestones 1-7 (AlphaSignal™, AlphaImpact™, AlphaConsensus™ +
 Agent Alpha Score™, AlphaScenario™, AlphaMemory™, AlphaReplay™, and Chief Trading Agent full
-integration) are implemented. Milestones 8-10 below (the Enterprise Data Platform) are
-architecture + roadmap only — not yet built. Do not assume any capability described here beyond
-the "Implemented" sections actually exists in the codebase yet.
+integration) are implemented. Milestone 8 (Enterprise Data Platform foundation — `Workspace`,
+`EnterpriseDataSource`/`EnterpriseDataset`/`EnterpriseDataEntitlement`, one real connector) is
+implemented as a foundation only — see section 11 for exactly what that does and does not
+include. Milestones 9-10 below (tenant isolation retrofit, enterprise-specific Chief Trading
+Agent overlays) are architecture + roadmap only — not yet built. Do not assume any capability
+described here beyond the "Implemented" sections actually exists in the codebase yet.
 
 ## 1. Where this sits in the pipeline
 
@@ -92,7 +95,8 @@ duplicate what's already there or silently assume infrastructure that doesn't ex
   `organization_id`/`workspace_id` enforcement in the repository layer) is new
   infrastructure, sequenced as Milestone 9 below rather than a prerequisite to shipping the
   six Alpha components against today's shared dataset.
-- **Workspace** as an entity between `Organization` and `User` does not exist anywhere yet.
+- **Workspace** as an entity between `Organization` and `User` did not exist anywhere at the
+  time this section was written; Milestone 8 (section 11) has since added it.
 - The existing `DataClassification` enum (`PUBLIC`/`LICENSED`/`USER_PROVIDED`/`SIMULATED`,
   `packages/schemas/schemas/enums.py`) is a **data-provenance** tag on ingested observations
   — it is not the enterprise **security-tier** classification section 11.2 describes
@@ -117,7 +121,7 @@ can ship.
 | 5 | AlphaMemory™ — decision/institutional memory | **Implemented** |
 | 6 | AlphaReplay™ — bitemporal historical reconstruction | **Implemented** |
 | 7 | Chief Trading Agent full integration — AlphaSignal/AlphaConsensus feedback into trade generation, Overnight Intelligence Brief, Overview dashboard | **Implemented** |
-| 8 | Enterprise Data Platform foundation — Workspace, connectors, admin onboarding UI | Planned |
+| 8 | Enterprise Data Platform foundation — Workspace, connectors, admin onboarding UI | **Implemented (foundation)** |
 | 9 | Tenant isolation retrofit — real `organization_id`/`workspace_id` enforcement, model routing policy, retention policy | Planned |
 | 10 | Enterprise-specific Chief Trading Agent + Enterprise Digital Twin overlays + Opportunity Engine | Planned |
 
@@ -130,7 +134,12 @@ Alpha* components because it is the most invasive — it retrofits bitemporal co
 existing observation tables — so it's sequenced after the other five have real data worth
 replaying. Chief Trading Agent integration comes last of all seven because it depends on every
 other component already existing to have something real to feed back into trade generation and
-summarize into a brief.
+summarize into a brief. Milestone 8 is marked "Implemented (foundation)" rather than a bare
+"Implemented" deliberately: it delivers a genuine, testable `Workspace`/`EnterpriseDataSource`/
+`EnterpriseDataset`/`EnterpriseDataEntitlement` foundation with one real connector
+(`MANUAL_UPLOAD`), but real tenant-isolation enforcement, a `ModelRoutingPolicy`, and most of
+the originally-envisioned admin tabs (Mappings/Lineage/Usage/Dependencies) are honestly still
+Milestone 9-10 scope — see section 11 for the exact built-vs-not-built line.
 
 ## 4. AlphaSignal™ (implemented)
 
@@ -669,67 +678,97 @@ points here instead of straight to `/signals`; the sub-nav gained a leading "Ove
 once per boot/full research cycle, not on a fixed schedule); brief-to-brief diffing ("what
 changed since yesterday's brief").
 
-## 11. Enterprise Data Platform (planned, Milestones 8-10 above)
+## 11. Enterprise Data Platform (foundation implemented — Milestone 8; Milestones 9-10 planned)
+
+**Milestone 8 delivers a genuine, testable foundation**: an admin can register a `Workspace`,
+register an `EnterpriseDataSource`, run it through a real `BaseEnterpriseDataConnector`
+(schema discovery, preview, ingest), register `EnterpriseDataset`s, and grant
+`EnterpriseDataEntitlement`s — all persisted, all API- and UI-reachable. It is honest about
+scope: real multi-tenant *row-level isolation* (Postgres RLS or equivalent), a
+`ModelRoutingPolicy`, and most of the originally-envisioned admin tabs remain Milestones 9-10,
+not silently assumed to already exist.
 
 ### 11.1 Multi-tenant architecture
 
-New concepts, layered on top of the existing `Organization`/`Role`/`Permission`/`Feature`
-tables rather than replacing them: `Workspace` (new — a grouping inside an `Organization`),
-`DataSource`, `Dataset`, `DataEntitlement`, `AgentEntitlement`/`AgentDataEntitlement` (which
-agents may read which datasets — e.g. a Weather Agent has no portfolio access, a Portfolio
-Agent has position access only if entitled; the Chief Trading Agent only ever gets access
-through the requesting user's own authorization context, never a standing grant),
-`ModelEntitlement`, `Portfolio`. Every proprietary data object carries `organization_id`,
-`workspace_id` (where applicable), a security-tier classification (proposed name
-`EnterpriseDataClassification` — see section 2 on why it can't reuse the existing
-`DataClassification` enum), `owner`, `source`, `permissions`, `lineage`, `retention_policy`,
-`created_at`/`updated_at`. Tenant isolation is enforced server-side and at the database/
-service layer — never solely by frontend filtering — using PostgreSQL Row Level Security or
-equivalent where practical; every service call carries verified tenant context.
+**Implemented**: `Workspace` (`packages/schemas/schemas/enterprise.py`) — a grouping inside an
+`Organization`, layered on top of the existing `Organization`/`Role`/`Permission`/`Feature`
+tables rather than replacing them, with membership (`WorkspaceMemberRow`) managed via
+`POST/DELETE /admin/workspaces/{id}/members`. Every enterprise data object carries
+`organization_id`, `workspace_id` (where applicable), and a security-tier classification.
+`AgentDataEntitlement` from the original plan is unified into one `EnterpriseDataEntitlement`
+table via a `principal_type` discriminator (`USER`/`ROLE`/`WORKSPACE`/`AGENT`) rather than a
+structurally-identical parallel table — recording the grant is Milestone 8's scope; no agent
+reads an enterprise dataset today, so per-agent runtime enforcement of an `AGENT`-typed grant
+remains future work, honestly undocumented as built until it exists.
+
+**Not yet built**: `DataEntitlement`/`ModelEntitlement`/`Portfolio` as originally sketched
+(subsumed or deferred), and — the significant gap — **real tenant isolation is not enforced**.
+Every `organization_id`/`workspace_id` column exists and every admin list endpoint filters by
+it when given, but there is no PostgreSQL Row Level Security (or equivalent) making that
+filtering unbypassable at the database layer, and no verified-tenant-context propagation
+through every service call. That retrofit — across both these new tables and every existing
+trading table — is Milestone 9's job specifically, not assumed here.
 
 ### 11.2 Security-tier data classification
 
-`PUBLIC`, `LICENSED_MARKET_DATA`, `ALPHAGASIQ_PROPRIETARY`, `CUSTOMER_CONFIDENTIAL`,
-`CUSTOMER_RESTRICTED`, `CUSTOMER_POSITION_DATA`, `CUSTOMER_RISK_DATA`, `SIMULATED`. Access
-rules combine organization, workspace, role, permission, this classification, feature
-entitlement, dataset entitlement, and agent entitlement.
+**Implemented**: `EnterpriseDataClassification` (`PUBLIC`/`LICENSED_MARKET_DATA`/
+`ALPHAGASIQ_PROPRIETARY`/`CUSTOMER_CONFIDENTIAL`/`CUSTOMER_RESTRICTED`/
+`CUSTOMER_POSITION_DATA`/`CUSTOMER_RISK_DATA`/`SIMULATED`) — a new enum, deliberately distinct
+from the existing `DataClassification` (a data-provenance tag, not a security tier; see
+section 2). Every `EnterpriseDataSource`/`EnterpriseDataset` carries one. **Not yet built**:
+the full access-rule combination (organization + workspace + role + permission + this
+classification + feature entitlement + dataset entitlement + agent entitlement) described in
+the original plan — today only `admin.enterprise_data`/`admin.workspaces` gate the whole admin
+surface; per-dataset entitlement-based access control for a *non-admin* caller (e.g. a trader
+reading only datasets their workspace was granted) is not wired into any read path yet.
 
 ### 11.3 Enterprise data connectors
 
-`BaseEnterpriseDataConnector` (methods: `connect()`, `test_connection()`, `authenticate()`,
-`discover_schema()`, `preview()`, `ingest()`, `incremental_sync()`, `validate()`,
-`normalize()`, `health_check()`, `disconnect()`) — the same abstraction shape as today's
-`BaseDataProvider`, generalized to proprietary connector types (REST/GraphQL/SFTP/secure file
-upload/CSV/Excel/JSON/Parquet, Postgres/SQL Server/Snowflake/Databricks read replicas, S3/
-Azure Blob/GCS, Kafka, webhooks, customer-defined adapters) rather than hardcoded per-vendor
-integrations. Example customer data domains: production/well/basin data, pipeline capacity
-and transportation rights, storage contracts/inventory, LNG positions and cargo schedules,
-power generation/fuel requirements, physical/financial contracts and hedges, internal
-research/forecasts, risk limits, operational outages and nominations.
+**Implemented**: `BaseEnterpriseDataConnector` (`services/enterprise_data/
+enterprise_data_service/connector.py`) — `test_connection()`/`discover_schema()`/`preview()`/
+`ingest()`/`health_check()`, the same abstraction shape `data_sdk.provider.BaseDataProvider`
+already established, trimmed from the original ten-method sketch
+(`connect`/`authenticate`/`incremental_sync`/`validate`/`normalize`/`disconnect` dropped) down
+to what's actually implementable without overengineering — `BaseDataProvider` itself only
+ships three methods, not its own doc's full list either. Exactly one connector type is
+implemented end-to-end: `ManualUploadConnector` (`MANUAL_UPLOAD`) — an admin supplies
+already-parsed tabular rows (the admin UI parses a pasted CSV client-side), no external network
+call, no credential, genuinely usable with zero paid subscriptions, the same discipline every
+`Mock*Provider` already establishes for public/licensed connectors. `REST_API`/`SFTP`/
+`DATABASE`/`S3`/`WEBHOOK` are declared on `EnterpriseConnectorType` for forward-compatibility
+only — a source of one of those types can be registered, but `build_connector()` returns a
+`NotImplementedConnector` for it, which reports `not_configured`/raises `NotImplementedError`
+honestly rather than silently behaving like `MANUAL_UPLOAD`. Real REST/SFTP/database/S3/webhook
+connector implementations remain future work.
 
 ### 11.4 Admin onboarding, canonical model, and safeguards
 
-An Admin "Enterprise Data" section (Sources/Datasets/Mappings/Permissions/Health/Lineage/
-Usage/Dependencies tabs) lets an administrator add a source, configure connection details,
-store secrets through a proper secrets-management abstraction (raw secret values are never
-redisplayed after entry — the same posture today's data-feed admin page already takes, where
-credentials are environment-provisioned only with no credential field in the UI at all), test
-the connection, discover schema, map fields/units/timezone, set classification/refresh/
-freshness/retention, assign workspace/agent/user access, and run manual syncs. All external
-and proprietary data normalizes into the same canonical energy data model domains
-(`MARKET_PRICE`, `PRODUCTION`, `DEMAND`, `WEATHER`, `STORAGE`, `PIPELINE`, `TRANSPORTATION`,
-`LNG`, `POWER`, `NEWS_EVENT`, `POSITION`, `PORTFOLIO`, `HEDGE`, `CONTRACT`, `RISK`,
-`FORECAST`, `SCENARIO`, `ASSET`, `FACILITY`, `NODE`, `FLOW`) with the same rich metadata
-(source, organization, dataset, observation/publication/received time, unit, geography,
-confidence, revision, quality score, lineage, permissions) `ObservationDraft` already
-establishes for market data. A `ModelRoutingPolicy` (organization + data classification →
-allowed LLM provider/models/region/logging/retention) gates the existing `LLMProvider`
-abstraction (`packages/agent-sdk/agent_sdk/llm.py`) so `CUSTOMER_RESTRICTED` data can be
-routed only through approved/private model infrastructure when
-`ALLOW_EXTERNAL_LLM_PROCESSING=False` for that organization — never silently sent to a public
-model API. Data loss prevention extends to logs, monitoring payloads, and cross-organization
-vector search (AlphaMemory's similarity search must never let one customer's confidential data
-improve another customer's outputs without explicit contractual authorization).
+**Implemented**: an Admin "Enterprise Data" page (source list/create, per-source "Test
+Connection" + event log, per-source dataset list/create with schema discovery from sample
+rows, per-dataset preview/ingest + records list, per-dataset entitlement grant/list/revoke) and
+a separate "Workspaces" page (list/create/delete, member add/remove) —
+`apps/web/components/admin/enterprise-data/EnterpriseDataConsole.tsx` and `apps/web/app/
+platform/admin/workspaces/page.tsx`. `EnterpriseDataSourceRow` deliberately carries no
+credential/secret field — exactly `DataFeedConfigRow`'s existing posture: real secrets would be
+environment-provisioned and never touch this table or the admin API (moot today since the only
+implemented connector needs no credential at all). `EnterpriseDataDomain` (the canonical
+`MARKET_PRICE`/`PRODUCTION`/`DEMAND`/.../`FLOW` domain enum) exists and every dataset declares
+one, but ingested rows are stored as an opaque `EnterpriseRecordRow.row_data` JSON blob — there
+is no per-domain typed table, and wiring ingested rows into the same rich, typed
+`ObservationDraft` canonical model market data already uses is future work, documented here
+rather than silently assumed.
+
+**Not yet built**: a Mappings tab (field/unit/timezone mapping UI — schema discovery exists,
+but there's no UI to remap a discovered field to a canonical name/unit); a dedicated Lineage
+tab; a Usage analytics tab; a Dependencies tab (which agents/features depend on which dataset —
+`EnterpriseDataEntitlement`'s `AGENT` principal type records a grant, but nothing surfaces "what
+depends on this dataset" the way `admin/data-feeds/dependency-map` does for the built-in feeds);
+retention-policy fields/enforcement; a `ModelRoutingPolicy` gating `LLMProvider`
+(`packages/agent-sdk/agent_sdk/llm.py`) by classification — every `CUSTOMER_RESTRICTED` dataset
+today is exactly as reachable by any configured LLM provider as any other, since nothing reads
+this classification at LLM-call time yet; and the broader data-loss-prevention posture (logs,
+monitoring payloads, cross-organization vector search never leaking one customer's confidential
+data into another's outputs) the original plan described. All of this is Milestone 9/10 scope.
 
 ## 12. Transparency and explainability
 
