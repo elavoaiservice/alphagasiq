@@ -346,7 +346,7 @@ above: no live Neo4j server is reachable here, so it's tested against faithful `
 test doubles (`tests/fundamentals/test_pipeline_graph_neo4j.py`).
 
 **A new proprietary Alpha Intelligence Layer sits between the digital twin and the Specialized AI
-Agents — Milestone 1 (AlphaSignal™) is implemented.** See `docs/alpha-intelligence.md` for the
+Agents — Milestones 1-2 (AlphaSignal™/AlphaImpact™) are implemented.** See `docs/alpha-intelligence.md` for the
 full six-component target architecture (AlphaSignal™/AlphaImpact™/AlphaConsensus™/
 AlphaScenario™/AlphaReplay™/AlphaMemory™) and the planned multi-tenant Enterprise Data Platform,
 sequenced across 10 milestones the same incremental way the access-model spec was. AlphaSignal
@@ -364,3 +364,17 @@ tenant-ready without forcing a premature multi-tenant rearchitecture before this
 could ship — real row-level tenant isolation doesn't exist anywhere in this codebase yet
 (see `docs/alpha-intelligence.md`'s baseline section for the honest gap analysis) and is a
 later milestone in that roadmap, not a Milestone 1 dependency.
+
+**AlphaImpact™ (Milestone 2) explains every signal AlphaSignal detects, chained at the same
+integration point.** `alpha_service.impact_engine.ImpactEngine` (also a pure function, no
+DB/LLM/event-bus access) builds a causal chain — `EVENT → PHYSICAL → SUPPLY/DEMAND → STORAGE
+→ REGIONAL → PRICE/CURVE → STRATEGY → PORTFOLIO → RISK` — from a fixed skeleton selected by
+the signal's type, with each stage's confidence/magnitude decaying from the triggering
+signal's own confidence/materiality via a documented fixed factor rather than an
+independently-modeled per-stage quantity; every `ImpactAnalysis` carries its own
+`assumptions`/`uncertainties` saying so explicitly. `AppState._run_alpha_signal_detection()`
+runs this immediately after every new signal and publishes `IMPACT_ANALYSIS_CREATED`. Exposed
+via `GET /alpha/impacts`/`GET /alpha/impacts/{id}` (`alpha_impacts.view`), a new "Why does it
+matter?" chat tool (the natural conversational follow-up to "What changed overnight?"), and a
+new sub-nav under "Alpha Intelligence" (AlphaSignal/AlphaImpact tabs, mirroring the admin
+console's sub-nav pattern) with an `ImpactsTable` rendering each analysis's causal chain.

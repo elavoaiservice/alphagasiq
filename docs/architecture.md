@@ -534,7 +534,8 @@ Six components, documented in full in `docs/alpha-intelligence.md`:
 
 - **AlphaSignal™** — detects material changes (`services/alpha`). **Implemented (Milestone 1
   of this layer).**
-- **AlphaImpact™** — event-to-market causal chain. Planned (Milestone 2).
+- **AlphaImpact™** — event-to-market causal chain (`services/alpha/alpha_service/
+  impact_engine.py`). **Implemented (Milestone 2 of this layer).**
 - **AlphaConsensus™ + Agent Alpha Score™** — calibrated, dynamically-weighted multi-agent
   forecast aggregation. Planned (Milestone 3).
 - **AlphaScenario™** — counterfactual/stress-test engine, extending `services/risk/
@@ -569,3 +570,19 @@ publishing `SIGNAL_DETECTED`/`SIGNAL_ESCALATED` events). Exposed via `GET /alpha
 `GET /alpha/signals/{id}` (`admin`/`alpha_signals.view` permission, `alpha_intelligence`
 feature), an `AlphaSignalTool` chat topic ("What changed overnight?"), and a new
 "Alpha Intelligence" dashboard nav section.
+
+### AlphaImpact™ (implemented)
+
+`services/alpha/alpha_service/impact_engine.py`'s `ImpactEngine` is also pure: given a
+`Signal`, it builds a causal chain (`ImpactAnalysis`/`ImpactEdge`, `packages/schemas/schemas/
+alpha.py`) from a fixed `ImpactCategory` skeleton selected by the signal's type (fundamentals
+get the full 8-stage `PHYSICAL → SUPPLY/DEMAND → STORAGE → REGIONAL → PRICE/CURVE → STRATEGY
+→ PORTFOLIO → RISK` chain; market/agent-intelligence/portfolio-level signal types get shorter
+skeletons), with per-stage confidence/magnitude decaying from the signal's own
+confidence/materiality — explicitly documented on every analysis as a fixed heuristic, not an
+independently-modeled per-stage forecast. `AppState._run_alpha_signal_detection()` runs this
+immediately after every new signal, publishing `IMPACT_ANALYSIS_CREATED`. Exposed via
+`GET /alpha/impacts`/`GET /alpha/impacts/{id}` (`alpha_impacts.view` permission), an
+`AlphaImpactTool` chat topic ("Why does it matter?" — the natural follow-up to AlphaSignal's
+"What changed overnight?"), and an "AlphaImpact" tab in the Alpha Intelligence dashboard
+sub-nav. See `docs/alpha-intelligence.md` section 5 for the full design.

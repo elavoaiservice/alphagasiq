@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
 from schemas import (
+    ImpactAnalysis,
     InvestmentCommitteeDecision,
     PostTradeAnalysis,
     PriceForecast,
@@ -31,6 +32,7 @@ from .models import (
     DataFeedEventRow,
     DecisionJournalRow,
     FeatureRow,
+    ImpactAnalysisRow,
     MagicLinkTokenRow,
     ModelDefinitionRow,
     OrganizationFeatureEntitlementRow,
@@ -106,6 +108,7 @@ _PERMISSION_KEYS = [
     "admin.feature_management",
     "admin.risk_settings",
     "alpha_signals.view",
+    "alpha_impacts.view",
 ]
 
 # Permissions reserved for SUPER_ADMIN: the system-level/risk/model/agent-optimization
@@ -138,6 +141,7 @@ _ROLE_PERMISSIONS: dict[str, list[str]] = {
         "news.view",
         "trading_recommendations.view",
         "alpha_signals.view",
+        "alpha_impacts.view",
         "trading_recommendations.challenge",
         "chief_agent.chat",
         "portfolio.view",
@@ -156,6 +160,7 @@ _ROLE_PERMISSIONS: dict[str, list[str]] = {
         "news.view",
         "trading_recommendations.view",
         "alpha_signals.view",
+        "alpha_impacts.view",
         "chief_agent.chat",
         "portfolio.view",
         "risk.view",
@@ -173,6 +178,7 @@ _ROLE_PERMISSIONS: dict[str, list[str]] = {
         "news.view",
         "trading_recommendations.view",
         "alpha_signals.view",
+        "alpha_impacts.view",
         "trading_recommendations.challenge",
         "chief_agent.chat",
         "portfolio.view",
@@ -190,6 +196,7 @@ _ROLE_PERMISSIONS: dict[str, list[str]] = {
         "news.view",
         "trading_recommendations.view",
         "alpha_signals.view",
+        "alpha_impacts.view",
         "portfolio.view",
         "risk.view",
         "chief_agent.chat",
@@ -205,6 +212,7 @@ _ROLE_PERMISSIONS: dict[str, list[str]] = {
         "news.view",
         "trading_recommendations.view",
         "alpha_signals.view",
+        "alpha_impacts.view",
     ],
     "API_USER": [
         "market_data.view",
@@ -521,6 +529,39 @@ def _signal_row_to_dict(row: SignalRow) -> dict:
         "affected_agents": row.affected_agents,
         "affected_business_functions": row.affected_business_functions,
         "status": row.status,
+        "created_at": row.created_at,
+    }
+
+
+def _impact_analysis_row_to_dict(row: ImpactAnalysisRow) -> dict:
+    return {
+        "id": row.id,
+        "signal_id": row.signal_id,
+        "organization_id": row.organization_id,
+        "event_type": row.event_type,
+        "physical_impact": row.physical_impact,
+        "supply_impact_bcf_day": row.supply_impact_bcf_day,
+        "demand_impact_bcf_day": row.demand_impact_bcf_day,
+        "storage_impact_bcf": row.storage_impact_bcf,
+        "expected_duration": row.expected_duration,
+        "affected_geographies": row.affected_geographies,
+        "affected_assets": row.affected_assets,
+        "affected_markets": row.affected_markets,
+        "affected_contracts": row.affected_contracts,
+        "basis_implications": row.basis_implications,
+        "curve_implications": row.curve_implications,
+        "volatility_implications": row.volatility_implications,
+        "portfolio_implications": row.portfolio_implications,
+        "risk_implications": row.risk_implications,
+        "bullish_bearish": row.bullish_bearish,
+        "magnitude": row.magnitude,
+        "confidence": row.confidence,
+        "assumptions": row.assumptions,
+        "uncertainties": row.uncertainties,
+        "alternative_interpretations": row.alternative_interpretations,
+        "data_sources": row.data_sources,
+        "agent_contributors": row.agent_contributors,
+        "chain": row.chain,
         "created_at": row.created_at,
     }
 
@@ -1857,6 +1898,82 @@ class SqlAppRepository:
                 )
                 await session.merge(row)
             await session.commit()
+
+    async def save_impact_analysis(self, analysis: ImpactAnalysis) -> None:
+        row = ImpactAnalysisRow(
+            id=str(analysis.id),
+            signal_id=str(analysis.signal_id),
+            organization_id=analysis.organization_id,
+            event_type=analysis.event_type.value,
+            physical_impact=analysis.physical_impact,
+            supply_impact_bcf_day=analysis.supply_impact_bcf_day,
+            demand_impact_bcf_day=analysis.demand_impact_bcf_day,
+            storage_impact_bcf=analysis.storage_impact_bcf,
+            expected_duration=analysis.expected_duration,
+            affected_geographies=analysis.affected_geographies,
+            affected_assets=analysis.affected_assets,
+            affected_markets=analysis.affected_markets,
+            affected_contracts=analysis.affected_contracts,
+            basis_implications=analysis.basis_implications,
+            curve_implications=analysis.curve_implications,
+            volatility_implications=analysis.volatility_implications,
+            portfolio_implications=analysis.portfolio_implications,
+            risk_implications=analysis.risk_implications,
+            bullish_bearish=analysis.bullish_bearish.value,
+            magnitude=analysis.magnitude,
+            confidence=analysis.confidence,
+            assumptions=analysis.assumptions,
+            uncertainties=analysis.uncertainties,
+            alternative_interpretations=analysis.alternative_interpretations,
+            data_sources=analysis.data_sources,
+            agent_contributors=analysis.agent_contributors,
+            chain=[edge.model_dump(mode="json") for edge in analysis.chain],
+            created_at=_naive_utc(analysis.created_at),
+        )
+        async with self.session_factory() as session:
+            session.add(row)
+            await session.commit()
+
+    async def list_impact_analyses(
+        self,
+        *,
+        signal_id: str | None = None,
+        organization_id: str | None = None,
+        since: datetime | None = None,
+        limit: int = 50,
+    ) -> list[dict]:
+        query = select(ImpactAnalysisRow).order_by(ImpactAnalysisRow.created_at.desc()).limit(limit)
+        if signal_id is not None:
+            query = query.where(ImpactAnalysisRow.signal_id == signal_id)
+        if organization_id is not None:
+            query = query.where(
+                (ImpactAnalysisRow.organization_id == organization_id)
+                | (ImpactAnalysisRow.organization_id.is_(None))
+            )
+        if since is not None:
+            query = query.where(ImpactAnalysisRow.created_at >= _naive_utc(since))
+        async with self.session_factory() as session:
+            rows = (await session.execute(query)).scalars().all()
+        return [_impact_analysis_row_to_dict(r) for r in rows]
+
+    async def get_impact_analysis(self, impact_id: str) -> dict | None:
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(select(ImpactAnalysisRow).where(ImpactAnalysisRow.id == impact_id))
+            ).scalar_one_or_none()
+        return _impact_analysis_row_to_dict(row) if row is not None else None
+
+    async def get_latest_impact_analysis_for_signal(self, signal_id: str) -> dict | None:
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(
+                    select(ImpactAnalysisRow)
+                    .where(ImpactAnalysisRow.signal_id == signal_id)
+                    .order_by(ImpactAnalysisRow.created_at.desc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+        return _impact_analysis_row_to_dict(row) if row is not None else None
 
     async def save_committee_decision(self, trade_id: UUID, decision: InvestmentCommitteeDecision) -> None:
         row = CommitteeDecisionRow(

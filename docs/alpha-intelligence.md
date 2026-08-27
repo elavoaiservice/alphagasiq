@@ -9,9 +9,10 @@ a large, multi-milestone initiative (larger in scope than the access-model build
 `docs/access-model.md`/`docs/agent-governance.md`), delivered the same way: one milestone at a
 time, each planned, built, tested, documented, and committed before the next begins.
 
-**Status as of this document**: Milestone 1 (AlphaSignal™) is implemented. Milestones 2-10
-below are architecture + roadmap only — not yet built. Do not assume any capability described
-here beyond AlphaSignal™'s "Implemented" sections actually exists in the codebase yet.
+**Status as of this document**: Milestones 1 (AlphaSignal™) and 2 (AlphaImpact™) are
+implemented. Milestones 3-10 below are architecture + roadmap only — not yet built. Do not
+assume any capability described here beyond the "Implemented" sections actually exists in the
+codebase yet.
 
 ## 1. Where this sits in the pipeline
 
@@ -108,7 +109,7 @@ can ship.
 | # | Component | Status |
 |---|---|---|
 | 1 | AlphaSignal™ — material-change detection + materiality engine | **Implemented** |
-| 2 | AlphaImpact™ — event→market causal chain | Planned |
+| 2 | AlphaImpact™ — event→market causal chain | **Implemented** |
 | 3 | AlphaConsensus™ + Agent Alpha Score™ — calibrated, dynamically-weighted consensus | Planned |
 | 4 | AlphaScenario™ — counterfactual/stress-test engine | Planned |
 | 5 | AlphaMemory™ — decision/institutional memory | Planned |
@@ -224,25 +225,78 @@ page.tsx` + `apps/web/components/alpha-intelligence/SignalsTable.tsx`), a client
 using the same `useAuth()`-token + `apiGet` pattern as the admin data-feeds page, rendering a
 materiality-ranked table.
 
-## 5. AlphaImpact™ (planned)
+## 5. AlphaImpact™ (implemented)
 
-Takes a `Signal` and determines what it *means* — the causal chain from physical event to
-portfolio implication:
+**Purpose**: takes a `Signal` AlphaSignal already detected and determines what it *means* —
+the causal chain from physical event to portfolio implication:
 
 ```
 EVENT → PHYSICAL IMPACT → SUPPLY/DEMAND IMPACT → STORAGE IMPACT → REGIONAL IMPACT →
 PRICE/CURVE IMPACT → STRATEGY IMPACT → PORTFOLIO IMPACT → RISK IMPACT
 ```
 
-Planned schema: `ImpactAnalysis` (linked to a `Signal.id`) and `ImpactEdge` (one causal link
-in the chain, each carrying its own confidence/magnitude/supporting evidence, so the frontend
-can render the chain — e.g. "Freeport LNG outage → feedgas -1.1 Bcf/d → domestic availability
-+1.1 Bcf/d → storage trajectory higher → Gulf Coast balance looser → Henry Hub bearish" — as a
-graph with per-link confidence, not a single opaque verdict). When enterprise data is
-available and the requesting user is authorized, `ImpactAnalysis` additionally computes a
-customer-specific view (their positions/contracts/hedges) *alongside*, never in place of, the
-general market view, and never exposes customer positions to a user without explicit
-permission (section 7's `EnterpriseDataEntitlement`/`AgentDataEntitlement`).
+**Schema** (`packages/schemas/schemas/alpha.py`): `ImpactCategory` (the eight stages above),
+`ImpactEdge` (one causal link — `sequence_index`, `category`, `from_node`, `to_node`,
+`description`, `confidence`, `magnitude`, `supporting_evidence` — so the frontend renders the
+chain as a graph with per-link confidence, not a single opaque verdict) and `ImpactAnalysis`
+(`signal_id`, `organization_id`, `event_type`, `physical_impact`, `supply_impact_bcf_day`,
+`demand_impact_bcf_day`, `storage_impact_bcf`, `expected_duration`, `affected_geographies`/
+`assets`/`markets`/`contracts`, `basis_implications`, `curve_implications`,
+`volatility_implications`, `portfolio_implications`, `risk_implications`, `bullish_bearish`,
+`magnitude`, `confidence`, `assumptions`, `uncertainties`, `alternative_interpretations`,
+`data_sources`, `agent_contributors`, `chain: list[ImpactEdge]`).
+
+**Impact engine** (`services/alpha/alpha_service/impact_engine.py`): `ImpactEngine.analyze()`
+is pure — no DB/event-bus/LLM access — exactly like `MaterialityEngine`/`SignalDetector`. A
+fixed skeleton of `ImpactCategory` stages is selected by the signal's `SignalType` (the full
+8-stage fundamentals skeleton for Supply/Demand/Storage/Weather/LNG/Power/Pipeline signals; a
+4-stage market skeleton — `PRICE_CURVE → STRATEGY → PORTFOLIO → RISK` — for
+PRICE_MOVE/CURVE_CHANGE/VOLATILITY_CHANGE; a 3-stage `STRATEGY → PORTFOLIO → RISK` skeleton
+for AGENT_DISAGREEMENT/MODEL_DISAGREEMENT; a 2-stage `PORTFOLIO → RISK` skeleton for signal
+types that are already portfolio-level events). Each stage's `confidence`/`magnitude` decay
+multiplicatively from the triggering signal's own `confidence`/`materiality_score` via a fixed
+per-stage factor (0.92) — later stages are never more confident than earlier ones, reflecting
+compounding uncertainty. Milestone 2 is deliberately honest about scope: **this is not an
+independently-modeled per-stage quantitative forecast** — every `ImpactAnalysis` carries its
+own `assumptions`/`uncertainties` saying so explicitly, rather than silently implying more
+precision than actually exists. The one genuinely computed number per analysis is the direct
+fundamental mapping where it's unambiguous — `PRODUCTION_CHANGE`/`PIPELINE_CONSTRAINT`/
+`PIPELINE_OUTAGE` → `supply_impact_bcf_day`; `DEMAND_CHANGE`/`WEATHER_CHANGE`/`POWER_CHANGE`/
+`LNG_CHANGE` → `demand_impact_bcf_day`; `STORAGE_CHANGE` → `storage_impact_bcf` — each simply
+carried forward from the signal's own `absolute_change` where the mapping is direct, not
+independently recomputed. `bullish_bearish`/`magnitude`/`confidence` are likewise carried
+forward from the triggering signal's own `direction`/`materiality_score`/`confidence` — an
+independently-modeled *impact* magnitude, distinct from the triggering signal's materiality,
+is future work.
+
+**Integration** (`apps/api/api_app/state.py`): `AppState._run_alpha_signal_detection()` runs
+`ImpactEngine.analyze()` against every newly-persisted `Signal` in the same loop, immediately
+after saving the signal and publishing its `SIGNAL_DETECTED`/`SIGNAL_ESCALATED` event —
+signal detection and impact analysis are chained at one integration point, not two separate
+call sites. Persists via `ImpactAnalysisRow` (chain stored as an embedded JSON column, since
+it's always fetched with its parent and never queried edge-by-edge independently), publishes
+`IMPACT_ANALYSIS_CREATED` (with `lineage_ids=[signal_id]`), and appends to a bounded in-memory
+`AppState.recent_impacts` cache alongside `recent_signals`.
+
+**API**: `GET /alpha/impacts` (filterable by `signal_id`, `since_hours`, `limit`; gated by a
+new `alpha_impacts.view` permission, granted to the same role set as `alpha_signals.view`) and
+`GET /alpha/impacts/{impact_id}`.
+
+**Chat tool**: `AlphaImpactTool` — a new `"why_does_it_matter"` topic ("Why does it matter?"/
+"why is that important"), permission `alpha_impacts.view`, matches `state.recent_impacts` to
+the highest-materiality entry in `state.recent_signals` by `signal_id` and narrates the causal
+chain — the natural conversational follow-up to AlphaSignal's "What changed overnight?".
+
+**Dashboard**: the "Alpha Intelligence" nav section now has its own sub-nav
+(`apps/web/app/platform/alpha-intelligence/layout.tsx`, mirroring the admin console's
+sub-nav pattern) with AlphaSignal and AlphaImpact tabs — `/platform/alpha-intelligence/impacts`
+(`ImpactsTable.tsx`) lists recent impact analyses and renders the selected one's causal chain
+as an ordered list with per-stage confidence/magnitude.
+
+**Enterprise personalization** (section 8's `ImpactAnalysis` "customer-specific view"
+alongside the general market view) remains planned, not built — `affected_contracts` is
+always empty and no enterprise-data branch exists yet, since the Enterprise Data Platform
+milestones (7-10) haven't been built.
 
 ## 6. AlphaConsensus™ + Agent Alpha Score™ (planned)
 

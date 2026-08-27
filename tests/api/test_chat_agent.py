@@ -126,3 +126,53 @@ async def test_what_changed_overnight_declined_without_permission(monkeypatch, u
     assert result.access_granted is False
     assert result.tool_used == "what_changed_overnight"
     assert "alpha_signals.view" in result.content
+
+
+async def test_why_does_it_matter_routes_to_alphaimpact_tool(monkeypatch, user):
+    """AlphaImpactTool (docs/alpha-intelligence.md section 43): "why does it matter"
+    routes to a new topic, requires `alpha_impacts.view`, and reads
+    `state.recent_impacts` -- matched to the highest-materiality signal in
+    `state.recent_signals` by `signal_id`."""
+    from alpha_service import ImpactEngine
+    from schemas import Signal, SignalType
+
+    async def fake_permissions(_user, _state):
+        return {"alpha_impacts.view"}
+
+    monkeypatch.setattr(chat_agent_module, "get_effective_permissions", fake_permissions)
+    agent = ChatAgent(llm=MockLLMProvider())
+
+    sig = Signal(
+        signal_type=SignalType.STORAGE_CHANGE,
+        category="fundamentals",
+        headline="Storage forecast shifted",
+        description="test signal",
+        materiality_score=91.0,
+        confidence=0.8,
+    )
+    state = _FakeState()
+    state.recent_signals = [sig]
+    state.recent_impacts = [ImpactEngine().analyze(sig)]
+
+    result = await agent.ask("Why does it matter?", state, user)
+
+    assert result.access_granted is True
+    assert result.tool_used == "why_does_it_matter"
+    assert result.permission_required == "alpha_impacts.view"
+    assert "STORAGE_CHANGE" in result.content
+
+
+async def test_why_does_it_matter_declined_without_permission(monkeypatch, user):
+    async def fake_permissions(_user, _state):
+        return set()
+
+    monkeypatch.setattr(chat_agent_module, "get_effective_permissions", fake_permissions)
+    agent = ChatAgent(llm=MockLLMProvider())
+
+    # _FakeState has no `recent_impacts` attribute -- a wrongly-dispatched tool call
+    # would raise AttributeError instead of returning a declined result.
+    result = await agent.ask("Why does it matter?", _FakeState(), user)
+
+    assert result.access_granted is False
+    assert result.tool_used == "why_does_it_matter"
+    assert "alpha_impacts.view" in result.content

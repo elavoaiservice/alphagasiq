@@ -64,6 +64,7 @@ _TOOL_PERMISSIONS: dict[str, str] = {
     "compare_forecast_vs_consensus": "storage.view",
     "top_risks": "portfolio.view",
     "what_changed_overnight": "alpha_signals.view",
+    "why_does_it_matter": "alpha_impacts.view",
     "what_changed": "dashboard.view",
     "todays_move": "news.view",
     "general_status": "dashboard.view",
@@ -91,6 +92,8 @@ class ChatAgent:
             return "compare_forecast_vs_consensus"
         elif "largest risk" in q or "biggest risk" in q or "risk in the portfolio" in q:
             return "top_risks"
+        elif "why does it matter" in q or "why does that matter" in q or "why is that important" in q or "why is this important" in q or "alphaimpact" in q:
+            return "why_does_it_matter"
         elif "overnight" in q or "material change" in q or "alphasignal" in q:
             return "what_changed_overnight"
         elif "what changed" in q or "last six hours" in q or "recent" in q:
@@ -119,6 +122,8 @@ class ChatAgent:
             return self._compare_forecast_vs_consensus(state)
         elif topic == "top_risks":
             return self._top_risks(state)
+        elif topic == "why_does_it_matter":
+            return self._why_does_it_matter(state)
         elif topic == "what_changed_overnight":
             return self._what_changed_overnight(state)
         elif topic == "what_changed":
@@ -329,6 +334,30 @@ class ChatAgent:
             "\n".join(lines),
             [{"source": "alpha_service.signal_detector", "reference": str(s.id)} for s in top],
             {"signal_count": len(state.recent_signals)},
+        )
+
+    def _why_does_it_matter(self, state: AppState) -> ToolResult:
+        """AlphaImpactTool (docs/alpha-intelligence.md section 43) -- explains the
+        highest-materiality recent signal's causal chain, not just that it happened.
+        Reads `state.recent_impacts` (populated 1:1 alongside `state.recent_signals`
+        by `AppState._run_alpha_signal_detection`), matching by `signal_id` so this
+        always reports the impact analysis for the same signal `_what_changed_overnight`
+        would surface first."""
+        if not state.recent_impacts:
+            return ToolResult("No impact analysis available yet -- ask what changed first.", [], {})
+        top_signal = max(state.recent_signals, key=lambda s: s.materiality_score, default=None)
+        analysis = next(
+            (a for a in state.recent_impacts if top_signal is not None and a.signal_id == top_signal.id),
+            state.recent_impacts[-1],
+        )
+        lines = [f"{analysis.event_type.value} -- overall read: {analysis.bullish_bearish.value}"]
+        lines += [f"{edge.from_node} -> {edge.to_node}: {edge.description}" for edge in analysis.chain]
+        if analysis.uncertainties:
+            lines.append("Uncertainties: " + "; ".join(analysis.uncertainties))
+        return ToolResult(
+            "\n".join(lines),
+            [{"source": "alpha_service.impact_engine", "reference": str(analysis.id)}],
+            {"signal_id": str(analysis.signal_id)},
         )
 
     def _what_changed(self, q: str, state: AppState) -> ToolResult:

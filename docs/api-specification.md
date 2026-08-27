@@ -217,14 +217,16 @@ All list endpoints support `limit`/`cursor` pagination. All responses embed
 `data_sources`/`citations`/`freshness` metadata wherever the payload includes market or research
 facts, per the platform's explainability requirement.
 
-## Alpha Intelligence — AlphaSignal (Alpha Intelligence Layer Milestone 1, `docs/alpha-intelligence.md`)
+## Alpha Intelligence — AlphaSignal + AlphaImpact (Alpha Intelligence Layer Milestones 1-2, `docs/alpha-intelligence.md`)
 
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/alpha/signals` | requires `alpha_signals.view`. Ranked highest-materiality-first, then most recent. Query params: `market`, `since_hours` (default 24), `min_materiality` (default 0), `limit` (default 50). Includes both the requester's organization's own signals and every platform-wide signal (`organization_id IS NULL` — the only kind this milestone's detector produces) |
 | GET | `/alpha/signals/{signal_id}` | requires `alpha_signals.view`. 404 if unknown |
+| GET | `/alpha/impacts` | requires `alpha_impacts.view`. Most-recent-first. Query params: `signal_id`, `since_hours` (default 24), `limit` (default 50). Same organization-scoped-plus-platform-wide visibility rule as `/alpha/signals` |
+| GET | `/alpha/impacts/{impact_id}` | requires `alpha_impacts.view`. 404 if unknown |
 
-Only AlphaSignal is implemented so far. `docs/alpha-intelligence.md` documents the planned
-`/alpha/impacts`, `/alpha/consensus`, `/alpha/scenarios`, `/alpha/replay`, `/alpha/memory`, and
-`/enterprise/*` endpoint families for the remaining five components and the Enterprise Data
+Only AlphaSignal and AlphaImpact are implemented so far. `docs/alpha-intelligence.md` documents
+the planned `/alpha/consensus`, `/alpha/scenarios`, `/alpha/replay`, `/alpha/memory`, and
+`/enterprise/*` endpoint families for the remaining four components and the Enterprise Data
 Platform — not yet built.

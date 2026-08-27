@@ -28,7 +28,7 @@ from agents_service import (
     RegimeDetectionAgent,
     RelativeValueAgent,
 )
-from alpha_service import BaselineSnapshot, MaterialityEngine, SignalDetector
+from alpha_service import BaselineSnapshot, ImpactEngine, MaterialityEngine, SignalDetector
 from config import get_settings
 from data_sdk import FetchRequest, ProviderRegistry
 from data_service.providers.mock_market_data import MockCMEProvider, MockICEProvider
@@ -59,6 +59,7 @@ from schemas import (
     DomainEvent,
     EventType,
     ForecastHorizon,
+    ImpactAnalysis,
     InvestmentCommitteeDecision,
     ModelType,
     NewsEvent,
@@ -112,12 +113,15 @@ class AppState:
         self.backtesting_agent = BacktestingAgent(llm=llm)
         self.risk_governor = RiskGovernor()
         self.alpha_signal_detector = SignalDetector(MaterialityEngine())
-        # Bounded cache of the most recently detected signals, kept in-memory alongside
-        # the durable `alpha_signals` table so the (synchronous) chat-tool dispatch
-        # methods in chat_agent.py can read them the same way every other tool method
-        # reads AppState — without making that dispatch path async-aware for just this
-        # one topic (docs/alpha-intelligence.md Milestone 1 provisional decisions).
+        self.alpha_impact_engine = ImpactEngine()
+        # Bounded caches of the most recently detected signals/impact analyses, kept
+        # in-memory alongside the durable `alpha_signals`/`alpha_impact_analyses`
+        # tables so the (synchronous) chat-tool dispatch methods in chat_agent.py can
+        # read them the same way every other tool method reads AppState — without
+        # making that dispatch path async-aware for just these topics
+        # (docs/alpha-intelligence.md Milestone 1/2 provisional decisions).
         self.recent_signals: list[Signal] = []
+        self.recent_impacts: list[ImpactAnalysis] = []
 
         from .email_service import get_email_provider
         from .rate_limit import SlidingWindowRateLimiter
@@ -557,7 +561,10 @@ class AppState:
         materiality threshold, and publishes a domain event for it. Called from both
         `_run_initial_research_cycle` and `run_chief_trading_cycle` -- the latter
         doesn't re-run LNG/power/pipeline, so those three arguments are `None` there,
-        and the detector simply skips the rules that need them."""
+        and the detector simply skips the rules that need them. Immediately runs
+        AlphaImpact(TM) (docs/alpha-intelligence.md section 5) against every new signal,
+        too -- signal detection and impact analysis are chained at this single
+        integration point rather than two separate call sites."""
         raw_baselines = await self.repo.get_signal_baselines()
         baselines = {
             key: BaselineSnapshot(
@@ -589,8 +596,21 @@ class AppState:
                     payload=sig.model_dump(mode="json"),
                 )
             )
+
+            analysis = self.alpha_impact_engine.analyze(sig)
+            await self.repo.save_impact_analysis(analysis)
+            self.recent_impacts.append(analysis)
+            await self.event_bus.publish(
+                DomainEvent(
+                    event_type=EventType.IMPACT_ANALYSIS_CREATED,
+                    source_service="alpha_service",
+                    payload=analysis.model_dump(mode="json"),
+                    lineage_ids=[str(sig.id)],
+                )
+            )
         if signals:
             self.recent_signals = self.recent_signals[-50:]
+            self.recent_impacts = self.recent_impacts[-50:]
 
     async def submit_trade_idea(self, trade: TradeIdea) -> Approval:
         self.trade_ideas[trade.trade_id] = trade

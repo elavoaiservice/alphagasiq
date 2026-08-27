@@ -3,8 +3,10 @@
 `Signal` is the foundational unit produced by AlphaSignal(TM): a detected,
 materiality-scored change in the natural gas ecosystem that everything downstream
 (AlphaImpact, AlphaConsensus, AlphaScenario, AlphaMemory) will eventually consume or
-reference. Nothing in this module talks to a database, an LLM, or the network -- it is
-a pure data contract, exactly like every other schema in this package.
+reference. `ImpactAnalysis`/`ImpactEdge` are AlphaImpact(TM)'s output: what a `Signal`
+means, expressed as a causal chain from physical event to portfolio/risk implication.
+Nothing in this module talks to a database, an LLM, or the network -- it is a pure data
+contract, exactly like every other schema in this package.
 """
 
 from __future__ import annotations
@@ -95,3 +97,76 @@ class Signal(BaseModel):
     affected_agents: list[str] = Field(default_factory=list)
     affected_business_functions: list[str] = Field(default_factory=list)
     status: SignalStatus = SignalStatus.ACTIVE
+
+
+class ImpactCategory(str, Enum):
+    """The fixed causal-chain stages AlphaImpact(TM) reasons through (spec's
+    EVENT -> PHYSICAL IMPACT -> SUPPLY/DEMAND -> STORAGE -> REGIONAL -> PRICE/CURVE ->
+    STRATEGY -> PORTFOLIO -> RISK). Not every signal type traverses every stage --
+    `impact_engine.py`'s chain skeletons pick the subset that actually applies."""
+
+    PHYSICAL = "PHYSICAL"
+    SUPPLY_DEMAND = "SUPPLY_DEMAND"
+    STORAGE = "STORAGE"
+    REGIONAL = "REGIONAL"
+    PRICE_CURVE = "PRICE_CURVE"
+    STRATEGY = "STRATEGY"
+    PORTFOLIO = "PORTFOLIO"
+    RISK = "RISK"
+
+
+class ImpactEdge(BaseModel):
+    """One link in an `ImpactAnalysis`'s causal chain. Each link carries its own
+    confidence/magnitude (both decay along the chain -- later stages are always at
+    least as uncertain as earlier ones, never more confident) and the evidence it's
+    grounded in, so the UI can render the chain as a graph rather than a single opaque
+    verdict (docs/alpha-intelligence.md section 5)."""
+
+    id: UUID = Field(default_factory=uuid4)
+    sequence_index: int
+    category: ImpactCategory
+    from_node: str
+    to_node: str
+    description: str
+    confidence: float = Field(ge=0, le=1)
+    magnitude: float | None = Field(default=None, ge=0, le=100)
+    supporting_evidence: list[str] = Field(default_factory=list)
+
+
+class ImpactAnalysis(BaseModel):
+    """AlphaImpact(TM)'s output for one `Signal` (docs/alpha-intelligence.md section 5):
+    what the signal means, not just that it happened. `bullish_bearish`/`magnitude` are
+    carried forward from the originating signal's own `direction`/`materiality_score` in
+    Milestone 2 -- an independently-modeled impact magnitude (distinct from the
+    triggering signal's own materiality) is future work, documented here rather than
+    silently assumed. `affected_contracts`/enterprise-personalized implications are
+    always empty until the Enterprise Data Platform milestones exist."""
+
+    id: UUID = Field(default_factory=uuid4)
+    signal_id: UUID
+    organization_id: str | None = None
+    event_type: SignalType
+    physical_impact: str
+    supply_impact_bcf_day: float | None = None
+    demand_impact_bcf_day: float | None = None
+    storage_impact_bcf: float | None = None
+    expected_duration: str = ""
+    affected_geographies: list[str] = Field(default_factory=list)
+    affected_assets: list[str] = Field(default_factory=list)
+    affected_markets: list[str] = Field(default_factory=list)
+    affected_contracts: list[str] = Field(default_factory=list)
+    basis_implications: str = ""
+    curve_implications: str = ""
+    volatility_implications: str = ""
+    portfolio_implications: str = ""
+    risk_implications: str = ""
+    bullish_bearish: SignalDirection = SignalDirection.NEUTRAL
+    magnitude: float = Field(ge=0, le=100, default=0.0)
+    confidence: float = Field(ge=0, le=1, default=0.0)
+    assumptions: list[str] = Field(default_factory=list)
+    uncertainties: list[str] = Field(default_factory=list)
+    alternative_interpretations: list[str] = Field(default_factory=list)
+    data_sources: list[str] = Field(default_factory=list)
+    agent_contributors: list[str] = Field(default_factory=list)
+    chain: list[ImpactEdge] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=datetime.utcnow)

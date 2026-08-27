@@ -28,6 +28,8 @@ class EventType(str, Enum):
     POSITION_UPDATED = "POSITION_UPDATED"
     SIGNAL_DETECTED = "SIGNAL_DETECTED"
     SIGNAL_ESCALATED = "SIGNAL_ESCALATED"
+    IMPACT_ANALYSIS_CREATED = "IMPACT_ANALYSIS_CREATED"
+    IMPACT_UPDATED = "IMPACT_UPDATED"
 
 
 def topic_for_event_type(event_type: EventType | str) -> str:

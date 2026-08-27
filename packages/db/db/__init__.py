@@ -13,6 +13,7 @@ from .models import (
     DataFeedEventRow,
     DecisionJournalRow,
     FeatureRow,
+    ImpactAnalysisRow,
     MagicLinkTokenRow,
     ModelDefinitionRow,
     OrganizationFeatureEntitlementRow,
@@ -70,5 +71,6 @@ __all__ = [
     "DataFeedEventRow",
     "SignalRow",
     "SignalBaselineRow",
+    "ImpactAnalysisRow",
     "SqlAppRepository",
 ]

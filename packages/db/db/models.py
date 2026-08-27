@@ -616,3 +616,42 @@ class SignalBaselineRow(Base):
     value: Mapped[float] = mapped_column(Float, nullable=False)
     rolling_window: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     observed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class ImpactAnalysisRow(Base):
+    """AlphaImpact(TM)'s output for one `Signal` (docs/alpha-intelligence.md section 5).
+    `chain` (the ordered `ImpactEdge` list) is stored as a single JSON column rather
+    than a separate join table -- it's always fetched together with its parent and
+    never independently queried edge-by-edge, so a normalized table would add a join
+    for no real benefit at this milestone's scale."""
+
+    __tablename__ = "alpha_impact_analyses"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    signal_id: Mapped[str] = mapped_column(String(36), ForeignKey("alpha_signals.id"), nullable=False)
+    organization_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=True)
+    event_type: Mapped[str] = mapped_column(String, nullable=False)
+    physical_impact: Mapped[str] = mapped_column(String, nullable=False)
+    supply_impact_bcf_day: Mapped[float | None] = mapped_column(Float, nullable=True)
+    demand_impact_bcf_day: Mapped[float | None] = mapped_column(Float, nullable=True)
+    storage_impact_bcf: Mapped[float | None] = mapped_column(Float, nullable=True)
+    expected_duration: Mapped[str] = mapped_column(String, nullable=False, default="")
+    affected_geographies: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    affected_assets: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    affected_markets: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    affected_contracts: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    basis_implications: Mapped[str] = mapped_column(String, nullable=False, default="")
+    curve_implications: Mapped[str] = mapped_column(String, nullable=False, default="")
+    volatility_implications: Mapped[str] = mapped_column(String, nullable=False, default="")
+    portfolio_implications: Mapped[str] = mapped_column(String, nullable=False, default="")
+    risk_implications: Mapped[str] = mapped_column(String, nullable=False, default="")
+    bullish_bearish: Mapped[str] = mapped_column(String, nullable=False, default="NEUTRAL")
+    magnitude: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    assumptions: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    uncertainties: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    alternative_interpretations: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    data_sources: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    agent_contributors: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    chain: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)

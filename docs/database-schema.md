@@ -233,7 +233,7 @@ No column for chain-of-thought. `reasoning_summary` is a concise, human-auditabl
   `list_audit_events` — there is no update or delete method for this table, in the repository or
   the API, ever.
 
-## 4b. Alpha Intelligence Tables (Alpha Intelligence Layer Milestone 1 — `docs/alpha-intelligence.md`)
+## 4b. Alpha Intelligence Tables (Alpha Intelligence Layer Milestones 1-2 — `docs/alpha-intelligence.md`)
 
 - **`alpha_signals`** — one row per `Signal` AlphaSignal(TM) detected and persisted. id,
   organization_id (nullable FK to `organizations`, NULL = platform-wide — the only kind
@@ -249,6 +249,18 @@ No column for chain-of-thought. `reasoning_summary` is a concise, human-auditabl
   `alpha_service.signal_detector.SignalDetector` can diff cycle-over-cycle without holding
   that state in the process-wide `AppState` singleton itself: key, value, rolling_window
   (jsonb), observed_at.
+- **`alpha_impact_analyses`** — one row per `ImpactAnalysis` AlphaImpact(TM) produced for a
+  `Signal` (`signal_id`, FK to `alpha_signals`). id, signal_id, organization_id (nullable FK
+  to `organizations`), event_type, physical_impact, supply_impact_bcf_day,
+  demand_impact_bcf_day, storage_impact_bcf, expected_duration, affected_geographies (jsonb),
+  affected_assets (jsonb), affected_markets (jsonb), affected_contracts (jsonb, always empty
+  until the Enterprise Data Platform milestones), basis_implications, curve_implications,
+  volatility_implications, portfolio_implications, risk_implications, bullish_bearish,
+  magnitude, confidence, assumptions (jsonb), uncertainties (jsonb),
+  alternative_interpretations (jsonb), data_sources (jsonb), agent_contributors (jsonb),
+  `chain` (jsonb — the ordered `ImpactEdge` list, embedded rather than a separate join table
+  since it's always fetched with its parent and never queried edge-by-edge independently),
+  created_at.
 
 ## 5. TimescaleDB Specifics
 
