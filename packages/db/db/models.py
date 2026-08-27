@@ -798,3 +798,41 @@ class LessonProposalRow(Base):
     reviewed_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class MarketObservationRow(Base):
+    """AlphaReplay(TM)'s bitemporal market observation store (docs/alpha-intelligence.md
+    section 9) -- persists a `TimeSeriesObservation` with the full bitemporal
+    revision history: when a later revision arrives for the same
+    `series_id`+`observation_time`, the prior row's `valid_to` is set to the new
+    row's `publication_time` rather than overwritten, so an "as known at
+    <timestamp>" query can still recover exactly what was believed then. `valid_to`
+    is `NULL` only for the current (latest) revision of a given `series_id`+
+    `observation_time`."""
+
+    __tablename__ = "alpha_market_observations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    source: Mapped[str] = mapped_column(String, nullable=False)
+    source_type: Mapped[str] = mapped_column(String, nullable=False)
+    series_id: Mapped[str] = mapped_column(String, nullable=False)
+    symbol: Mapped[str | None] = mapped_column(String, nullable=True)
+    commodity: Mapped[str] = mapped_column(String, nullable=False, default="NATURAL_GAS")
+    category: Mapped[str] = mapped_column(String, nullable=False)
+    sub_category: Mapped[str | None] = mapped_column(String, nullable=True)
+    geography: Mapped[str | None] = mapped_column(String, nullable=True)
+    location: Mapped[str | None] = mapped_column(String, nullable=True)
+    value: Mapped[float] = mapped_column(Float, nullable=False)
+    unit: Mapped[str] = mapped_column(String, nullable=False)
+    observation_time: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    publication_time: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    revision_number: Mapped[int] = mapped_column(nullable=False, default=0)
+    quality_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    metadata_: Mapped[dict] = mapped_column("metadata", JSON, nullable=False, default=dict)
+    lineage: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    revision_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    valid_from: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    valid_to: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    received_time: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)

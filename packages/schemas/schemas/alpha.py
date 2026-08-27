@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 
 from .agent import Citation
 from .enums import AgentType, DataClassification, OutcomeQuadrant
+from .observation import TimeSeriesObservation
 
 
 class SignalType(str, Enum):
@@ -416,3 +417,47 @@ class LessonProposal(BaseModel):
     reviewed_by: str | None = None
     reviewed_at: datetime | None = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ReplayMode(str, Enum):
+    """The four replay modes from docs/alpha-intelligence.md section 9. Milestone 6
+    only ever produces `CURRENT_MODEL_RETROSPECTIVE` -- see `AsOfReplayResult`'s
+    docstring for exactly why the other three aren't attempted yet."""
+
+    HISTORICAL_REALITY = "HISTORICAL_REALITY"
+    CURRENT_MODEL_RETROSPECTIVE = "CURRENT_MODEL_RETROSPECTIVE"
+    ORIGINAL_MODEL_REPLAY = "ORIGINAL_MODEL_REPLAY"
+    FULL_STRATEGY_REPLAY = "FULL_STRATEGY_REPLAY"
+
+
+class AsOfReplayResult(BaseModel):
+    """AlphaReplay(TM)'s output (docs/alpha-intelligence.md section 9): everything
+    the Alpha Intelligence Layer itself knew and concluded as of a chosen historical
+    moment, reconstructed bitemporally -- every list below is filtered to rows whose
+    `publication_time`/`created_at` was already at-or-before `as_of`, so nothing from
+    after that moment leaks in.
+
+    Milestone 6 is honest about scope: `mode` is always `CURRENT_MODEL_RETROSPECTIVE`
+    -- a replay of what *today's already-running* Alpha Intelligence Layer recorded
+    at the time, not a reconstruction of market reality from before this system
+    existed (`HISTORICAL_REALITY` -- there is no persisted observation history prior
+    to Milestone 6 shipping to reconstruct from), not a replay using the agent
+    versions that existed back then (`ORIGINAL_MODEL_REPLAY` -- `AgentVersionRow`
+    tracks config snapshots per docs/agent-governance.md section 4, but nothing in
+    this codebase yet re-executes an agent against a past version's config; wiring
+    that is separate, not-yet-done work), and not a full re-simulation of the trade
+    lifecycle (`FULL_STRATEGY_REPLAY` -- deterministic re-execution of committee/
+    risk/paper-execution against historical state is future work). `as_of` moments
+    before Milestone 6's own deployment will simply return empty lists, honestly,
+    rather than fabricate a plausible-looking history."""
+
+    market: str = "HENRY_HUB"
+    as_of: datetime
+    mode: ReplayMode = ReplayMode.CURRENT_MODEL_RETROSPECTIVE
+    price_observations: list[TimeSeriesObservation] = Field(default_factory=list)
+    signals: list[Signal] = Field(default_factory=list)
+    impacts: list[ImpactAnalysis] = Field(default_factory=list)
+    consensus_views: list[ConsensusView] = Field(default_factory=list)
+    scenario_runs: list[ScenarioRunResult] = Field(default_factory=list)
+    memory_records: list[MemoryRecord] = Field(default_factory=list)
+    generated_at: datetime = Field(default_factory=datetime.utcnow)

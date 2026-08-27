@@ -32,6 +32,7 @@ from .quant import BacktestResult, ForecastHorizon, ModelType, PriceForecast, Re
 from .alpha import (
     AgentAlphaScore,
     AgentForecast,
+    AsOfReplayResult,
     ConsensusView,
     ConsensusWeight,
     ImpactAnalysis,
@@ -41,6 +42,7 @@ from .alpha import (
     LessonProposalStatus,
     MemoryRecord,
     MemoryType,
+    ReplayMode,
     ScenarioComparison,
     ScenarioDefinition,
     ScenarioFactorType,
@@ -110,4 +112,6 @@ __all__ = [
     "MemoryRecord",
     "LessonProposalStatus",
     "LessonProposal",
+    "ReplayMode",
+    "AsOfReplayResult",
 ]

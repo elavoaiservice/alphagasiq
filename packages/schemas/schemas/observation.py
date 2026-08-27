@@ -50,8 +50,25 @@ class ObservationDraft(BaseModel):
 
 
 class TimeSeriesObservation(ObservationDraft):
-    """The canonical, persisted row. See docs/database-schema.md."""
+    """The canonical, persisted row. See docs/database-schema.md.
+
+    `revision_time`/`valid_from`/`valid_to` (docs/alpha-intelligence.md section 9,
+    AlphaReplay(TM)) complete the bitemporal model: `observation_time`/
+    `publication_time` already capture *when the world was in this state* vs. *when
+    it became knowable*; `valid_from`/`valid_to` additionally track *which revision
+    of this observation_time+series_id was the current best estimate at any given
+    moment* -- when a later revision arrives for the same series_id+observation_time,
+    the prior revision's `valid_to` is set to the new revision's `publication_time`
+    rather than silently overwritten, so an "as known at <timestamp>" query can
+    still recover exactly what was believed then, corrections included. `valid_to`
+    is `None` only for the current (latest) revision. `revision_time` is when this
+    specific revision was recorded, distinct from `publication_time` (when the new
+    information source-published it) for the rare case those differ.
+    """
 
     id: UUID = Field(default_factory=uuid4)
     received_time: datetime = Field(default_factory=datetime.utcnow)
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    revision_time: datetime | None = None
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None

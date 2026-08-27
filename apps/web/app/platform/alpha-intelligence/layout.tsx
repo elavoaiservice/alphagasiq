@@ -9,6 +9,7 @@ const NAV = [
   { href: "/platform/alpha-intelligence/consensus", label: "AlphaConsensus" },
   { href: "/platform/alpha-intelligence/scenarios", label: "AlphaScenario" },
   { href: "/platform/alpha-intelligence/memory", label: "AlphaMemory" },
+  { href: "/platform/alpha-intelligence/replay", label: "AlphaReplay" },
 ];
 
 export default function AlphaIntelligenceLayout({ children }: { children: React.ReactNode }) {

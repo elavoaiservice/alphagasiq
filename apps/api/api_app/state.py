@@ -37,6 +37,7 @@ from alpha_service import (
     LessonEngine,
     MaterialityEngine,
     MemoryBuilder,
+    ReplayEngine,
     ScenarioEngine,
     SignalDetector,
 )
@@ -67,6 +68,7 @@ from schemas import (
     AgentAlphaScore,
     AgentResult,
     AgentType,
+    AsOfReplayResult,
     BacktestResult,
     ConsensusView,
     DataClassification,
@@ -139,6 +141,7 @@ class AppState:
         self.alpha_scenario_engine = ScenarioEngine()
         self.alpha_memory_builder = MemoryBuilder()
         self.alpha_lesson_engine = LessonEngine()
+        self.alpha_replay_engine = ReplayEngine()
         # Bounded caches of the most recently detected signals/impact analyses/
         # consensus views, kept in-memory alongside the durable `alpha_signals`/
         # `alpha_impact_analyses`/`alpha_consensus_views` tables so the (synchronous)
@@ -347,6 +350,7 @@ class AppState:
 
         cme = self.providers.get("mock_cme")
         self.market_curve = await cme.fetch(FetchRequest(end=as_of))
+        await self._persist_market_observations(self.market_curve)
 
         ice = self.providers.get("mock_ice")
         self.ttf_price = await ice.fetch(FetchRequest(end=as_of))
@@ -1064,6 +1068,66 @@ class AppState:
             DomainEvent(event_type=EventType.LESSON_REVIEWED, source_service="alpha_service", payload=updated)
         )
         return updated
+
+    async def _persist_market_observations(self, observations: list[ObservationDraft]) -> None:
+        """AlphaReplay(TM)'s bitemporal capture point (docs/alpha-intelligence.md
+        section 9): persists each observation into the revision-history-aware
+        `alpha_market_observations` store via `SqlAppRepository.
+        save_market_observation()`, publishing `OBSERVATION_REVISED` whenever a
+        later revision supersedes an earlier one for the same series_id+
+        observation_time. Honest about scope: today this only runs from
+        `_seed_market_and_fundamentals()` (boot), since nothing in this codebase
+        yet periodically re-fetches `market_curve` after boot (`worker.py` only
+        reads the boot-time snapshot) -- real revision supersession activates
+        automatically once a future milestone adds periodic re-fetching or a real
+        (non-mock) provider republishes a corrected historical value; until then,
+        Milestone 6 captures one snapshot per process lifetime, not a deep
+        revision history."""
+        for draft in observations:
+            obs = TimeSeriesObservation(**draft.model_dump())
+            await self.repo.save_market_observation(obs)
+            if obs.revision_number > 0:
+                await self.event_bus.publish(
+                    DomainEvent(
+                        event_type=EventType.OBSERVATION_REVISED,
+                        source_service="alpha_service",
+                        payload=obs.model_dump(mode="json"),
+                    )
+                )
+
+    async def compute_as_of_replay(
+        self, *, market: str | None = None, as_of: datetime, organization_id: str | None = None
+    ) -> AsOfReplayResult:
+        """AlphaReplay(TM)'s integration point (docs/alpha-intelligence.md section
+        9): reconstructs everything the Alpha Intelligence Layer itself knew and
+        concluded as of `as_of`, using only the bitemporal repository queries that
+        already enforce "no look-ahead" (`list_market_observations_as_of()`'s
+        `as_of` filter, and the `until` parameter on every other Alpha* list
+        method) -- this method performs no additional filtering of its own, so
+        there is exactly one place look-ahead bias could be introduced."""
+        market = market or self.primary_instrument()
+        price_observations_raw = await self.repo.list_market_observations_as_of(as_of=as_of)
+        signals_raw = await self.repo.list_signals(
+            market=market, until=as_of, organization_id=organization_id, limit=50
+        )
+        impacts_raw = await self.repo.list_impact_analyses(organization_id=organization_id, until=as_of, limit=50)
+        consensus_raw = await self.repo.list_consensus_views(
+            market=market, organization_id=organization_id, until=as_of, limit=50
+        )
+        scenario_raw = await self.repo.list_scenario_runs(organization_id=organization_id, until=as_of, limit=50)
+        memory_raw = await self.repo.list_memory_records(
+            market=market, organization_id=organization_id, until=as_of, limit=50
+        )
+        return self.alpha_replay_engine.assemble(
+            market=market,
+            as_of=as_of,
+            price_observations=[TimeSeriesObservation.model_validate(o) for o in price_observations_raw],
+            signals=[Signal.model_validate(s) for s in signals_raw],
+            impacts=[ImpactAnalysis.model_validate(i) for i in impacts_raw],
+            consensus_views=[ConsensusView.model_validate(c) for c in consensus_raw],
+            scenario_runs=[ScenarioRunResult.model_validate(r) for r in scenario_raw],
+            memory_records=[MemoryRecord.model_validate(m) for m in memory_raw],
+        )
 
     @staticmethod
     def _forecast_model_type_and_version(forecast: PriceForecast) -> tuple[ModelType, str]:

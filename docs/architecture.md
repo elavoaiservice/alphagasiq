@@ -542,8 +542,8 @@ Six components, documented in full in `docs/alpha-intelligence.md`:
   risk_service/scenarios.py`. **Implemented (Milestone 4 of this layer).**
 - **AlphaMemory™** — decision/institutional memory. **Implemented (Milestone 5 of this layer).**
 - **AlphaReplay™** — bitemporal historical reconstruction ("as-known-at" querying, no
-  look-ahead bias). Planned (Milestone 6, the most invasive since it retrofits bitemporal
-  columns onto existing observation tables).
+  look-ahead bias). **Implemented (Milestone 6 of this layer, `CURRENT_MODEL_RETROSPECTIVE`
+  mode only — see below).**
 
 `docs/alpha-intelligence.md` also covers the planned Enterprise Data Platform (multi-tenant
 `Organization` → `Workspace` → `User`, proprietary data connectors, tenant isolation) that lets
@@ -651,3 +651,32 @@ lessons/{id}`, and `POST /alpha/memory/lessons/{id}/review` (new `alpha_memory.v
 RESEARCHER), a new "what have we learned" chat topic, and a fifth "AlphaMemory" tab in the
 Alpha Intelligence dashboard with an inline lesson-review panel. See
 `docs/alpha-intelligence.md` section 8 for the full design.
+
+### AlphaReplay™ (implemented)
+
+`packages/schemas/schemas/observation.py`'s `TimeSeriesObservation` gained a full bitemporal
+model: pre-existing `observation_time`/`publication_time` (when the world was in a state / when
+that became knowable) plus new `revision_time`/`valid_from`/`valid_to` (which revision of a
+`series_id`+`observation_time` was the current best estimate at any given moment). `packages/db/
+db/repository.py`'s `save_market_observation()` closes out a superseded revision's `valid_to`
+rather than overwriting it — append-only — and `list_market_observations_as_of()` is the core
+"as known at `<as_of>`" query (`publication_time <= as_of AND (valid_to IS NULL OR valid_to >
+as_of)`), proven by `tests/db/test_market_observations.py` to recover exactly what was believed
+at a past moment even after a later correction has since been recorded. Every other Alpha* list
+method gained an `until` (as-of) filter for the same reason. `services/alpha/alpha_service/
+replay_engine.py`'s `ReplayEngine.assemble()` is a thin, pure packaging function — all real
+bitemporal correctness lives in the repository queries, not here. `AppState.
+compute_as_of_replay()` fetches every Alpha* series as-of a chosen moment and assembles an
+`AsOfReplayResult`. Milestone 6 is honest about scope: `mode` is always
+`CURRENT_MODEL_RETROSPECTIVE` — a replay of what this already-running system itself recorded at
+the time, not a reconstruction of market reality from before Milestone 6 shipped
+(`HISTORICAL_REALITY`), not a replay using the agent versions that existed then
+(`ORIGINAL_MODEL_REPLAY` — `AgentVersionRow` tracks config snapshots but nothing re-executes an
+agent against a past config yet), and not a full re-simulation of the trade lifecycle
+(`FULL_STRATEGY_REPLAY`) — all three remain future work. Exposed via `GET /alpha/replay`
+(`market`, `as_of`; new `alpha_replay.view` permission), a `"replay_snapshot"` chat topic ("time
+machine"/"as of"/"what did we know") — the first Alpha* chat topic whose answer cannot come from
+a bounded in-memory cache, so `ChatAgent._dispatch()` became `async def` to let it directly
+`await state.compute_as_of_replay()` — and a sixth "AlphaReplay" tab in the Alpha Intelligence
+dashboard with an as-of timestamp picker. See `docs/alpha-intelligence.md` section 9 for the
+full design.

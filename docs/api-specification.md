@@ -217,7 +217,7 @@ All list endpoints support `limit`/`cursor` pagination. All responses embed
 `data_sources`/`citations`/`freshness` metadata wherever the payload includes market or research
 facts, per the platform's explainability requirement.
 
-## Alpha Intelligence — AlphaSignal + AlphaImpact + AlphaConsensus + AlphaScenario + AlphaMemory (Alpha Intelligence Layer Milestones 1-5, `docs/alpha-intelligence.md`)
+## Alpha Intelligence — AlphaSignal + AlphaImpact + AlphaConsensus + AlphaScenario + AlphaMemory + AlphaReplay (Alpha Intelligence Layer Milestones 1-6, `docs/alpha-intelligence.md`)
 
 | Method | Path | Notes |
 |---|---|---|
@@ -238,7 +238,9 @@ facts, per the platform's explainability requirement.
 | GET | `/alpha/memory/lessons` | requires `alpha_memory.view`. Lesson proposals, most recent first. Query params: `status` (`PENDING`/`APPROVED`/`REJECTED`), `limit` (default 50) |
 | GET | `/alpha/memory/lessons/{lesson_id}` | requires `alpha_memory.view`. 404 if unknown |
 | POST | `/alpha/memory/lessons/{lesson_id}/review` | requires `alpha_memory.review`. Body: `{"status": "APPROVED"\|"REJECTED"}`; 400 if asked to review back to `PENDING`; 404 if unknown |
+| GET | `/alpha/replay` | requires `alpha_replay.view`. Query params: `market` (default `HENRY_HUB`), `as_of` (defaults to now). Returns an `AsOfReplayResult` — every Alpha* series (price observations, signals, impacts, consensus views, scenario runs, decision memory) bitemporally filtered to what was already knowable at `as_of`. `mode` is always `CURRENT_MODEL_RETROSPECTIVE`; an `as_of` before Milestone 6's deployment returns empty lists rather than fabricating history |
 
-Only AlphaSignal, AlphaImpact, AlphaConsensus, AlphaScenario, and AlphaMemory are implemented
-so far. `docs/alpha-intelligence.md` documents the planned `/alpha/replay` endpoint family and
-`/enterprise/*` for the remaining component and the Enterprise Data Platform — not yet built.
+AlphaSignal, AlphaImpact, AlphaConsensus, AlphaScenario, AlphaMemory, and AlphaReplay are all
+implemented now. `docs/alpha-intelligence.md` documents the remaining planned work — Chief
+Trading Agent full integration and `/enterprise/*` for the Enterprise Data Platform — not yet
+built.

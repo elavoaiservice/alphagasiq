@@ -300,6 +300,20 @@ No column for chain-of-thought. `reasoning_summary` is a concise, human-auditabl
   `alpha_memory_records`), proposed_lesson, rationale, status (`PENDING`/`APPROVED`/
   `REJECTED` — the only way it changes is a human review via `POST /alpha/memory/lessons/{id}/
   review`), reviewed_by (nullable), reviewed_at (nullable), created_at.
+- **`market_observations`** — AlphaReplay(TM)'s bitemporal store, one row per *revision* of a
+  `TimeSeriesObservation` (docs/alpha-intelligence.md section 9) — an append-only history, never
+  updated or deleted in place. id, source, source_type, series_id, symbol (nullable), commodity,
+  category, sub_category (nullable), geography (nullable), location (nullable), value, unit,
+  observation_time (when the world was in this state), publication_time (when this revision
+  became knowable), revision_number, quality_score (nullable), confidence (nullable), metadata
+  (jsonb — Python attribute `metadata_`, since SQLAlchemy's declarative `Base` reserves the bare
+  `metadata` name), lineage (jsonb), revision_time (nullable — when this revision was recorded,
+  distinct from publication_time for the rare case those differ), valid_from (this revision's
+  publication_time), valid_to (nullable — `NULL` only for the current/latest revision of a given
+  `series_id`+`observation_time`; set to the *next* revision's publication_time when superseded),
+  received_time, created_at. `list_market_observations_as_of(series_id, as_of, limit)` is the
+  bitemporal "as known at `<as_of>`" query: `publication_time <= as_of AND (valid_to IS NULL OR
+  valid_to > as_of)`.
 
 ## 5. TimescaleDB Specifics
 

@@ -36,6 +36,7 @@ from .state import AppState
 
 _UP_WORDS = ("up", "spike", "spikes", "higher", "rally", "rallies", "rise", "rises", "increase")
 _DOWN_WORDS = ("down", "drop", "drops", "lower", "collapse", "collapses", "fall", "falls", "decrease", "decline")
+_ISO_DATE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})(?:[t ](\d{2}:\d{2}(?::\d{2})?))?")
 
 
 def _extract_price_shock_pct(q: str) -> float | None:
@@ -92,6 +93,7 @@ _TOOL_PERMISSIONS: dict[str, str] = {
     "agent_consensus": "alpha_consensus.view",
     "scenario_comparison": "alpha_scenarios.view",
     "decision_memory": "alpha_memory.view",
+    "replay_snapshot": "alpha_replay.view",
     "what_changed": "dashboard.view",
     "todays_move": "news.view",
     "general_status": "dashboard.view",
@@ -129,6 +131,8 @@ class ChatAgent:
             return "agent_consensus"
         elif "what have we learned" in q or "lesson" in q or "past decision" in q or "alphamemory" in q or "decision memory" in q:
             return "decision_memory"
+        elif "time machine" in q or "what did we know" in q or "as of" in q or "alphareplay" in q or "replay" in q:
+            return "replay_snapshot"
         elif "what changed" in q or "last six hours" in q or "recent" in q:
             return "what_changed"
         elif "caused today" in q or "today's move" in q or "why did" in q and "move" in q:
@@ -138,7 +142,7 @@ class ChatAgent:
         else:
             return "general_status"
 
-    def _dispatch(self, topic: str, q: str, state: AppState) -> ToolResult:
+    async def _dispatch(self, topic: str, q: str, state: AppState) -> ToolResult:
         if topic == "what_invalidates":
             return self._what_invalidates(q, state)
         elif topic == "most_disagreeing_agent":
@@ -165,6 +169,8 @@ class ChatAgent:
             return self._scenario_comparison(state)
         elif topic == "decision_memory":
             return self._decision_memory(state)
+        elif topic == "replay_snapshot":
+            return await self._replay_snapshot(q, state)
         elif topic == "what_changed":
             return self._what_changed(q, state)
         elif topic == "todays_move":
@@ -196,7 +202,7 @@ class ChatAgent:
             )
             model_used = None
         else:
-            result = self._dispatch(topic, q, state)
+            result = await self._dispatch(topic, q, state)
             prompt = (
                 "You are the AlphaGasIQ AI Trader Chat assistant. Using ONLY the facts below "
                 "(never invent numbers), answer the trader's question concisely and professionally.\n\n"
@@ -382,6 +388,42 @@ class ChatAgent:
             "\n".join(lines),
             [{"source": "alpha_service.memory_builder", "reference": str(m.id)} for m in top],
             {"memory_count": len(state.recent_memory_records), "pending_lessons": len(pending)},
+        )
+
+    async def _replay_snapshot(self, q: str, state: AppState) -> ToolResult:
+        """AlphaReplayTool (docs/alpha-intelligence.md section 43/9) -- reconstructs
+        what the Alpha Intelligence Layer itself knew and concluded as of a chosen
+        moment. Parses an explicit `YYYY-MM-DD[ HH:MM[:SS]]` from the question if
+        present, defaulting to now otherwise -- this is not a general date-NLU
+        parser, so a relative phrase like "last Tuesday" is left unparsed rather
+        than guessed. This is the first Alpha* chat topic whose answer cannot come
+        from a bounded in-memory cache (it needs an arbitrary-timestamp bitemporal
+        query), so unlike every other topic method here it directly awaits
+        `state.compute_as_of_replay()` rather than reading `state.recent_*`."""
+        match = _ISO_DATE_RE.search(q)
+        as_of = datetime.now(timezone.utc)
+        if match:
+            date_part = match.group(1)
+            time_part = match.group(2) or "00:00:00"
+            try:
+                as_of = datetime.fromisoformat(f"{date_part}T{time_part}").replace(tzinfo=timezone.utc)
+            except ValueError:
+                pass
+
+        result = await state.compute_as_of_replay(as_of=as_of, organization_id=None)
+        content = (
+            f"As of {as_of.isoformat()}, the Alpha Intelligence Layer had recorded: "
+            f"{len(result.price_observations)} price observation(s), {len(result.signals)} signal(s), "
+            f"{len(result.impacts)} impact analysis(es), {len(result.consensus_views)} consensus view(s), "
+            f"{len(result.scenario_runs)} scenario run(s), {len(result.memory_records)} decision memory "
+            f"record(s). Mode: {result.mode.value} -- a replay of what this already-running system itself "
+            "knew at that moment, not a reconstruction of market reality from before AlphaReplay's "
+            "bitemporal store existed."
+        )
+        return ToolResult(
+            content,
+            [{"source": "alpha_service.replay_engine", "reference": as_of.isoformat()}],
+            {"as_of": as_of.isoformat(), "mode": result.mode.value},
         )
 
     def _show_evidence(self, q: str, state: AppState) -> ToolResult:

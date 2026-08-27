@@ -439,3 +439,51 @@ async def test_decision_memory_declined_without_permission(monkeypatch, user):
     assert result.access_granted is False
     assert result.tool_used == "decision_memory"
     assert "alpha_memory.view" in result.content
+
+
+async def test_replay_snapshot_routes_to_alphareplay_tool(monkeypatch, user):
+    """AlphaReplayTool (docs/alpha-intelligence.md section 43/9): "time machine"/
+    "as of"/"what did we know" phrasing routes to the new topic, requires
+    `alpha_replay.view`, and awaits `state.compute_as_of_replay()` directly --
+    this is the one Alpha* topic that cannot be answered from a bounded
+    in-memory cache, so `_dispatch` itself had to become `async def`."""
+    from datetime import datetime, timezone
+
+    from schemas import AsOfReplayResult, ReplayMode
+
+    async def fake_permissions(_user, _state):
+        return {"alpha_replay.view"}
+
+    monkeypatch.setattr(chat_agent_module, "get_effective_permissions", fake_permissions)
+    agent = ChatAgent(llm=MockLLMProvider())
+
+    captured = {}
+
+    class _ReplayState(_FakeState):
+        async def compute_as_of_replay(self, *, as_of, organization_id=None, market=None):
+            captured["as_of"] = as_of
+            return AsOfReplayResult(as_of=as_of, mode=ReplayMode.CURRENT_MODEL_RETROSPECTIVE)
+
+    result = await agent.ask("What did we know as of 2024-01-15?", _ReplayState(), user)
+
+    assert result.access_granted is True
+    assert result.tool_used == "replay_snapshot"
+    assert result.permission_required == "alpha_replay.view"
+    assert "CURRENT_MODEL_RETROSPECTIVE" in result.content
+    assert captured["as_of"] == datetime(2024, 1, 15, tzinfo=timezone.utc)
+
+
+async def test_replay_snapshot_declined_without_permission(monkeypatch, user):
+    async def fake_permissions(_user, _state):
+        return set()
+
+    monkeypatch.setattr(chat_agent_module, "get_effective_permissions", fake_permissions)
+    agent = ChatAgent(llm=MockLLMProvider())
+
+    # _FakeState has no `compute_as_of_replay` method -- a wrongly-dispatched tool
+    # call would raise AttributeError instead of returning a declined result.
+    result = await agent.ask("Use the AlphaReplay time machine", _FakeState(), user)
+
+    assert result.access_granted is False
+    assert result.tool_used == "replay_snapshot"
+    assert "alpha_replay.view" in result.content

@@ -20,6 +20,7 @@ from schemas import (
     RiskLimits,
     ScenarioRunResult,
     Signal,
+    TimeSeriesObservation,
     TradeIdea,
 )
 
@@ -44,6 +45,7 @@ from .models import (
     ImpactAnalysisRow,
     LessonProposalRow,
     MagicLinkTokenRow,
+    MarketObservationRow,
     MemoryRecordRow,
     ModelDefinitionRow,
     OrganizationFeatureEntitlementRow,
@@ -126,6 +128,7 @@ _PERMISSION_KEYS = [
     "alpha_scenarios.run",
     "alpha_memory.view",
     "alpha_memory.review",
+    "alpha_replay.view",
 ]
 
 # Permissions reserved for SUPER_ADMIN: the system-level/risk/model/agent-optimization
@@ -163,6 +166,7 @@ _ROLE_PERMISSIONS: dict[str, list[str]] = {
         "alpha_scenarios.view",
         "alpha_scenarios.run",
         "alpha_memory.view",
+        "alpha_replay.view",
         "trading_recommendations.challenge",
         "chief_agent.chat",
         "portfolio.view",
@@ -187,6 +191,7 @@ _ROLE_PERMISSIONS: dict[str, list[str]] = {
         "alpha_scenarios.run",
         "alpha_memory.view",
         "alpha_memory.review",
+        "alpha_replay.view",
         "chief_agent.chat",
         "portfolio.view",
         "risk.view",
@@ -210,6 +215,7 @@ _ROLE_PERMISSIONS: dict[str, list[str]] = {
         "alpha_scenarios.run",
         "alpha_memory.view",
         "alpha_memory.review",
+        "alpha_replay.view",
         "trading_recommendations.challenge",
         "chief_agent.chat",
         "portfolio.view",
@@ -232,6 +238,7 @@ _ROLE_PERMISSIONS: dict[str, list[str]] = {
         "alpha_scenarios.view",
         "alpha_scenarios.run",
         "alpha_memory.view",
+        "alpha_replay.view",
         "portfolio.view",
         "risk.view",
         "chief_agent.chat",
@@ -710,6 +717,35 @@ def _lesson_proposal_row_to_dict(row: LessonProposalRow) -> dict:
         "status": row.status,
         "reviewed_by": row.reviewed_by,
         "reviewed_at": row.reviewed_at,
+        "created_at": row.created_at,
+    }
+
+
+def _market_observation_row_to_dict(row: MarketObservationRow) -> dict:
+    return {
+        "id": row.id,
+        "source": row.source,
+        "source_type": row.source_type,
+        "series_id": row.series_id,
+        "symbol": row.symbol,
+        "commodity": row.commodity,
+        "category": row.category,
+        "sub_category": row.sub_category,
+        "geography": row.geography,
+        "location": row.location,
+        "value": row.value,
+        "unit": row.unit,
+        "observation_time": row.observation_time,
+        "publication_time": row.publication_time,
+        "revision_number": row.revision_number,
+        "quality_score": row.quality_score,
+        "confidence": row.confidence,
+        "metadata": row.metadata_,
+        "lineage": row.lineage,
+        "revision_time": row.revision_time,
+        "valid_from": row.valid_from,
+        "valid_to": row.valid_to,
+        "received_time": row.received_time,
         "created_at": row.created_at,
     }
 
@@ -1997,13 +2033,17 @@ class SqlAppRepository:
         organization_id: str | None = None,
         market: str | None = None,
         since: datetime | None = None,
+        until: datetime | None = None,
         min_materiality: float | None = None,
         limit: int = 50,
     ) -> list[dict]:
         """Ranked by materiality (highest first), then recency. `organization_id`, when
         given, includes both that organization's own signals AND every platform-wide
         signal (`organization_id IS NULL`) -- the only kind Milestone 1's detector
-        produces -- rather than hiding the global feed from every tenant."""
+        produces -- rather than hiding the global feed from every tenant. `until`
+        (docs/alpha-intelligence.md section 9, AlphaReplay(TM)) filters to signals
+        detected at-or-before that moment, for "what did we know as of <timestamp>"
+        queries."""
         query = select(SignalRow).order_by(SignalRow.materiality_score.desc(), SignalRow.detected_at.desc()).limit(limit)
         if organization_id is not None:
             query = query.where(
@@ -2011,6 +2051,8 @@ class SqlAppRepository:
             )
         if market is not None:
             query = query.where(SignalRow.market == market)
+        if until is not None:
+            query = query.where(SignalRow.detected_at <= _naive_utc(until))
         if since is not None:
             query = query.where(SignalRow.detected_at >= _naive_utc(since))
         if min_materiality is not None:
@@ -2088,6 +2130,7 @@ class SqlAppRepository:
         signal_id: str | None = None,
         organization_id: str | None = None,
         since: datetime | None = None,
+        until: datetime | None = None,
         limit: int = 50,
     ) -> list[dict]:
         query = select(ImpactAnalysisRow).order_by(ImpactAnalysisRow.created_at.desc()).limit(limit)
@@ -2098,6 +2141,8 @@ class SqlAppRepository:
                 (ImpactAnalysisRow.organization_id == organization_id)
                 | (ImpactAnalysisRow.organization_id.is_(None))
             )
+        if until is not None:
+            query = query.where(ImpactAnalysisRow.created_at <= _naive_utc(until))
         if since is not None:
             query = query.where(ImpactAnalysisRow.created_at >= _naive_utc(since))
         async with self.session_factory() as session:
@@ -2221,17 +2266,23 @@ class SqlAppRepository:
         self,
         *,
         consensus_type: str | None = None,
+        market: str | None = None,
         organization_id: str | None = None,
         since: datetime | None = None,
+        until: datetime | None = None,
         limit: int = 50,
     ) -> list[dict]:
         query = select(ConsensusViewRow).order_by(ConsensusViewRow.created_at.desc()).limit(limit)
         if consensus_type is not None:
             query = query.where(ConsensusViewRow.consensus_type == consensus_type)
+        if market is not None:
+            query = query.where(ConsensusViewRow.market == market)
         if organization_id is not None:
             query = query.where(
                 (ConsensusViewRow.organization_id == organization_id) | (ConsensusViewRow.organization_id.is_(None))
             )
+        if until is not None:
+            query = query.where(ConsensusViewRow.created_at <= _naive_utc(until))
         if since is not None:
             query = query.where(ConsensusViewRow.created_at >= _naive_utc(since))
         async with self.session_factory() as session:
@@ -2285,6 +2336,7 @@ class SqlAppRepository:
         *,
         organization_id: str | None = None,
         since: datetime | None = None,
+        until: datetime | None = None,
         limit: int = 50,
     ) -> list[dict]:
         query = select(ScenarioRunRow).order_by(ScenarioRunRow.run_at.desc()).limit(limit)
@@ -2292,6 +2344,8 @@ class SqlAppRepository:
             query = query.where(
                 (ScenarioRunRow.organization_id == organization_id) | (ScenarioRunRow.organization_id.is_(None))
             )
+        if until is not None:
+            query = query.where(ScenarioRunRow.run_at <= _naive_utc(until))
         if since is not None:
             query = query.where(ScenarioRunRow.run_at >= _naive_utc(since))
         async with self.session_factory() as session:
@@ -2328,17 +2382,23 @@ class SqlAppRepository:
         self,
         *,
         memory_type: str | None = None,
+        market: str | None = None,
         organization_id: str | None = None,
         since: datetime | None = None,
+        until: datetime | None = None,
         limit: int = 50,
     ) -> list[dict]:
         query = select(MemoryRecordRow).order_by(MemoryRecordRow.created_at.desc()).limit(limit)
         if memory_type is not None:
             query = query.where(MemoryRecordRow.memory_type == memory_type)
+        if market is not None:
+            query = query.where(MemoryRecordRow.market == market)
         if organization_id is not None:
             query = query.where(
                 (MemoryRecordRow.organization_id == organization_id) | (MemoryRecordRow.organization_id.is_(None))
             )
+        if until is not None:
+            query = query.where(MemoryRecordRow.created_at <= _naive_utc(until))
         if since is not None:
             query = query.where(MemoryRecordRow.created_at >= _naive_utc(since))
         async with self.session_factory() as session:
@@ -2407,6 +2467,88 @@ class SqlAppRepository:
             row.reviewed_at = _naive_utc(reviewed_at)
             await session.commit()
             return _lesson_proposal_row_to_dict(row)
+
+    async def save_market_observation(self, obs: TimeSeriesObservation) -> None:
+        """Persists `obs` as the new current revision of its `series_id`+
+        `observation_time` (docs/alpha-intelligence.md section 9) -- closes out the
+        prior current revision's `valid_to` (bitemporal supersession) rather than
+        overwriting it, so history is append-only and an "as known at <timestamp>"
+        query still recovers exactly what was believed at any past moment. A
+        duplicate or stale write (a revision number no higher than the current one)
+        is a no-op rather than corrupting the revision history."""
+        publication_time = _naive_utc(obs.publication_time)
+        async with self.session_factory() as session:
+            prior = (
+                await session.execute(
+                    select(MarketObservationRow)
+                    .where(
+                        MarketObservationRow.series_id == obs.series_id,
+                        MarketObservationRow.observation_time == _naive_utc(obs.observation_time),
+                        MarketObservationRow.valid_to.is_(None),
+                    )
+                    .order_by(MarketObservationRow.revision_number.desc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if prior is not None:
+                if prior.revision_number >= obs.revision_number:
+                    return
+                prior.valid_to = publication_time
+            row = MarketObservationRow(
+                id=str(obs.id),
+                source=obs.source,
+                source_type=obs.source_type.value,
+                series_id=obs.series_id,
+                symbol=obs.symbol,
+                commodity=obs.commodity,
+                category=obs.category,
+                sub_category=obs.sub_category,
+                geography=obs.geography,
+                location=obs.location,
+                value=obs.value,
+                unit=obs.unit,
+                observation_time=_naive_utc(obs.observation_time),
+                publication_time=publication_time,
+                revision_number=obs.revision_number,
+                quality_score=obs.quality_score,
+                confidence=obs.confidence,
+                metadata_=obs.metadata,
+                lineage=obs.lineage.model_dump(mode="json"),
+                revision_time=_naive_utc(obs.revision_time) if obs.revision_time is not None else None,
+                valid_from=publication_time,
+                valid_to=None,
+                received_time=_naive_utc(obs.received_time),
+                created_at=_naive_utc(obs.created_at),
+            )
+            session.add(row)
+            await session.commit()
+
+    async def list_market_observations_as_of(
+        self,
+        *,
+        series_id: str | None = None,
+        as_of: datetime | None = None,
+        limit: int = 200,
+    ) -> list[dict]:
+        """The bitemporal "as known at <as_of>" query: returns whichever revision of
+        each observation was current at that moment (`publication_time <= as_of`
+        AND (`valid_to IS NULL` OR `valid_to > as_of`)) -- honoring later corrections
+        exactly as they stood then, not as they stand today. Omitting `as_of`
+        returns each series' latest current revision."""
+        query = select(MarketObservationRow).order_by(MarketObservationRow.observation_time.desc()).limit(limit)
+        if series_id is not None:
+            query = query.where(MarketObservationRow.series_id == series_id)
+        if as_of is not None:
+            as_of_naive = _naive_utc(as_of)
+            query = query.where(
+                MarketObservationRow.publication_time <= as_of_naive,
+                (MarketObservationRow.valid_to.is_(None)) | (MarketObservationRow.valid_to > as_of_naive),
+            )
+        else:
+            query = query.where(MarketObservationRow.valid_to.is_(None))
+        async with self.session_factory() as session:
+            rows = (await session.execute(query)).scalars().all()
+        return [_market_observation_row_to_dict(r) for r in rows]
 
     async def save_committee_decision(self, trade_id: UUID, decision: InvestmentCommitteeDecision) -> None:
         row = CommitteeDecisionRow(

@@ -346,10 +346,11 @@ above: no live Neo4j server is reachable here, so it's tested against faithful `
 test doubles (`tests/fundamentals/test_pipeline_graph_neo4j.py`).
 
 **A new proprietary Alpha Intelligence Layer sits between the digital twin and the Specialized AI
-Agents — Milestones 1-5 (AlphaSignal™/AlphaImpact™/AlphaConsensus™/AlphaScenario™/AlphaMemory™) are implemented.** See `docs/alpha-intelligence.md` for the
-full six-component target architecture (AlphaSignal™/AlphaImpact™/AlphaConsensus™/
-AlphaScenario™/AlphaReplay™/AlphaMemory™) and the planned multi-tenant Enterprise Data Platform,
-sequenced across 10 milestones the same incremental way the access-model spec was. AlphaSignal
+Agents — all six components (AlphaSignal™/AlphaImpact™/AlphaConsensus™/AlphaScenario™/
+AlphaMemory™/AlphaReplay™) are now implemented.** See `docs/alpha-intelligence.md` for the
+full target architecture and the planned multi-tenant Enterprise Data Platform (Milestones
+7-10), sequenced across 10 milestones the same incremental way the access-model spec was.
+AlphaSignal
 (new `services/alpha` package) is a deterministic materiality engine
 (`alpha_service.materiality.MaterialityEngine`, in the same pure-function/exhaustively-tested
 philosophy as the Risk Governor) plus a signal detector
@@ -435,3 +436,24 @@ in the Alpha Intelligence sub-nav with an inline Approve/Reject lesson-review pa
 is honest about scope: it links only what is already `trade_id`-linked in this codebase — it
 never guesses which `Signal`/`ConsensusView`/`ScenarioRunResult` (if any) informed a given trade,
 since no such link exists in the data model today.
+
+**AlphaReplay™ (Milestone 6) reconstructs what the Alpha Intelligence Layer itself knew and
+concluded as of a chosen historical moment, bitemporally, so "as known at `<as_of>`" is never
+contaminated by a correction that arrived later.** `TimeSeriesObservation`
+(`packages/schemas/schemas/observation.py`) gained `revision_time`/`valid_from`/`valid_to`
+alongside its existing `observation_time`/`publication_time`, and
+`SqlAppRepository.save_market_observation()` closes out a superseded revision's `valid_to`
+rather than overwriting it — append-only history, proven correct in
+`tests/db/test_market_observations.py` (a revision recorded after `as_of` never leaks into a
+query for that `as_of`, even though it's now the current revision). Every other Alpha* list
+method gained the same `until`/as-of filtering. `alpha_service.replay_engine.ReplayEngine` (pure)
+just packages already-as-of-filtered results; `AppState.compute_as_of_replay()` does the real
+work of fetching each series as-of a chosen moment. Milestone 6 is honest about scope: `mode` is
+always `CURRENT_MODEL_RETROSPECTIVE` — a replay of what this already-running system itself
+recorded at the time, never a reconstruction of market reality from before Milestone 6 shipped,
+a replay using the agent versions that existed then, or a full re-simulation of the trade
+lifecycle (all three remain future work). Exposed via `GET /alpha/replay` (new
+`alpha_replay.view` permission), a new "time machine" chat topic — the first Alpha* topic whose
+answer requires an arbitrary-timestamp DB query rather than a bounded in-memory cache, so
+`ChatAgent._dispatch()` became `async def` to support it — and a sixth "AlphaReplay" tab in the
+Alpha Intelligence sub-nav with an as-of timestamp picker.

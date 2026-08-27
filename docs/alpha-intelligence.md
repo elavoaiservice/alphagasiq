@@ -113,7 +113,7 @@ can ship.
 | 3 | AlphaConsensus™ + Agent Alpha Score™ — calibrated, dynamically-weighted consensus | **Implemented** |
 | 4 | AlphaScenario™ — counterfactual/stress-test engine | **Implemented** |
 | 5 | AlphaMemory™ — decision/institutional memory | **Implemented** |
-| 6 | AlphaReplay™ — bitemporal historical reconstruction | Planned |
+| 6 | AlphaReplay™ — bitemporal historical reconstruction | **Implemented** |
 | 7 | Chief Trading Agent full integration — all six `Alpha*Tool`s, Morning Brief, Overview dashboard | Planned |
 | 8 | Enterprise Data Platform foundation — Workspace, connectors, admin onboarding UI | Planned |
 | 9 | Tenant isolation retrofit — real `organization_id`/`workspace_id` enforcement, model routing policy, retention policy | Planned |
@@ -528,22 +528,89 @@ gated by `alpha_memory.review`.
 built — every `MemoryRecord` produced today is platform-wide (`organization_id IS NULL`), since
 the Enterprise Data Platform milestones (8-10) haven't been built.
 
-## 9. AlphaReplay™ (planned)
+## 9. AlphaReplay™ (implemented)
 
-Historical market-state reconstruction under one hard rule: **only use information that was
-available at the selected historical moment** — no look-ahead bias, no data revisions from the
-future, no future news or model output contamination. Requires strengthening the bitemporal
-concept already implicit in `ObservationDraft`/`TimeSeriesObservation`
-(`observation_time`/`publication_time`, `packages/schemas/schemas/observation.py`) into a full
-bitemporal model (adding `received_time`, `revision_time`, `valid_from`/`valid_to`) across
-every observation table, so a query can ask "as known at <timestamp>". Four replay modes:
-historical reality, current-model replay (today's agents against historical information),
-original-model replay (the agent/model versions that actually existed then, using
-`AgentVersionRow`'s versioning from `docs/agent-governance.md §4`), and full strategy replay.
-The planned "Market Time Machine" UI steps chronologically through a historical period (e.g.
-"replay Winter Storm Uri") with agents reacting only as information would have arrived. This
-is sequenced last among the six components because it is the most invasive schema change and
-benefits from having real decision history (AlphaMemory) to validate against.
+**Purpose**: reconstructs what the Alpha Intelligence Layer itself knew and concluded as of a
+chosen historical moment, under one hard rule — **only use information that was available at
+that moment**, no look-ahead bias, no data revisions from the future. Milestone 6 is honest
+about scope: it builds exactly one of the four replay modes the original spec described
+(`CURRENT_MODEL_RETROSPECTIVE`), and documents precisely why the other three are not attempted
+yet rather than approximating them:
+
+- `HISTORICAL_REALITY` (a reconstruction of market reality itself, independent of what this
+  platform recorded) — there is no persisted observation history prior to Milestone 6 shipping
+  to reconstruct from; an `as_of` before then simply returns empty lists.
+- `ORIGINAL_MODEL_REPLAY` (using the agent/model versions that actually existed at `as_of`) —
+  `AgentVersionRow` (`docs/agent-governance.md §4`) tracks config snapshots per version, but
+  nothing in this codebase yet re-executes an agent against a past version's config; wiring
+  that is separate, not-yet-done work.
+- `FULL_STRATEGY_REPLAY` (deterministic re-execution of the committee/risk/paper-execution
+  pipeline against historical state) — that re-simulation machinery doesn't exist yet.
+
+What Milestone 6 does build is genuine: real bitemporal persistence of market observations with
+tested revision-supersession semantics, and real "as known at `<as_of>`" querying of the Alpha
+Intelligence Layer's own already-timestamped history (Signals, Impact analyses, Consensus
+views, Scenario runs, Decision memory).
+
+**Bitemporal model** (`packages/schemas/schemas/observation.py`): `TimeSeriesObservation` now
+carries two independent time axes. `observation_time`/`publication_time` (pre-existing) capture
+*when the world was in a given state* vs. *when that became knowable*. New `revision_time`/
+`valid_from`/`valid_to` additionally track *which revision of a given `series_id` +
+`observation_time` was the current best estimate at any given moment* — when a later revision
+arrives, the prior revision's `valid_to` is set to the new revision's `publication_time` rather
+than overwritten, so an "as known at `<as_of>`" query can still recover exactly what was
+believed then, corrections included. `valid_to` is `None` only for the current (latest)
+revision. This is new, complementary infrastructure to `services/quant/quant_service/pit.py`'s
+existing in-memory point-in-time-correctness helpers (used only by walk-forward backtesting),
+not a replacement for them.
+
+**DB + repository** (`packages/db/db/models.py`, `packages/db/db/repository.py`):
+`MarketObservationRow` (table `market_observations`) mirrors `TimeSeriesObservation`
+field-for-field. `save_market_observation()` finds the current (`valid_to IS NULL`) row for the
+same `series_id` + `observation_time`; a revision number no higher than the current one is a
+no-op (protects against duplicate/stale writes), otherwise the prior row's `valid_to` is closed
+out at the new revision's `publication_time` and the new row is inserted as current — append-
+only, nothing ever deleted or overwritten. `list_market_observations_as_of(series_id, as_of,
+limit)` is the core bitemporal query: `publication_time <= as_of AND (valid_to IS NULL OR
+valid_to > as_of)`, honoring later corrections exactly as they stood at `as_of`, not as they
+stand today (see `tests/db/test_market_observations.py` for the revision-supersession and
+as-of-before-a-correction proofs). Every other Alpha* list method
+(`list_signals`/`list_impact_analyses`/`list_consensus_views`/`list_scenario_runs`/
+`list_memory_records`) gained an `until` parameter (`list_consensus_views`/`list_memory_records`
+also gained `market`), so "as known at `<as_of>`" filtering happens in exactly one place per
+table rather than being reimplemented per caller.
+
+**Replay engine** (`services/alpha/alpha_service/replay_engine.py`): `ReplayEngine.assemble()`
+is a thin, pure packaging function — all real bitemporal correctness lives in the repository
+queries above, not here, so there is exactly one place look-ahead bias could be introduced.
+
+**Integration** (`apps/api/api_app/state.py`): `AppState._persist_market_observations()` is
+called right after the market curve is fetched each cycle, so real observation history
+accumulates from Milestone 6's deployment forward. `AppState.compute_as_of_replay(market, as_of,
+organization_id)` fetches every Alpha* series `until`/`as_of` and hands the results to
+`ReplayEngine.assemble()`.
+
+**API**: `GET /alpha/replay` (`market`, `as_of` — defaults to now), gated by
+`alpha_replay.view` (granted to TRADER/RISK_MANAGER/RESEARCHER/EXECUTIVE, not VIEWER — the
+bundled scenario runs/decision memory aren't otherwise visible to VIEWER).
+
+**Chat tool**: a new `"replay_snapshot"` topic ("time machine"/"as of"/"what did we know"),
+permission `alpha_replay.view`. This is the first Alpha* chat topic that cannot be answered from
+a bounded in-memory cache — its answer requires an arbitrary-timestamp bitemporal query — so
+`ChatAgent._dispatch()` became `async def` (a purely mechanical change; every other topic method
+stays synchronous and unaffected) to let `_replay_snapshot()` `await
+state.compute_as_of_replay()` directly. Parses an explicit `YYYY-MM-DD[ HH:MM[:SS]]` from the
+question if present, defaulting to now otherwise — not a general date-NLU parser.
+
+**Dashboard**: a sixth "AlphaReplay" tab in the Alpha Intelligence sub-nav —
+`/platform/alpha-intelligence/replay` (`ReplaySnapshot.tsx`) with an as-of timestamp picker and
+a "Now" shortcut, rendering the resulting snapshot's price observations, signals, impacts,
+consensus views, scenario runs, and decision memory as separate panels, each honestly showing
+"No … recorded as of this moment" rather than a placeholder value when a list is empty.
+
+**Market Time Machine UI** (a step-through "replay Winter Storm Uri" chronological experience)
+and the other three replay modes remain future work, sequenced after real historical volume
+accumulates.
 
 ## 10. Enterprise Data Platform (planned, Milestones 7-10 above)
 

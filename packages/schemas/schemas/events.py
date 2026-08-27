@@ -38,6 +38,7 @@ class EventType(str, Enum):
     MEMORY_RECORD_CREATED = "MEMORY_RECORD_CREATED"
     LESSON_PROPOSED = "LESSON_PROPOSED"
     LESSON_REVIEWED = "LESSON_REVIEWED"
+    OBSERVATION_REVISED = "OBSERVATION_REVISED"
 
 
 def topic_for_event_type(event_type: EventType | str) -> str:

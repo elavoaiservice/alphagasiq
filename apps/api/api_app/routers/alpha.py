@@ -19,6 +19,7 @@ _RequireAlphaConsensus = Depends(require_permission("alpha_consensus.view"))
 _RequireAlphaScenariosView = Depends(require_permission("alpha_scenarios.view"))
 _RequireAlphaScenariosRun = Depends(require_permission("alpha_scenarios.run"))
 _RequireAlphaMemoryView = Depends(require_permission("alpha_memory.view"))
+_RequireAlphaReplay = Depends(require_permission("alpha_replay.view"))
 _RequireAlphaMemoryReview = Depends(require_permission("alpha_memory.review"))
 
 
@@ -248,3 +249,24 @@ async def get_memory_record(memory_id: str, state: AppStateDep, user: User = _Re
     if memory is None:
         raise HTTPException(status_code=404, detail="Memory record not found")
     return memory
+
+
+@router.get("/replay")
+async def replay_as_of(
+    state: AppStateDep,
+    user: User = _RequireAlphaReplay,
+    market: str | None = None,
+    as_of: datetime | None = None,
+) -> dict:
+    """AlphaReplay(TM)'s "as known at <timestamp>" reconstruction
+    (docs/alpha-intelligence.md section 9): everything the Alpha Intelligence Layer
+    itself knew and concluded as of `as_of` (defaults to now), bitemporally
+    filtered so nothing from after that moment leaks in. Honest about scope: this
+    is always a `CURRENT_MODEL_RETROSPECTIVE` -- a replay of what this
+    already-running system recorded at the time -- not a reconstruction of market
+    reality from before Milestone 6 shipped; an `as_of` before then simply returns
+    empty lists rather than fabricating a plausible-looking history."""
+    organization_id = await resolve_organization_id(user, state)
+    resolved_as_of = as_of or datetime.now(timezone.utc)
+    result = await state.compute_as_of_replay(market=market, as_of=resolved_as_of, organization_id=organization_id)
+    return result.model_dump(mode="json")
