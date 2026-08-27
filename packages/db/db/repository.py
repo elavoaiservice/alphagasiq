@@ -11,6 +11,7 @@ from schemas import (
     AgentForecast,
     ConsensusView,
     ImpactAnalysis,
+    IntelligenceBrief,
     InvestmentCommitteeDecision,
     LessonProposal,
     MemoryRecord,
@@ -43,6 +44,7 @@ from .models import (
     DecisionJournalRow,
     FeatureRow,
     ImpactAnalysisRow,
+    IntelligenceBriefRow,
     LessonProposalRow,
     MagicLinkTokenRow,
     MarketObservationRow,
@@ -129,6 +131,7 @@ _PERMISSION_KEYS = [
     "alpha_memory.view",
     "alpha_memory.review",
     "alpha_replay.view",
+    "alpha_brief.view",
 ]
 
 # Permissions reserved for SUPER_ADMIN: the system-level/risk/model/agent-optimization
@@ -167,6 +170,7 @@ _ROLE_PERMISSIONS: dict[str, list[str]] = {
         "alpha_scenarios.run",
         "alpha_memory.view",
         "alpha_replay.view",
+        "alpha_brief.view",
         "trading_recommendations.challenge",
         "chief_agent.chat",
         "portfolio.view",
@@ -192,6 +196,7 @@ _ROLE_PERMISSIONS: dict[str, list[str]] = {
         "alpha_memory.view",
         "alpha_memory.review",
         "alpha_replay.view",
+        "alpha_brief.view",
         "chief_agent.chat",
         "portfolio.view",
         "risk.view",
@@ -216,6 +221,7 @@ _ROLE_PERMISSIONS: dict[str, list[str]] = {
         "alpha_memory.view",
         "alpha_memory.review",
         "alpha_replay.view",
+        "alpha_brief.view",
         "trading_recommendations.challenge",
         "chief_agent.chat",
         "portfolio.view",
@@ -239,6 +245,7 @@ _ROLE_PERMISSIONS: dict[str, list[str]] = {
         "alpha_scenarios.run",
         "alpha_memory.view",
         "alpha_replay.view",
+        "alpha_brief.view",
         "portfolio.view",
         "risk.view",
         "chief_agent.chat",
@@ -747,6 +754,24 @@ def _market_observation_row_to_dict(row: MarketObservationRow) -> dict:
         "valid_to": row.valid_to,
         "received_time": row.received_time,
         "created_at": row.created_at,
+    }
+
+
+def _intelligence_brief_row_to_dict(row: IntelligenceBriefRow) -> dict:
+    return {
+        "id": row.id,
+        "organization_id": row.organization_id,
+        "market": row.market,
+        "period_start": row.period_start,
+        "period_end": row.period_end,
+        "headline": row.headline,
+        "summary": row.summary,
+        "top_signals": row.top_signals,
+        "top_impacts": row.top_impacts,
+        "consensus_highlights": row.consensus_highlights,
+        "notable_scenario_runs": row.notable_scenario_runs,
+        "pending_lessons": row.pending_lessons,
+        "generated_at": row.generated_at,
     }
 
 
@@ -2549,6 +2574,52 @@ class SqlAppRepository:
         async with self.session_factory() as session:
             rows = (await session.execute(query)).scalars().all()
         return [_market_observation_row_to_dict(r) for r in rows]
+
+    async def save_intelligence_brief(self, brief: IntelligenceBrief) -> None:
+        row = IntelligenceBriefRow(
+            id=str(brief.id),
+            organization_id=brief.organization_id,
+            market=brief.market,
+            period_start=_naive_utc(brief.period_start),
+            period_end=_naive_utc(brief.period_end),
+            headline=brief.headline,
+            summary=brief.summary,
+            top_signals=[s.model_dump(mode="json") for s in brief.top_signals],
+            top_impacts=[i.model_dump(mode="json") for i in brief.top_impacts],
+            consensus_highlights=[v.model_dump(mode="json") for v in brief.consensus_highlights],
+            notable_scenario_runs=[r.model_dump(mode="json") for r in brief.notable_scenario_runs],
+            pending_lessons=[lp.model_dump(mode="json") for lp in brief.pending_lessons],
+            generated_at=_naive_utc(brief.generated_at),
+        )
+        async with self.session_factory() as session:
+            session.add(row)
+            await session.commit()
+
+    async def list_intelligence_briefs(
+        self,
+        *,
+        market: str | None = None,
+        organization_id: str | None = None,
+        limit: int = 20,
+    ) -> list[dict]:
+        query = select(IntelligenceBriefRow).order_by(IntelligenceBriefRow.generated_at.desc()).limit(limit)
+        if market is not None:
+            query = query.where(IntelligenceBriefRow.market == market)
+        if organization_id is not None:
+            query = query.where(
+                (IntelligenceBriefRow.organization_id == organization_id)
+                | (IntelligenceBriefRow.organization_id.is_(None))
+            )
+        async with self.session_factory() as session:
+            rows = (await session.execute(query)).scalars().all()
+        return [_intelligence_brief_row_to_dict(r) for r in rows]
+
+    async def get_intelligence_brief(self, brief_id: str) -> dict | None:
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(select(IntelligenceBriefRow).where(IntelligenceBriefRow.id == brief_id))
+            ).scalar_one_or_none()
+        return _intelligence_brief_row_to_dict(row) if row is not None else None
 
     async def save_committee_decision(self, trade_id: UUID, decision: InvestmentCommitteeDecision) -> None:
         row = CommitteeDecisionRow(

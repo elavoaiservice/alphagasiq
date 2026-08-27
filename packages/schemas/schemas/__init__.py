@@ -38,6 +38,7 @@ from .alpha import (
     ImpactAnalysis,
     ImpactCategory,
     ImpactEdge,
+    IntelligenceBrief,
     LessonProposal,
     LessonProposalStatus,
     MemoryRecord,
@@ -114,4 +115,5 @@ __all__ = [
     "LessonProposal",
     "ReplayMode",
     "AsOfReplayResult",
+    "IntelligenceBrief",
 ]

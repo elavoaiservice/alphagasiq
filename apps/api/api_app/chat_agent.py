@@ -94,6 +94,7 @@ _TOOL_PERMISSIONS: dict[str, str] = {
     "scenario_comparison": "alpha_scenarios.view",
     "decision_memory": "alpha_memory.view",
     "replay_snapshot": "alpha_replay.view",
+    "overnight_brief": "alpha_brief.view",
     "what_changed": "dashboard.view",
     "todays_move": "news.view",
     "general_status": "dashboard.view",
@@ -125,6 +126,8 @@ class ChatAgent:
             return "top_risks"
         elif "why does it matter" in q or "why does that matter" in q or "why is that important" in q or "why is this important" in q or "alphaimpact" in q:
             return "why_does_it_matter"
+        elif "overnight brief" in q or "morning brief" in q or "daily brief" in q or "intelligence brief" in q:
+            return "overnight_brief"
         elif "overnight" in q or "material change" in q or "alphasignal" in q:
             return "what_changed_overnight"
         elif "agree" in q or "alphaconsensus" in q or "agent alpha score" in q or "do the agents" in q:
@@ -171,6 +174,8 @@ class ChatAgent:
             return self._decision_memory(state)
         elif topic == "replay_snapshot":
             return await self._replay_snapshot(q, state)
+        elif topic == "overnight_brief":
+            return self._overnight_brief(state)
         elif topic == "what_changed":
             return self._what_changed(q, state)
         elif topic == "todays_move":
@@ -424,6 +429,27 @@ class ChatAgent:
             content,
             [{"source": "alpha_service.replay_engine", "reference": as_of.isoformat()}],
             {"as_of": as_of.isoformat(), "mode": result.mode.value},
+        )
+
+    def _overnight_brief(self, state: AppState) -> ToolResult:
+        """The Overnight Intelligence Brief chat topic (docs/alpha-intelligence.md
+        section 10, Milestone 7) -- reads `state.recent_briefs`, the same bounded
+        in-memory cache pattern every other Alpha* topic (except AlphaReplay's
+        arbitrary-timestamp query) uses. A brief is only generated once per full
+        research cycle, so this simply reports the latest one rather than
+        recomputing anything."""
+        if not state.recent_briefs:
+            return ToolResult("No Overnight Intelligence Brief has been generated yet.", [], {})
+        brief = state.recent_briefs[-1]
+        content = f"{brief.headline} {brief.summary}"
+        return ToolResult(
+            content,
+            [{"source": "alpha_service.brief_engine", "reference": str(brief.id)}],
+            {
+                "generated_at": brief.generated_at.isoformat(),
+                "period_start": brief.period_start.isoformat(),
+                "period_end": brief.period_end.isoformat(),
+            },
         )
 
     def _show_evidence(self, q: str, state: AppState) -> ToolResult:

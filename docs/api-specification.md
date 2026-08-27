@@ -217,7 +217,7 @@ All list endpoints support `limit`/`cursor` pagination. All responses embed
 `data_sources`/`citations`/`freshness` metadata wherever the payload includes market or research
 facts, per the platform's explainability requirement.
 
-## Alpha Intelligence — AlphaSignal + AlphaImpact + AlphaConsensus + AlphaScenario + AlphaMemory + AlphaReplay (Alpha Intelligence Layer Milestones 1-6, `docs/alpha-intelligence.md`)
+## Alpha Intelligence — AlphaSignal + AlphaImpact + AlphaConsensus + AlphaScenario + AlphaMemory + AlphaReplay + Chief Trading Agent integration (Alpha Intelligence Layer Milestones 1-7, `docs/alpha-intelligence.md`)
 
 | Method | Path | Notes |
 |---|---|---|
@@ -239,8 +239,12 @@ facts, per the platform's explainability requirement.
 | GET | `/alpha/memory/lessons/{lesson_id}` | requires `alpha_memory.view`. 404 if unknown |
 | POST | `/alpha/memory/lessons/{lesson_id}/review` | requires `alpha_memory.review`. Body: `{"status": "APPROVED"\|"REJECTED"}`; 400 if asked to review back to `PENDING`; 404 if unknown |
 | GET | `/alpha/replay` | requires `alpha_replay.view`. Query params: `market` (default `HENRY_HUB`), `as_of` (defaults to now). Returns an `AsOfReplayResult` — every Alpha* series (price observations, signals, impacts, consensus views, scenario runs, decision memory) bitemporally filtered to what was already knowable at `as_of`. `mode` is always `CURRENT_MODEL_RETROSPECTIVE`; an `as_of` before Milestone 6's deployment returns empty lists rather than fabricating history |
+| GET | `/alpha/briefs/latest` | requires `alpha_brief.view`. The most recently generated Overnight Intelligence Brief. Query params: `market`. 404 if none generated yet |
+| GET | `/alpha/briefs` | requires `alpha_brief.view`. Brief history, most recent first. Query params: `market`, `limit` (default 20) |
+| GET | `/alpha/briefs/{brief_id}` | requires `alpha_brief.view`. 404 if unknown |
 
-AlphaSignal, AlphaImpact, AlphaConsensus, AlphaScenario, AlphaMemory, and AlphaReplay are all
-implemented now. `docs/alpha-intelligence.md` documents the remaining planned work — Chief
-Trading Agent full integration and `/enterprise/*` for the Enterprise Data Platform — not yet
+AlphaSignal, AlphaImpact, AlphaConsensus, AlphaScenario, AlphaMemory, AlphaReplay, and the Chief
+Trading Agent integration (AlphaSignal/AlphaConsensus feedback into trade generation, the
+Overnight Intelligence Brief) are all implemented now. `docs/alpha-intelligence.md` documents
+the remaining planned work — `/enterprise/*` for the Enterprise Data Platform — not yet
 built.

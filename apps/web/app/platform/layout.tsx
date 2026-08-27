@@ -19,7 +19,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <Link href="/platform/model-performance" className="hover:text-terminal-accent">
             Model Performance
           </Link>
-          <Link href="/platform/alpha-intelligence/signals" className="hover:text-terminal-accent">
+          <Link href="/platform/alpha-intelligence" className="hover:text-terminal-accent">
             Alpha Intelligence
           </Link>
           <div className="mt-2 border-t border-terminal-border pt-2">

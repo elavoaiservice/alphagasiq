@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const NAV = [
+  { href: "/platform/alpha-intelligence", label: "Overview" },
   { href: "/platform/alpha-intelligence/signals", label: "AlphaSignal" },
   { href: "/platform/alpha-intelligence/impacts", label: "AlphaImpact" },
   { href: "/platform/alpha-intelligence/consensus", label: "AlphaConsensus" },

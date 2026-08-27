@@ -836,3 +836,29 @@ class MarketObservationRow(Base):
     valid_to: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     received_time: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class IntelligenceBriefRow(Base):
+    """The Overnight Intelligence Brief (docs/alpha-intelligence.md section 10,
+    Milestone 7) -- one row per generated `IntelligenceBrief`. Top signals/impacts/
+    consensus highlights/scenario runs/pending lessons are embedded jsonb snapshots
+    of already-persisted records (the same pattern as `ImpactAnalysisRow.chain`/
+    `ConsensusViewRow.agent_weights`), not foreign keys -- a brief is a point-in-time
+    digest, and re-reading the live rows later could reflect edits that happened
+    after the brief was generated."""
+
+    __tablename__ = "alpha_intelligence_briefs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    organization_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=True)
+    market: Mapped[str] = mapped_column(String, nullable=False, default="HENRY_HUB")
+    period_start: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    period_end: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    headline: Mapped[str] = mapped_column(String, nullable=False)
+    summary: Mapped[str] = mapped_column(String, nullable=False)
+    top_signals: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    top_impacts: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    consensus_highlights: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    notable_scenario_runs: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    pending_lessons: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    generated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)

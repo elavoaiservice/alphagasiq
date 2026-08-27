@@ -461,3 +461,28 @@ class AsOfReplayResult(BaseModel):
     scenario_runs: list[ScenarioRunResult] = Field(default_factory=list)
     memory_records: list[MemoryRecord] = Field(default_factory=list)
     generated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class IntelligenceBrief(BaseModel):
+    """A single cross-component digest of the Alpha Intelligence Layer's output
+    (docs/alpha-intelligence.md section 10, Milestone 7) -- generated once per
+    research cycle, not a live/recomputed view. Pulls already-computed, already-
+    persisted `Signal`/`ImpactAnalysis`/`ConsensusView`/`ScenarioRunResult`/
+    `LessonProposal` records unchanged; never reinterprets or rescoring them.
+    `headline`/`summary` are template-composed from that data by
+    `alpha_service.brief_engine.BriefEngine` -- not an LLM, the same "no LLM in
+    the engine path" discipline as every other Alpha* engine."""
+
+    id: UUID = Field(default_factory=uuid4)
+    organization_id: str | None = None
+    market: str = "HENRY_HUB"
+    period_start: datetime
+    period_end: datetime
+    headline: str
+    summary: str
+    top_signals: list[Signal] = Field(default_factory=list)
+    top_impacts: list[ImpactAnalysis] = Field(default_factory=list)
+    consensus_highlights: list[ConsensusView] = Field(default_factory=list)
+    notable_scenario_runs: list[ScenarioRunResult] = Field(default_factory=list)
+    pending_lessons: list[LessonProposal] = Field(default_factory=list)
+    generated_at: datetime = Field(default_factory=datetime.utcnow)

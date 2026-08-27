@@ -487,3 +487,51 @@ async def test_replay_snapshot_declined_without_permission(monkeypatch, user):
     assert result.access_granted is False
     assert result.tool_used == "replay_snapshot"
     assert "alpha_replay.view" in result.content
+
+
+async def test_overnight_brief_routes_to_the_brief_tool(monkeypatch, user):
+    """Milestone 7 (docs/alpha-intelligence.md section 10): "overnight brief"/
+    "morning brief"/"daily brief"/"intelligence brief" phrasing routes to the new
+    topic, requires `alpha_brief.view`, and reads `state.recent_briefs` -- the
+    same bounded in-memory cache pattern every non-AlphaReplay Alpha* topic uses."""
+    from schemas import IntelligenceBrief
+
+    async def fake_permissions(_user, _state):
+        return {"alpha_brief.view"}
+
+    monkeypatch.setattr(chat_agent_module, "get_effective_permissions", fake_permissions)
+    agent = ChatAgent(llm=MockLLMProvider())
+
+    from datetime import datetime, timezone
+
+    brief = IntelligenceBrief(
+        period_start=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        period_end=datetime(2026, 1, 2, tzinfo=timezone.utc),
+        headline="Cold snap driving bullish signals",
+        summary="2 material signal(s) detected.",
+    )
+    state = _FakeState()
+    state.recent_briefs = [brief]
+
+    result = await agent.ask("Give me the overnight brief", state, user)
+
+    assert result.access_granted is True
+    assert result.tool_used == "overnight_brief"
+    assert result.permission_required == "alpha_brief.view"
+    assert "Cold snap driving bullish signals" in result.content
+
+
+async def test_overnight_brief_declined_without_permission(monkeypatch, user):
+    async def fake_permissions(_user, _state):
+        return set()
+
+    monkeypatch.setattr(chat_agent_module, "get_effective_permissions", fake_permissions)
+    agent = ChatAgent(llm=MockLLMProvider())
+
+    # _FakeState has no `recent_briefs` attribute -- a wrongly-dispatched tool
+    # call would raise AttributeError instead of returning a declined result.
+    result = await agent.ask("What's in the morning brief?", _FakeState(), user)
+
+    assert result.access_granted is False
+    assert result.tool_used == "overnight_brief"
+    assert "alpha_brief.view" in result.content

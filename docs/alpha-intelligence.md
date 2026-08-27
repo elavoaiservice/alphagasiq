@@ -9,10 +9,11 @@ a large, multi-milestone initiative (larger in scope than the access-model build
 `docs/access-model.md`/`docs/agent-governance.md`), delivered the same way: one milestone at a
 time, each planned, built, tested, documented, and committed before the next begins.
 
-**Status as of this document**: Milestones 1 (AlphaSignal™) and 2 (AlphaImpact™) are
-implemented. Milestones 3-10 below are architecture + roadmap only — not yet built. Do not
-assume any capability described here beyond the "Implemented" sections actually exists in the
-codebase yet.
+**Status as of this document**: Milestones 1-7 (AlphaSignal™, AlphaImpact™, AlphaConsensus™ +
+Agent Alpha Score™, AlphaScenario™, AlphaMemory™, AlphaReplay™, and Chief Trading Agent full
+integration) are implemented. Milestones 8-10 below (the Enterprise Data Platform) are
+architecture + roadmap only — not yet built. Do not assume any capability described here beyond
+the "Implemented" sections actually exists in the codebase yet.
 
 ## 1. Where this sits in the pipeline
 
@@ -68,16 +69,17 @@ duplicate what's already there or silently assume infrastructure that doesn't ex
   `TRADE_IDEA_CREATED`/`RISK_LIMIT_BREACHED`/etc. call site.
 - The chat tool pattern (`apps/api/api_app/chat_agent.py`): no formal "Tool" class — a
   keyword router (`_route`) into a `_dispatch()` if/elif chain, each topic permission-checked
-  via a static `_TOOL_PERMISSIONS` dict *before* dispatch. Every `Alpha*Tool` in section 12 is
-  a new topic in this same router, not a new abstraction.
+  via a static `_TOOL_PERMISSIONS` dict *before* dispatch. Every `Alpha*Tool` (one per component,
+  documented alongside that component's own section below) is a new topic in this same router,
+  not a new abstraction.
 - `BaseDataProvider`/`ProviderRegistry` (`packages/data-sdk/data_sdk/provider.py`) is the
-  direct analog for the future `BaseEnterpriseDataConnector` (section 8).
+  direct analog for the future `BaseEnterpriseDataConnector` (section 11.3).
 - The deterministic, pure-function, exhaustively-tested design of
   `risk_service.governor.RiskGovernor` is the model for every scoring/rules engine in this
   layer (AlphaSignal's materiality engine, and later AlphaConsensus's weighting) — no LLM
   ever sits in a scoring path itself.
 - `services/risk/risk_service/scenarios.py`'s `Scenario`/`run_scenario` is the direct
-  precedent AlphaScenario (section 6) extends, not replaces.
+  precedent AlphaScenario (section 7) extends, not replaces.
 
 **Genuinely new — no existing scaffolding:**
 
@@ -93,11 +95,11 @@ duplicate what's already there or silently assume infrastructure that doesn't ex
 - **Workspace** as an entity between `Organization` and `User` does not exist anywhere yet.
 - The existing `DataClassification` enum (`PUBLIC`/`LICENSED`/`USER_PROVIDED`/`SIMULATED`,
   `packages/schemas/schemas/enums.py`) is a **data-provenance** tag on ingested observations
-  — it is not the enterprise **security-tier** classification section 7 describes
+  — it is not the enterprise **security-tier** classification section 11.2 describes
   (`CUSTOMER_CONFIDENTIAL`, `CUSTOMER_RESTRICTED`, etc.). The enterprise concept needs its own
   name (proposed: `EnterpriseDataClassification`) to avoid colliding with the existing one.
 - `BaseEnterpriseDataConnector`, secrets management, connector onboarding UI, agent/model data
-  entitlements, model routing policy, retention policy — all new (sections 7-10).
+  entitlements, model routing policy, retention policy — all new (section 11).
 
 Every new Alpha* table gets a nullable `organization_id`/`workspace_id` column from day one
 (NULL = a platform-wide record, the only kind any milestone through Milestone 8 produces) so
@@ -114,17 +116,21 @@ can ship.
 | 4 | AlphaScenario™ — counterfactual/stress-test engine | **Implemented** |
 | 5 | AlphaMemory™ — decision/institutional memory | **Implemented** |
 | 6 | AlphaReplay™ — bitemporal historical reconstruction | **Implemented** |
-| 7 | Chief Trading Agent full integration — all six `Alpha*Tool`s, Morning Brief, Overview dashboard | Planned |
+| 7 | Chief Trading Agent full integration — AlphaSignal/AlphaConsensus feedback into trade generation, Overnight Intelligence Brief, Overview dashboard | **Implemented** |
 | 8 | Enterprise Data Platform foundation — Workspace, connectors, admin onboarding UI | Planned |
 | 9 | Tenant isolation retrofit — real `organization_id`/`workspace_id` enforcement, model routing policy, retention policy | Planned |
 | 10 | Enterprise-specific Chief Trading Agent + Enterprise Digital Twin overlays + Opportunity Engine | Planned |
 
-AlphaImpact through AlphaReplay (2-6) are sequenced before the Enterprise Data Platform (7-10)
-deliberately: they deliver real value against today's shared public/simulated dataset first,
-and the harder structural work of true multi-tenant isolation and proprietary connectors comes
-after there are six working components for enterprise data to plug into. AlphaReplay is last
-among the six because it is the most invasive — it retrofits bitemporal columns onto existing
-observation tables — so it's sequenced after the other five have real data worth replaying.
+AlphaImpact through the Chief Trading Agent integration (2-7) are sequenced before the
+Enterprise Data Platform (8-10) deliberately: they deliver real value against today's shared
+public/simulated dataset first, and the harder structural work of true multi-tenant isolation
+and proprietary connectors comes after there are six working components (plus a closed feedback
+loop into trade generation) for enterprise data to plug into. AlphaReplay is last among the six
+Alpha* components because it is the most invasive — it retrofits bitemporal columns onto
+existing observation tables — so it's sequenced after the other five have real data worth
+replaying. Chief Trading Agent integration comes last of all seven because it depends on every
+other component already existing to have something real to feed back into trade generation and
+summarize into a brief.
 
 ## 4. AlphaSignal™ (implemented)
 
@@ -184,7 +190,7 @@ cycle and vs. market consensus), `WEATHER_CHANGE` (total demand delta), `PRODUCT
 `DEMAND_CHANGE`, `LNG_CHANGE`, `POWER_CHANGE`, `PIPELINE_CONSTRAINT`, and a simplified
 `AGENT_DISAGREEMENT` check (a deterministic directional-lean comparison across Storage/
 Weather/Supply/Demand — explicitly *not* a true multi-model consensus/weighting engine; that
-is AlphaConsensus, section 5). Every other `SignalType` value exists on the schema for
+is AlphaConsensus, section 6). Every other `SignalType` value exists on the schema for
 forward-compatibility but is not yet produced by this detector.
 
 **Integration** (`apps/api/api_app/state.py`): `AppState._run_alpha_signal_detection()` owns
@@ -293,7 +299,7 @@ sub-nav pattern) with AlphaSignal and AlphaImpact tabs — `/platform/alpha-inte
 (`ImpactsTable.tsx`) lists recent impact analyses and renders the selected one's causal chain
 as an ordered list with per-stage confidence/magnitude.
 
-**Enterprise personalization** (section 8's `ImpactAnalysis` "customer-specific view"
+**Enterprise personalization** (section 11's `ImpactAnalysis` "customer-specific view"
 alongside the general market view) remains planned, not built — `affected_contracts` is
 always empty and no enterprise-data branch exists yet, since the Enterprise Data Platform
 milestones (7-10) haven't been built.
@@ -612,9 +618,60 @@ consensus views, scenario runs, and decision memory as separate panels, each hon
 and the other three replay modes remain future work, sequenced after real historical volume
 accumulates.
 
-## 10. Enterprise Data Platform (planned, Milestones 7-10 above)
+## 10. Chief Trading Agent full integration (implemented)
 
-### 10.1 Multi-tenant architecture
+**Purpose**: every Alpha* component through Milestone 6 ran strictly *after* a `TradeIdea`
+already existed — a parallel, downstream analysis layer that never fed back into trade
+generation itself. Milestone 7 closes that loop and adds the two remaining pieces from the
+original Milestone 7 scope (the Overnight Intelligence Brief and an Overview dashboard tying
+all six components together).
+
+**AlphaSignal/AlphaConsensus feedback into trade generation**
+(`services/alpha/alpha_service/trading_integration.py`): restructuring `DirectionalStrategyAgent`
+itself to read Alpha* output was rejected as too invasive — it would risk destabilizing
+already-tested trade-generation logic for uncertain benefit. Instead, `AlphaCorroborationEngine`
+(pure, no DB/LLM/event-bus access) cross-checks a freshly-generated `TradeIdea` against fresh
+AlphaSignal output and the latest AlphaConsensus view, and `AppState.submit_trade_idea()` — the
+single choke point every trade idea passes through, in both `_run_initial_research_cycle` and
+`run_chief_trading_cycle`, before the Investment Committee ever sees it — merges the result onto
+the trade's own `catalysts`/`supporting_data`/`source_citations`/`risks` fields. This is a real
+integration, not cosmetic: `BullAgent` reads `trade.catalysts` and `SkepticAgent` reads
+`trade.source_citations`/`trade.supporting_data`, so a corroborating or contradicting signal
+genuinely reaches committee deliberation. Deliberately conservative: a signal only corroborates
+or cautions a trade when it clears `DEFAULT_MATERIALITY_THRESHOLD` and has a clear directional
+lean (`SignalDirection.BULLISH`/`BEARISH`) matched against the trade's `Direction`
+(`LONG`/`SHORT`) — a `SPREAD` trade or a `NEUTRAL` signal is never scored as aligned or opposed,
+since there is no principled directional read for either.
+
+**Overnight Intelligence Brief** (`services/alpha/alpha_service/brief_engine.py`): a single
+cross-component digest of what AlphaSignal/AlphaImpact/AlphaConsensus/AlphaScenario/AlphaMemory
+each concluded over the last 16 hours (an overnight window, not a full day, since it's generated
+once per full research cycle rather than on a calendar schedule). `BriefEngine.compose()` is
+pure — it never queries anything itself, only ranks/selects already-computed, already-persisted
+records the caller hands it. `headline`/`summary` are composed from fixed templates, not an LLM
+— the same "no LLM in the engine path" discipline as every other Alpha* engine.
+`AppState.generate_intelligence_brief()` fetches the period's signals/impacts/consensus views/
+scenario runs/pending lesson proposals, persists the result via `IntelligenceBriefRow`, and
+publishes `INTELLIGENCE_BRIEF_GENERATED`. Only reachable from `_run_initial_research_cycle`
+(boot's full cycle) — `run_chief_trading_cycle`'s lighter on-demand path doesn't generate a
+brief, matching the same boot-cycle-only scope already established for `_run_alpha_consensus`.
+Exposed via `GET /alpha/briefs/latest`, `GET /alpha/briefs`, `GET /alpha/briefs/{id}` (new
+`alpha_brief.view` permission, granted to TRADER/RISK_MANAGER/RESEARCHER/EXECUTIVE, not VIEWER),
+and a new `"overnight_brief"` chat topic ("overnight brief"/"morning brief"/"daily brief").
+
+**Overview dashboard** — a new root page at `/platform/alpha-intelligence`
+(`AlphaOverview.tsx`) renders the latest Overnight Intelligence Brief plus six link cards, one
+per component, tying the whole layer together. The top-level "Alpha Intelligence" nav link now
+points here instead of straight to `/signals`; the sub-nav gained a leading "Overview" tab.
+
+**Not built**: personalized enterprise briefs (needs the Enterprise Data Platform, Milestones
+8-10 below); a scheduled/calendar-triggered brief generation cadence (today's brief is generated
+once per boot/full research cycle, not on a fixed schedule); brief-to-brief diffing ("what
+changed since yesterday's brief").
+
+## 11. Enterprise Data Platform (planned, Milestones 8-10 above)
+
+### 11.1 Multi-tenant architecture
 
 New concepts, layered on top of the existing `Organization`/`Role`/`Permission`/`Feature`
 tables rather than replacing them: `Workspace` (new — a grouping inside an `Organization`),
@@ -630,14 +687,14 @@ through the requesting user's own authorization context, never a standing grant)
 service layer — never solely by frontend filtering — using PostgreSQL Row Level Security or
 equivalent where practical; every service call carries verified tenant context.
 
-### 10.2 Security-tier data classification
+### 11.2 Security-tier data classification
 
 `PUBLIC`, `LICENSED_MARKET_DATA`, `ALPHAGASIQ_PROPRIETARY`, `CUSTOMER_CONFIDENTIAL`,
 `CUSTOMER_RESTRICTED`, `CUSTOMER_POSITION_DATA`, `CUSTOMER_RISK_DATA`, `SIMULATED`. Access
 rules combine organization, workspace, role, permission, this classification, feature
 entitlement, dataset entitlement, and agent entitlement.
 
-### 10.3 Enterprise data connectors
+### 11.3 Enterprise data connectors
 
 `BaseEnterpriseDataConnector` (methods: `connect()`, `test_connection()`, `authenticate()`,
 `discover_schema()`, `preview()`, `ingest()`, `incremental_sync()`, `validate()`,
@@ -650,7 +707,7 @@ and transportation rights, storage contracts/inventory, LNG positions and cargo 
 power generation/fuel requirements, physical/financial contracts and hedges, internal
 research/forecasts, risk limits, operational outages and nominations.
 
-### 10.4 Admin onboarding, canonical model, and safeguards
+### 11.4 Admin onboarding, canonical model, and safeguards
 
 An Admin "Enterprise Data" section (Sources/Datasets/Mappings/Permissions/Health/Lineage/
 Usage/Dependencies tabs) lets an administrator add a source, configure connection details,
@@ -674,7 +731,7 @@ model API. Data loss prevention extends to logs, monitoring payloads, and cross-
 vector search (AlphaMemory's similarity search must never let one customer's confidential data
 improve another customer's outputs without explicit contractual authorization).
 
-## 11. Transparency and explainability
+## 12. Transparency and explainability
 
 Every major output from every component above must let an authorized human see: what data was
 used and when it was received, which agents/models contributed, what assumptions were made,

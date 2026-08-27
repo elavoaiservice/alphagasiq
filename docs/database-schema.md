@@ -300,7 +300,7 @@ No column for chain-of-thought. `reasoning_summary` is a concise, human-auditabl
   `alpha_memory_records`), proposed_lesson, rationale, status (`PENDING`/`APPROVED`/
   `REJECTED` — the only way it changes is a human review via `POST /alpha/memory/lessons/{id}/
   review`), reviewed_by (nullable), reviewed_at (nullable), created_at.
-- **`market_observations`** — AlphaReplay(TM)'s bitemporal store, one row per *revision* of a
+- **`alpha_market_observations`** — AlphaReplay(TM)'s bitemporal store, one row per *revision* of a
   `TimeSeriesObservation` (docs/alpha-intelligence.md section 9) — an append-only history, never
   updated or deleted in place. id, source, source_type, series_id, symbol (nullable), commodity,
   category, sub_category (nullable), geography (nullable), location (nullable), value, unit,
@@ -314,6 +314,13 @@ No column for chain-of-thought. `reasoning_summary` is a concise, human-auditabl
   received_time, created_at. `list_market_observations_as_of(series_id, as_of, limit)` is the
   bitemporal "as known at `<as_of>`" query: `publication_time <= as_of AND (valid_to IS NULL OR
   valid_to > as_of)`.
+- **`alpha_intelligence_briefs`** — one row per generated `IntelligenceBrief`, the Overnight
+  Intelligence Brief (docs/alpha-intelligence.md section 10). id, organization_id (nullable FK to
+  `organizations`), market, period_start, period_end, headline, summary, top_signals (jsonb —
+  embedded `Signal` snapshots, the same pattern as `ImpactAnalysisRow.chain`, not foreign keys:
+  a brief is a point-in-time digest that shouldn't reflect edits made after it was generated),
+  top_impacts (jsonb), consensus_highlights (jsonb), notable_scenario_runs (jsonb),
+  pending_lessons (jsonb), generated_at.
 
 ## 5. TimescaleDB Specifics
 

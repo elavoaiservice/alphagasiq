@@ -20,6 +20,7 @@ _RequireAlphaScenariosView = Depends(require_permission("alpha_scenarios.view"))
 _RequireAlphaScenariosRun = Depends(require_permission("alpha_scenarios.run"))
 _RequireAlphaMemoryView = Depends(require_permission("alpha_memory.view"))
 _RequireAlphaReplay = Depends(require_permission("alpha_replay.view"))
+_RequireAlphaBrief = Depends(require_permission("alpha_brief.view"))
 _RequireAlphaMemoryReview = Depends(require_permission("alpha_memory.review"))
 
 
@@ -270,3 +271,38 @@ async def replay_as_of(
     resolved_as_of = as_of or datetime.now(timezone.utc)
     result = await state.compute_as_of_replay(market=market, as_of=resolved_as_of, organization_id=organization_id)
     return result.model_dump(mode="json")
+
+
+@router.get("/briefs/latest")
+async def latest_intelligence_brief(
+    state: AppStateDep, user: User = _RequireAlphaBrief, market: str | None = None
+) -> dict:
+    """The most recently generated Overnight Intelligence Brief
+    (docs/alpha-intelligence.md section 10) -- 404 if none has been generated
+    yet (a full research cycle hasn't run). Registered before `/briefs/{brief_id}`
+    so the literal `latest` isn't swallowed by that parameterized route."""
+    organization_id = await resolve_organization_id(user, state)
+    briefs = await state.repo.list_intelligence_briefs(market=market, organization_id=organization_id, limit=1)
+    if not briefs:
+        raise HTTPException(status_code=404, detail="No intelligence brief generated yet")
+    return briefs[0]
+
+
+@router.get("/briefs")
+async def list_intelligence_briefs(
+    state: AppStateDep,
+    user: User = _RequireAlphaBrief,
+    market: str | None = None,
+    limit: int = 20,
+) -> list[dict]:
+    """History of generated Overnight Intelligence Briefs, most recent first."""
+    organization_id = await resolve_organization_id(user, state)
+    return await state.repo.list_intelligence_briefs(market=market, organization_id=organization_id, limit=limit)
+
+
+@router.get("/briefs/{brief_id}")
+async def get_intelligence_brief(brief_id: str, state: AppStateDep, user: User = _RequireAlphaBrief) -> dict:
+    brief = await state.repo.get_intelligence_brief(brief_id)
+    if brief is None:
+        raise HTTPException(status_code=404, detail="Intelligence brief not found")
+    return brief

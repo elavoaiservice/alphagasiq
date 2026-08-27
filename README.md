@@ -347,9 +347,11 @@ test doubles (`tests/fundamentals/test_pipeline_graph_neo4j.py`).
 
 **A new proprietary Alpha Intelligence Layer sits between the digital twin and the Specialized AI
 Agents — all six components (AlphaSignal™/AlphaImpact™/AlphaConsensus™/AlphaScenario™/
-AlphaMemory™/AlphaReplay™) are now implemented.** See `docs/alpha-intelligence.md` for the
-full target architecture and the planned multi-tenant Enterprise Data Platform (Milestones
-7-10), sequenced across 10 milestones the same incremental way the access-model spec was.
+AlphaMemory™/AlphaReplay™) plus their integration back into the Chief Trading Agent
+(AlphaSignal/AlphaConsensus feedback into trade generation, the Overnight Intelligence Brief,
+an Overview dashboard) are now implemented.** See `docs/alpha-intelligence.md` for the full
+target architecture and the planned multi-tenant Enterprise Data Platform (Milestones 8-10),
+sequenced across 10 milestones the same incremental way the access-model spec was.
 AlphaSignal
 (new `services/alpha` package) is a deterministic materiality engine
 (`alpha_service.materiality.MaterialityEngine`, in the same pure-function/exhaustively-tested
@@ -457,3 +459,27 @@ lifecycle (all three remain future work). Exposed via `GET /alpha/replay` (new
 answer requires an arbitrary-timestamp DB query rather than a bounded in-memory cache, so
 `ChatAgent._dispatch()` became `async def` to support it — and a sixth "AlphaReplay" tab in the
 Alpha Intelligence sub-nav with an as-of timestamp picker.
+
+**Chief Trading Agent full integration (Milestone 7) closes the loop every Alpha* component
+through Milestone 6 left open — each of them ran strictly *after* a `TradeIdea` already existed,
+a parallel analysis layer with no feedback path into trade generation.**
+`alpha_service.trading_integration.AlphaCorroborationEngine` (pure) cross-checks a freshly-
+generated trade against fresh AlphaSignal output and the latest AlphaConsensus view;
+`AppState.submit_trade_idea()` — the single choke point every trade idea passes through, in both
+research-cycle paths, before the Investment Committee deliberates — merges the result onto the
+trade's own `catalysts`/`supporting_data`/`source_citations`/`risks`, so `BullAgent` (reads
+`catalysts`) and `SkepticAgent` (reads `source_citations`/`supporting_data`) genuinely see it.
+Deliberately conservative: a signal only corroborates or cautions when it clears the materiality
+threshold and has a clear directional lean matched against the trade's own direction — a
+`SPREAD` trade or a `NEUTRAL` signal is never scored either way. `alpha_service.brief_engine.
+BriefEngine` (also pure, template-based, no LLM) composes the Overnight Intelligence Brief — a
+cross-component digest of the last 16 hours' signals/impacts/consensus views/scenario runs/
+pending lessons, generated once per full research cycle via `AppState.
+generate_intelligence_brief()`. Exposed via `GET /alpha/briefs/latest`/`GET /alpha/briefs`/`GET
+/alpha/briefs/{id}` (new `alpha_brief.view` permission) and a new "overnight brief" chat topic.
+A new root page at `/platform/alpha-intelligence` (`AlphaOverview.tsx`) renders the latest brief
+plus six link cards tying the whole layer together; the top-level "Alpha Intelligence" nav link
+now points here instead of straight to the AlphaSignal tab, and the sub-nav gained a leading
+"Overview" tab. All six Alpha* components and this integration layer are now implemented — the
+only planned work left in `docs/alpha-intelligence.md` is the Enterprise Data Platform
+(Milestones 8-10).

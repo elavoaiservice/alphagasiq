@@ -30,7 +30,9 @@ from agents_service import (
 )
 from alpha_service import (
     AgentAlphaScoreEngine,
+    AlphaCorroborationEngine,
     BaselineSnapshot,
+    BriefEngine,
     ConsensusEngine,
     ForecastExtractor,
     ImpactEngine,
@@ -76,6 +78,7 @@ from schemas import (
     EventType,
     ForecastHorizon,
     ImpactAnalysis,
+    IntelligenceBrief,
     InvestmentCommitteeDecision,
     LessonProposal,
     MemoryRecord,
@@ -142,6 +145,8 @@ class AppState:
         self.alpha_memory_builder = MemoryBuilder()
         self.alpha_lesson_engine = LessonEngine()
         self.alpha_replay_engine = ReplayEngine()
+        self.alpha_corroboration_engine = AlphaCorroborationEngine()
+        self.alpha_brief_engine = BriefEngine()
         # Bounded caches of the most recently detected signals/impact analyses/
         # consensus views, kept in-memory alongside the durable `alpha_signals`/
         # `alpha_impact_analyses`/`alpha_consensus_views` tables so the (synchronous)
@@ -155,6 +160,7 @@ class AppState:
         self.recent_scenario_runs: list[ScenarioRunResult] = []
         self.recent_memory_records: list[MemoryRecord] = []
         self.recent_lesson_proposals: list[LessonProposal] = []
+        self.recent_briefs: list[IntelligenceBrief] = []
 
         from .email_service import get_email_provider
         from .rate_limit import SlidingWindowRateLimiter
@@ -440,6 +446,8 @@ class AppState:
 
         for trade in result.trade_ideas:
             await self.submit_trade_idea(trade)
+
+        await self.generate_intelligence_brief()
 
     async def _run_quant_research(
         self,
@@ -814,7 +822,43 @@ class AppState:
             self.recent_signals = self.recent_signals[-50:]
             self.recent_impacts = self.recent_impacts[-50:]
 
+    def _corroborate_trade_with_alpha_intelligence(self, trade: TradeIdea) -> TradeIdea:
+        """Milestone 7 (docs/alpha-intelligence.md section 10): every Alpha*
+        component through Milestone 6 runs strictly *after* a `TradeIdea` already
+        exists -- a parallel, downstream analysis layer that never feeds back into
+        trade generation. Restructuring `DirectionalStrategyAgent` itself to read
+        Alpha* output would risk destabilizing already-tested trade-generation
+        logic for uncertain benefit. Instead, `submit_trade_idea()` is the single
+        choke point every trade idea passes through before the Investment
+        Committee deliberates on it -- so this is where the loop closes: cross-
+        checking the trade against `self.recent_signals`/`self.recent_
+        consensus_views` (already fresh by this point in both `_run_initial_
+        research_cycle` and `run_chief_trading_cycle`, since alpha signal
+        detection -- and, at boot, alpha consensus -- run before the trade-
+        submission loop) and merging the result onto the trade's own `catalysts`/
+        `supporting_data`/`source_citations`/`risks` before `BullAgent` (reads
+        `catalysts`) and `SkepticAgent` (reads `source_citations`/
+        `supporting_data`) ever see it."""
+        consensus_view = next(
+            (v for v in reversed(self.recent_consensus_views) if v.consensus_type == "MARKET_DIRECTION"),
+            None,
+        )
+        corroboration = self.alpha_corroboration_engine.corroborate(
+            trade=trade, signals=self.recent_signals, consensus_view=consensus_view
+        )
+        if corroboration.is_empty:
+            return trade
+        return trade.model_copy(
+            update={
+                "catalysts": trade.catalysts + corroboration.additional_catalysts,
+                "supporting_data": trade.supporting_data + corroboration.additional_supporting_data,
+                "source_citations": trade.source_citations + corroboration.additional_citations,
+                "risks": trade.risks + corroboration.additional_risks,
+            }
+        )
+
     async def submit_trade_idea(self, trade: TradeIdea) -> Approval:
+        trade = self._corroborate_trade_with_alpha_intelligence(trade)
         self.trade_ideas[trade.trade_id] = trade
 
         # Attach the Quantitative Team's current forecast for this instrument, if any,
@@ -1128,6 +1172,63 @@ class AppState:
             scenario_runs=[ScenarioRunResult.model_validate(r) for r in scenario_raw],
             memory_records=[MemoryRecord.model_validate(m) for m in memory_raw],
         )
+
+    async def generate_intelligence_brief(
+        self,
+        *,
+        market: str | None = None,
+        organization_id: str | None = None,
+        period_hours: int = 16,
+    ) -> IntelligenceBrief:
+        """The Overnight Intelligence Brief (docs/alpha-intelligence.md section 10,
+        Milestone 7): a single cross-component digest of what AlphaSignal/
+        AlphaImpact/AlphaConsensus/AlphaScenario/AlphaMemory each concluded over
+        the last `period_hours` (16h default -- an overnight window, not a full
+        day, since this runs once per boot/full research cycle rather than on a
+        calendar schedule). Only reachable from `_run_initial_research_cycle`
+        (boot's full cycle) -- `run_chief_trading_cycle`'s lighter on-demand path
+        doesn't generate a brief, matching the same boot-cycle-only scope already
+        established for `_run_alpha_consensus`."""
+        market = market or self.primary_instrument()
+        period_end = datetime.now(timezone.utc)
+        period_start = period_end - timedelta(hours=period_hours)
+        signals_raw = await self.repo.list_signals(
+            market=market, organization_id=organization_id, since=period_start, limit=50
+        )
+        impacts_raw = await self.repo.list_impact_analyses(
+            organization_id=organization_id, since=period_start, limit=50
+        )
+        consensus_raw = await self.repo.list_consensus_views(
+            market=market, organization_id=organization_id, since=period_start, limit=50
+        )
+        scenario_raw = await self.repo.list_scenario_runs(
+            organization_id=organization_id, since=period_start, limit=50
+        )
+        lessons_raw = await self.repo.list_lesson_proposals(
+            status="PENDING", organization_id=organization_id, limit=50
+        )
+        brief = self.alpha_brief_engine.compose(
+            market=market,
+            period_start=period_start,
+            period_end=period_end,
+            organization_id=organization_id,
+            signals=[Signal.model_validate(s) for s in signals_raw],
+            impacts=[ImpactAnalysis.model_validate(i) for i in impacts_raw],
+            consensus_views=[ConsensusView.model_validate(c) for c in consensus_raw],
+            scenario_runs=[ScenarioRunResult.model_validate(r) for r in scenario_raw],
+            lesson_proposals=[LessonProposal.model_validate(lp) for lp in lessons_raw],
+        )
+        await self.repo.save_intelligence_brief(brief)
+        self.recent_briefs.append(brief)
+        self.recent_briefs = self.recent_briefs[-50:]
+        await self.event_bus.publish(
+            DomainEvent(
+                event_type=EventType.INTELLIGENCE_BRIEF_GENERATED,
+                source_service="alpha_service",
+                payload=brief.model_dump(mode="json"),
+            )
+        )
+        return brief
 
     @staticmethod
     def _forecast_model_type_and_version(forecast: PriceForecast) -> tuple[ModelType, str]:
