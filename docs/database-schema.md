@@ -233,7 +233,7 @@ No column for chain-of-thought. `reasoning_summary` is a concise, human-auditabl
   `list_audit_events` — there is no update or delete method for this table, in the repository or
   the API, ever.
 
-## 4b. Alpha Intelligence Tables (Alpha Intelligence Layer Milestones 1-4 — `docs/alpha-intelligence.md`)
+## 4b. Alpha Intelligence Tables (Alpha Intelligence Layer Milestones 1-5 — `docs/alpha-intelligence.md`)
 
 - **`alpha_signals`** — one row per `Signal` AlphaSignal(TM) detected and persisted. id,
   organization_id (nullable FK to `organizations`, NULL = platform-wide — the only kind
@@ -288,6 +288,18 @@ No column for chain-of-thought. `reasoning_summary` is a concise, human-auditabl
   volatility_multiplier (the composed shock actually applied), portfolio_pnl, strategy_pnl
   (jsonb), margin_impact, var_impact, largest_risk_contributor, requested_by (nullable user
   id), run_at.
+- **`alpha_memory_records`** — one row per `MemoryRecord` AlphaMemory(TM) built. id,
+  organization_id (nullable FK to `organizations`), memory_type (always `DECISION_MEMORY` in
+  Milestone 5), trade_id (nullable — the closed trade this memory was built from), market,
+  strategy, title, summary (carries forward `PostTradeAnalysis.lessons` verbatim),
+  outcome_quadrant (nullable — carries forward `PostTradeAnalysis.quadrant` unchanged),
+  structured_context (jsonb — committee/risk/accuracy/forecast figures), tags (jsonb),
+  created_at.
+- **`alpha_lesson_proposals`** — one row per `LessonProposal` drafted from a `MemoryRecord`'s
+  outcome. id, organization_id (nullable FK to `organizations`), memory_record_id (FK to
+  `alpha_memory_records`), proposed_lesson, rationale, status (`PENDING`/`APPROVED`/
+  `REJECTED` — the only way it changes is a human review via `POST /alpha/memory/lessons/{id}/
+  review`), reviewed_by (nullable), reviewed_at (nullable), created_at.
 
 ## 5. TimescaleDB Specifics
 

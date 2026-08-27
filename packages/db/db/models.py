@@ -757,3 +757,44 @@ class ScenarioRunRow(Base):
     largest_risk_contributor: Mapped[str] = mapped_column(String, nullable=False, default="")
     requested_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
     run_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class MemoryRecordRow(Base):
+    """AlphaMemory(TM)'s output (docs/alpha-intelligence.md section 8) -- a durable
+    record of what was known, decided, and what happened for one closed trade.
+    Milestone 5 only ever produces `memory_type="DECISION_MEMORY"` rows."""
+
+    __tablename__ = "alpha_memory_records"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    organization_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=True)
+    memory_type: Mapped[str] = mapped_column(String, nullable=False, default="DECISION_MEMORY")
+    trade_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    market: Mapped[str] = mapped_column(String, nullable=False, default="")
+    strategy: Mapped[str] = mapped_column(String, nullable=False, default="")
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    summary: Mapped[str] = mapped_column(String, nullable=False)
+    outcome_quadrant: Mapped[str | None] = mapped_column(String, nullable=True)
+    structured_context: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    tags: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class LessonProposalRow(Base):
+    """A candidate lesson AlphaMemory(TM) drafted from a `MemoryRecordRow`'s outcome
+    (docs/alpha-intelligence.md section 8) -- always human-reviewed
+    (`status`: PENDING/APPROVED/REJECTED) before it could ever influence a production
+    model or threshold; Milestone 5 never wires an approved lesson back into
+    anything automatically -- that remains future work."""
+
+    __tablename__ = "alpha_lesson_proposals"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    organization_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=True)
+    memory_record_id: Mapped[str] = mapped_column(String(36), ForeignKey("alpha_memory_records.id"), nullable=False)
+    proposed_lesson: Mapped[str] = mapped_column(String, nullable=False)
+    rationale: Mapped[str] = mapped_column(String, nullable=False, default="")
+    status: Mapped[str] = mapped_column(String, nullable=False, default="PENDING")
+    reviewed_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)

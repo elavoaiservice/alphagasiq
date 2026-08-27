@@ -112,7 +112,7 @@ can ship.
 | 2 | AlphaImpact™ — event→market causal chain | **Implemented** |
 | 3 | AlphaConsensus™ + Agent Alpha Score™ — calibrated, dynamically-weighted consensus | **Implemented** |
 | 4 | AlphaScenario™ — counterfactual/stress-test engine | **Implemented** |
-| 5 | AlphaMemory™ — decision/institutional memory | Planned |
+| 5 | AlphaMemory™ — decision/institutional memory | **Implemented** |
 | 6 | AlphaReplay™ — bitemporal historical reconstruction | Planned |
 | 7 | Chief Trading Agent full integration — all six `Alpha*Tool`s, Morning Brief, Overview dashboard | Planned |
 | 8 | Enterprise Data Platform foundation — Workspace, connectors, admin onboarding UI | Planned |
@@ -462,26 +462,71 @@ portfolio/asset data) remains planned, not built — every `ScenarioRunResult` p
 platform-wide (`organization_id IS NULL`), since the Enterprise Data Platform milestones
 (8-10) haven't been built.
 
-## 8. AlphaMemory™ (planned)
+## 8. AlphaMemory™ (implemented)
 
-Machine institutional memory: preserves the full history of signals, impact analyses,
-consensus views, scenarios, trade ideas, committee/CTA/risk/human decisions, outcomes, and
-lessons. Core entity: `MemoryRecord` (typed by `MemoryType`: `MARKET_MEMORY`, `EVENT_MEMORY`,
-`AGENT_MEMORY`, `STRATEGY_MEMORY`, `PORTFOLIO_MEMORY`, `DECISION_MEMORY`,
-`HUMAN_FEEDBACK_MEMORY`, `ERROR_MEMORY`, `MODEL_MEMORY`, `ORGANIZATION_PRIVATE_MEMORY`), each
-carrying structured context, linked source records, and a similarity embedding. **Decision
-Memory** is the centerpiece: for every material recommendation, a complete record of what was
-known → what AlphaSignal/AlphaImpact/AlphaConsensus concluded → what scenarios were run → what
-agents disagreed → what the Committee/CTA/Risk Governor/human each decided → what happened →
-whether the thesis was correct, classified into one of the four decision-vs-outcome quadrants
-`OutcomeQuadrant` already defines (reused from the existing post-trade-analysis schema —
-`docs/architecture.md`'s "Milestone 11" work already established that a profitable outcome and
-a good decision are not the same thing; AlphaMemory extends that discipline to every material
-signal, not just closed trades). Lesson proposals are AI-drafted but always human-reviewed
-before they can influence any production model or threshold — never an automatic feedback
-loop. Memory scoping (global AlphaGasIQ memory vs. organization vs. workspace vs. user) follows
-directly from section 9's tenant model once it exists; until then, all memory is platform-wide
-by construction, exactly like Milestone 1's signals.
+**Purpose**: preserves institutional memory of what was decided and what happened, so the
+platform can distinguish a good decision from a good outcome across every closed trade, not
+just in the moment. Milestone 5 is honest about scope: it builds only `DECISION_MEMORY`
+records, for closed trades, linking only what is already, unambiguously `trade_id`-linked in
+this codebase. It does **not** attempt to correlate a trade back to the `Signal`/
+`ConsensusView`/`ScenarioRunResult` that may have informed it — no such link exists in the data
+model today (no `TradeIdea` carries a `signal_id`), and guessing one via time-window
+correlation would misrepresent an unverified guess as traceable evidence. Similarity search
+across memories (structured/filter-based, later true vector-embedding similarity) and the
+other nine `MemoryType` values remain future work.
+
+**Schema** (`packages/schemas/schemas/alpha.py`): `MemoryType` (all ten values from the spec;
+Milestone 5 only ever produces `DECISION_MEMORY`); `MemoryRecord` (`memory_type`, `trade_id`,
+`market`, `strategy`, `title`, `summary`, `outcome_quadrant` — reusing the existing
+`OutcomeQuadrant` enum from `docs/architecture.md`'s "Milestone 11" post-trade-analysis work
+rather than inventing a parallel classification — `structured_context`, `tags`);
+`LessonProposalStatus` (`PENDING`/`APPROVED`/`REJECTED`); `LessonProposal` (`memory_record_id`,
+`proposed_lesson`, `rationale`, `status`, `reviewed_by`, `reviewed_at`).
+
+**Memory builder + lesson engine** (`services/alpha/alpha_service/memory_builder.py`): both
+pure — no DB/LLM/event-bus access. `MemoryBuilder.build_decision_memory()` assembles a
+`MemoryRecord` from a closed trade's already-computed lifecycle objects (`TradeIdea`,
+`InvestmentCommitteeDecision`, `RiskCheckResult`, `PostTradeAnalysis`, and the `PriceForecast`
+attached at trade creation if any) — `summary` carries forward `PostTradeAnalysis.lessons`
+verbatim (the same lessons string Milestone 11's `evaluate_post_trade()` already computes) and
+`outcome_quadrant` carries forward `PostTradeAnalysis.quadrant` unchanged, never recomputed.
+`LessonEngine.propose()` drafts a `LessonProposal` from a fixed template keyed off the memory's
+`outcome_quadrant` — **not an LLM**, the same "no LLM in the engine path" discipline as
+`MaterialityEngine`/`ImpactEngine`/`ConsensusEngine`/`ScenarioEngine`; genuinely LLM-drafted
+lessons are future work. Returns `None` when the memory has no resolved outcome to learn from.
+
+**Integration** (`apps/api/api_app/state.py`): `AppState._build_decision_memory()` runs
+immediately after `close_trade()` persists its `PostTradeAnalysis`, turning that already-
+computed record into a durable `MemoryRecord` plus a human-reviewable `LessonProposal` — never
+an automatic feedback loop into any production model or threshold. Persists via
+`MemoryRecordRow`/`LessonProposalRow`, publishes `MEMORY_RECORD_CREATED`/`LESSON_PROPOSED`, and
+appends to bounded in-memory `AppState.recent_memory_records`/`recent_lesson_proposals` caches.
+`AppState.review_lesson_proposal()` is the only way a proposal's status ever changes — approving
+one still does not wire it back into any engine or threshold automatically.
+
+**API**: `GET /alpha/memory` (30-day default window, since decision memory is meant to be
+looked back on) and `GET /alpha/memory/{id}`; `GET /alpha/memory/lessons` (filterable by
+`status`) and `GET /alpha/memory/lessons/{id}`; `POST /alpha/memory/lessons/{id}/review` (body
+`{"status": "APPROVED"|"REJECTED"}`; 400 if asked to review back to `PENDING`). `alpha_memory.view`
+is granted to TRADER/RISK_MANAGER/RESEARCHER/EXECUTIVE (not VIEWER, matching `alpha_scenarios.view`'s
+reasoning — decision memory reveals real trade outcomes); `alpha_memory.review` is narrower still,
+granted only to RISK_MANAGER/RESEARCHER — the two roles with a governance stake in what gets
+codified as an institutional lesson.
+
+**Chat tool**: a new `"decision_memory"` topic ("what have we learned"/"any lessons"/"decision
+memory"), permission `alpha_memory.view`, reads `state.recent_memory_records`/
+`recent_lesson_proposals` and narrates the most recent decision memories plus any lessons still
+awaiting review — the natural conversational follow-up to AlphaConsensus's "Do the agents
+agree?".
+
+**Dashboard**: a fifth "AlphaMemory" tab in the Alpha Intelligence sub-nav —
+`/platform/alpha-intelligence/memory` (`MemoryTable.tsx`) lists decision memories with their
+full structured context, and a lesson-proposal review panel with inline Approve/Reject actions
+gated by `alpha_memory.review`.
+
+**Enterprise personalization** and the other nine `MemoryType` values remain planned, not
+built — every `MemoryRecord` produced today is platform-wide (`organization_id IS NULL`), since
+the Enterprise Data Platform milestones (8-10) haven't been built.
 
 ## 9. AlphaReplay™ (planned)
 

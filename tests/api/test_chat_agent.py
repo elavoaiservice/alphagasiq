@@ -350,3 +350,92 @@ async def test_scenario_comparison_declined_without_permission(monkeypatch, user
     assert result.access_granted is False
     assert result.tool_used == "scenario_comparison"
     assert "alpha_scenarios.view" in result.content
+
+
+async def test_decision_memory_routes_to_alphamemory_tool(monkeypatch, user):
+    """AlphaMemoryTool (docs/alpha-intelligence.md section 43/8): "what have we
+    learned"/"lesson"/"decision memory" phrasing routes to the new topic, requires
+    `alpha_memory.view`, and reads `state.recent_memory_records`/
+    `recent_lesson_proposals`."""
+    from alpha_service import MemoryBuilder
+    from schemas import (
+        Direction,
+        InstrumentType,
+        InvestmentCommitteeDecision,
+        OutcomeQuadrant,
+        PostTradeAnalysis,
+        RecommendedAction,
+        RiskCheckResult,
+        RiskVerdict,
+        TradeIdea,
+    )
+
+    async def fake_permissions(_user, _state):
+        return {"alpha_memory.view"}
+
+    monkeypatch.setattr(chat_agent_module, "get_effective_permissions", fake_permissions)
+    agent = ChatAgent(llm=MockLLMProvider())
+
+    trade = TradeIdea(
+        strategy="DIRECTIONAL",
+        instrument="NG_M1",
+        instrument_type=InstrumentType.FUTURE,
+        direction=Direction.LONG,
+        entry=3.0,
+        target=3.5,
+        stop_or_invalidation=2.8,
+        time_horizon="1W",
+        expected_return=0.5,
+        expected_loss=0.2,
+        probability_success=0.6,
+        confidence=0.7,
+        thesis="cold winter",
+    )
+    committee = InvestmentCommitteeDecision(
+        original_trade=trade,
+        bull_case="b",
+        bear_case="c",
+        skeptic_case="d",
+        data_quality_assessment="ok",
+        portfolio_effect="ok",
+        consensus_score=0.8,
+        recommended_action=RecommendedAction.APPROVE_FOR_REVIEW,
+    )
+    risk_check = RiskCheckResult(trade_id=trade.trade_id, verdict=RiskVerdict.ALLOW, rule_results=[], governor_version="1.0")
+    post_trade = PostTradeAnalysis(
+        trade_id=trade.trade_id,
+        thesis_accuracy=0.9,
+        timing_accuracy=1.0,
+        risk_accuracy=1.0,
+        lessons="Thesis was directionally correct.",
+        quadrant=OutcomeQuadrant.GOOD_DECISION_GOOD_OUTCOME,
+    )
+    memory = MemoryBuilder().build_decision_memory(
+        trade=trade, committee=committee, risk_check=risk_check, post_trade=post_trade
+    )
+    state = _FakeState()
+    state.recent_memory_records = [memory]
+    state.recent_lesson_proposals = []
+
+    result = await agent.ask("What have we learned from past trades?", state, user)
+
+    assert result.access_granted is True
+    assert result.tool_used == "decision_memory"
+    assert result.permission_required == "alpha_memory.view"
+    assert "GOOD_DECISION_GOOD_OUTCOME" in result.content
+
+
+async def test_decision_memory_declined_without_permission(monkeypatch, user):
+    async def fake_permissions(_user, _state):
+        return set()
+
+    monkeypatch.setattr(chat_agent_module, "get_effective_permissions", fake_permissions)
+    agent = ChatAgent(llm=MockLLMProvider())
+
+    # _FakeState has no `recent_memory_records` attribute -- a wrongly-dispatched
+    # tool call would raise AttributeError instead of returning a declined result.
+    result = await agent.ask("Any lessons from recent decisions?", _FakeState(), user)
+
+    assert result.access_granted is False
+    assert result.tool_used == "decision_memory"
+    assert "alpha_memory.view" in result.content

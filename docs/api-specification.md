@@ -217,7 +217,7 @@ All list endpoints support `limit`/`cursor` pagination. All responses embed
 `data_sources`/`citations`/`freshness` metadata wherever the payload includes market or research
 facts, per the platform's explainability requirement.
 
-## Alpha Intelligence — AlphaSignal + AlphaImpact + AlphaConsensus + AlphaScenario (Alpha Intelligence Layer Milestones 1-4, `docs/alpha-intelligence.md`)
+## Alpha Intelligence — AlphaSignal + AlphaImpact + AlphaConsensus + AlphaScenario + AlphaMemory (Alpha Intelligence Layer Milestones 1-5, `docs/alpha-intelligence.md`)
 
 | Method | Path | Notes |
 |---|---|---|
@@ -233,8 +233,12 @@ facts, per the platform's explainability requirement.
 | POST | `/alpha/scenarios/compare` | requires `alpha_scenarios.run`. Runs the entire standing library against the current paper book and returns ranked results plus a worst/best-case summary |
 | GET | `/alpha/scenarios/runs` | requires `alpha_scenarios.view`. Persisted run history, most-recent-first. Query params: `since_hours` (default 24), `limit` (default 50) |
 | GET | `/alpha/scenarios/runs/{run_id}` | requires `alpha_scenarios.view`. 404 if unknown |
+| GET | `/alpha/memory` | requires `alpha_memory.view`. Decision memory records, most recent first. Query params: `memory_type`, `since_hours` (default 720 — a 30-day window), `limit` (default 50) |
+| GET | `/alpha/memory/{memory_id}` | requires `alpha_memory.view`. 404 if unknown |
+| GET | `/alpha/memory/lessons` | requires `alpha_memory.view`. Lesson proposals, most recent first. Query params: `status` (`PENDING`/`APPROVED`/`REJECTED`), `limit` (default 50) |
+| GET | `/alpha/memory/lessons/{lesson_id}` | requires `alpha_memory.view`. 404 if unknown |
+| POST | `/alpha/memory/lessons/{lesson_id}/review` | requires `alpha_memory.review`. Body: `{"status": "APPROVED"\|"REJECTED"}`; 400 if asked to review back to `PENDING`; 404 if unknown |
 
-Only AlphaSignal, AlphaImpact, AlphaConsensus, and AlphaScenario are implemented so far.
-`docs/alpha-intelligence.md` documents the planned `/alpha/replay`, `/alpha/memory`, and
-`/enterprise/*` endpoint families for the remaining two components and the Enterprise Data
-Platform — not yet built.
+Only AlphaSignal, AlphaImpact, AlphaConsensus, AlphaScenario, and AlphaMemory are implemented
+so far. `docs/alpha-intelligence.md` documents the planned `/alpha/replay` endpoint family and
+`/enterprise/*` for the remaining component and the Enterprise Data Platform — not yet built.

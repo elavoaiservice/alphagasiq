@@ -34,7 +34,9 @@ from alpha_service import (
     ConsensusEngine,
     ForecastExtractor,
     ImpactEngine,
+    LessonEngine,
     MaterialityEngine,
+    MemoryBuilder,
     ScenarioEngine,
     SignalDetector,
 )
@@ -73,6 +75,8 @@ from schemas import (
     ForecastHorizon,
     ImpactAnalysis,
     InvestmentCommitteeDecision,
+    LessonProposal,
+    MemoryRecord,
     ModelType,
     NewsEvent,
     ObservationDraft,
@@ -133,6 +137,8 @@ class AppState:
         self.alpha_score_engine = AgentAlphaScoreEngine()
         self.alpha_consensus_engine = ConsensusEngine()
         self.alpha_scenario_engine = ScenarioEngine()
+        self.alpha_memory_builder = MemoryBuilder()
+        self.alpha_lesson_engine = LessonEngine()
         # Bounded caches of the most recently detected signals/impact analyses/
         # consensus views, kept in-memory alongside the durable `alpha_signals`/
         # `alpha_impact_analyses`/`alpha_consensus_views` tables so the (synchronous)
@@ -144,6 +150,8 @@ class AppState:
         self.recent_impacts: list[ImpactAnalysis] = []
         self.recent_consensus_views: list[ConsensusView] = []
         self.recent_scenario_runs: list[ScenarioRunResult] = []
+        self.recent_memory_records: list[MemoryRecord] = []
+        self.recent_lesson_proposals: list[LessonProposal] = []
 
         from .email_service import get_email_provider
         from .rate_limit import SlidingWindowRateLimiter
@@ -993,7 +1001,69 @@ class AppState:
         self.decision_journal.setdefault(trade_id, []).append(journal_entry)
         await self.repo.append_decision_journal_entry(trade_id, journal_entry)
 
+        await self._build_decision_memory(trade, committee, risk_check, analysis, forecast)
+
         return {"post_trade_analysis": analysis, "exit_price": exit_fill_price}
+
+    async def _build_decision_memory(
+        self,
+        trade: TradeIdea,
+        committee: InvestmentCommitteeDecision,
+        risk_check: RiskCheckResult,
+        post_trade: PostTradeAnalysis,
+        forecast: PriceForecast | None,
+    ) -> None:
+        """AlphaMemory(TM)'s integration point (docs/alpha-intelligence.md section 8):
+        runs immediately after `close_trade()` persists its `PostTradeAnalysis`,
+        turning that already-computed decision record into a durable `MemoryRecord`
+        plus a human-reviewable `LessonProposal` -- never an automatic feedback loop
+        into any production model or threshold."""
+        memory = self.alpha_memory_builder.build_decision_memory(
+            trade=trade, committee=committee, risk_check=risk_check, post_trade=post_trade, forecast=forecast
+        )
+        await self.repo.save_memory_record(memory)
+        self.recent_memory_records.append(memory)
+        self.recent_memory_records = self.recent_memory_records[-50:]
+        await self.event_bus.publish(
+            DomainEvent(
+                event_type=EventType.MEMORY_RECORD_CREATED,
+                source_service="alpha_service",
+                payload=memory.model_dump(mode="json"),
+                lineage_ids=[str(trade.trade_id)],
+            )
+        )
+
+        lesson = self.alpha_lesson_engine.propose(memory)
+        if lesson is not None:
+            await self.repo.save_lesson_proposal(lesson)
+            self.recent_lesson_proposals.append(lesson)
+            self.recent_lesson_proposals = self.recent_lesson_proposals[-50:]
+            await self.event_bus.publish(
+                DomainEvent(
+                    event_type=EventType.LESSON_PROPOSED,
+                    source_service="alpha_service",
+                    payload=lesson.model_dump(mode="json"),
+                    lineage_ids=[str(memory.id)],
+                )
+            )
+
+    async def review_lesson_proposal(self, lesson_id: str, *, status: str, reviewed_by: str) -> dict | None:
+        """Human review of a `LessonProposal` (docs/alpha-intelligence.md section 8) --
+        the only way a proposal's status ever changes; approving it here does not
+        feed back into any engine or threshold automatically."""
+        updated = await self.repo.update_lesson_proposal_status(
+            lesson_id, status=status, reviewed_by=reviewed_by, reviewed_at=datetime.now(timezone.utc)
+        )
+        if updated is None:
+            return None
+        for i, cached in enumerate(self.recent_lesson_proposals):
+            if str(cached.id) == lesson_id:
+                self.recent_lesson_proposals[i] = LessonProposal.model_validate(updated)
+                break
+        await self.event_bus.publish(
+            DomainEvent(event_type=EventType.LESSON_REVIEWED, source_service="alpha_service", payload=updated)
+        )
+        return updated
 
     @staticmethod
     def _forecast_model_type_and_version(forecast: PriceForecast) -> tuple[ModelType, str]:

@@ -346,7 +346,7 @@ above: no live Neo4j server is reachable here, so it's tested against faithful `
 test doubles (`tests/fundamentals/test_pipeline_graph_neo4j.py`).
 
 **A new proprietary Alpha Intelligence Layer sits between the digital twin and the Specialized AI
-Agents — Milestones 1-4 (AlphaSignal™/AlphaImpact™/AlphaConsensus™/AlphaScenario™) are implemented.** See `docs/alpha-intelligence.md` for the
+Agents — Milestones 1-5 (AlphaSignal™/AlphaImpact™/AlphaConsensus™/AlphaScenario™/AlphaMemory™) are implemented.** See `docs/alpha-intelligence.md` for the
 full six-component target architecture (AlphaSignal™/AlphaImpact™/AlphaConsensus™/
 AlphaScenario™/AlphaReplay™/AlphaMemory™) and the planned multi-tenant Enterprise Data Platform,
 sequenced across 10 milestones the same incremental way the access-model spec was. AlphaSignal
@@ -414,3 +414,24 @@ topic now composes an explicit percentage shock named in the question ("...and p
 20%"); a new "compare scenarios" chat topic runs the whole standing library. A fourth
 "AlphaScenario" tab in the Alpha Intelligence sub-nav lets a user run named/composed scenarios,
 run the full library, and browse recent run history.
+
+**AlphaMemory™ (Milestone 5) turns every closed trade's already-computed post-trade analysis
+into a durable, institutional decision memory plus a human-reviewable lesson proposal.**
+`alpha_service.memory_builder.MemoryBuilder` (pure) assembles a `MemoryRecord` from a closed
+trade's `TradeIdea`/`InvestmentCommitteeDecision`/`RiskCheckResult`/`PostTradeAnalysis` (and its
+attached quant forecast, if any) — carrying forward the existing `OutcomeQuadrant`
+classification and lessons string unchanged rather than reclassifying the outcome.
+`alpha_service.memory_builder.LessonEngine` (also pure) drafts a lesson from a fixed template
+keyed off that outcome quadrant — not an LLM, the same "no LLM in the engine path" discipline as
+every other Alpha* engine — always `PENDING` until a human approves or rejects it; nothing here
+ever wires an approved lesson back into a production model or threshold automatically.
+`AppState._build_decision_memory()` runs immediately after `close_trade()`, persisting via new
+`alpha_memory_records`/`alpha_lesson_proposals` tables and publishing `MEMORY_RECORD_CREATED`/
+`LESSON_PROPOSED`. Exposed via `GET /alpha/memory`/`GET /alpha/memory/{id}`, `GET /alpha/memory/
+lessons`/`GET /alpha/memory/lessons/{id}`, and `POST /alpha/memory/lessons/{id}/review` (new
+`alpha_memory.view`/`alpha_memory.review` permissions — the latter narrower, granted only to
+RISK_MANAGER/RESEARCHER), a new "what have we learned" chat topic, and a fifth "AlphaMemory" tab
+in the Alpha Intelligence sub-nav with an inline Approve/Reject lesson-review panel. Milestone 5
+is honest about scope: it links only what is already `trade_id`-linked in this codebase — it
+never guesses which `Signal`/`ConsensusView`/`ScenarioRunResult` (if any) informed a given trade,
+since no such link exists in the data model today.

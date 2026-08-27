@@ -91,6 +91,7 @@ _TOOL_PERMISSIONS: dict[str, str] = {
     "why_does_it_matter": "alpha_impacts.view",
     "agent_consensus": "alpha_consensus.view",
     "scenario_comparison": "alpha_scenarios.view",
+    "decision_memory": "alpha_memory.view",
     "what_changed": "dashboard.view",
     "todays_move": "news.view",
     "general_status": "dashboard.view",
@@ -126,6 +127,8 @@ class ChatAgent:
             return "what_changed_overnight"
         elif "agree" in q or "alphaconsensus" in q or "agent alpha score" in q or "do the agents" in q:
             return "agent_consensus"
+        elif "what have we learned" in q or "lesson" in q or "past decision" in q or "alphamemory" in q or "decision memory" in q:
+            return "decision_memory"
         elif "what changed" in q or "last six hours" in q or "recent" in q:
             return "what_changed"
         elif "caused today" in q or "today's move" in q or "why did" in q and "move" in q:
@@ -160,6 +163,8 @@ class ChatAgent:
             return self._agent_consensus_view(state)
         elif topic == "scenario_comparison":
             return self._scenario_comparison(state)
+        elif topic == "decision_memory":
+            return self._decision_memory(state)
         elif topic == "what_changed":
             return self._what_changed(q, state)
         elif topic == "todays_move":
@@ -359,6 +364,25 @@ class ChatAgent:
             f"Best case: '{comparison.best_case_scenario_name}' ({comparison.best_case_portfolio_pnl:+.2f})."
         )
         return ToolResult(content, [{"source": "risk_service.scenarios", "reference": "SCENARIOS"}], {"scenario_count": len(results)})
+
+    def _decision_memory(self, state: AppState) -> ToolResult:
+        """AlphaMemoryTool (docs/alpha-intelligence.md section 43/8) -- surfaces the
+        most recent closed-trade decision memories and any still-pending lesson
+        proposals drafted from them. Reads `state.recent_memory_records`/
+        `recent_lesson_proposals`, the same bounded in-memory cache pattern every
+        other Alpha* chat topic uses."""
+        if not state.recent_memory_records:
+            return ToolResult("No decision memory recorded yet -- nothing has closed with a lesson to report.", [], {})
+        top = state.recent_memory_records[-5:]
+        lines = [f"[{m.outcome_quadrant.value if m.outcome_quadrant else 'UNRESOLVED'}] {m.title}: {m.summary}" for m in reversed(top)]
+        pending = [lp for lp in state.recent_lesson_proposals if lp.status.value == "PENDING"]
+        if pending:
+            lines.append(f"{len(pending)} lesson proposal(s) awaiting human review.")
+        return ToolResult(
+            "\n".join(lines),
+            [{"source": "alpha_service.memory_builder", "reference": str(m.id)} for m in top],
+            {"memory_count": len(state.recent_memory_records), "pending_lessons": len(pending)},
+        )
 
     def _show_evidence(self, q: str, state: AppState) -> ToolResult:
         if not state.trade_ideas:

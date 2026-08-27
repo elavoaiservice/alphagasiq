@@ -3,8 +3,9 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from risk_service.scenarios import SCENARIOS
-from schemas import ScenarioDefinition
+from schemas import LessonProposalStatus, ScenarioDefinition
 
 from ..auth import User
 from ..deps import AppStateDep
@@ -17,6 +18,8 @@ _RequireAlphaImpacts = Depends(require_permission("alpha_impacts.view"))
 _RequireAlphaConsensus = Depends(require_permission("alpha_consensus.view"))
 _RequireAlphaScenariosView = Depends(require_permission("alpha_scenarios.view"))
 _RequireAlphaScenariosRun = Depends(require_permission("alpha_scenarios.run"))
+_RequireAlphaMemoryView = Depends(require_permission("alpha_memory.view"))
+_RequireAlphaMemoryReview = Depends(require_permission("alpha_memory.review"))
 
 
 @router.get("/signals")
@@ -176,3 +179,72 @@ async def compare_scenarios(state: AppStateDep, user: User = _RequireAlphaScenar
         "results": [r.model_dump(mode="json") for r in results],
         "comparison": comparison.model_dump(mode="json"),
     }
+
+
+class _LessonReviewRequest(BaseModel):
+    status: LessonProposalStatus
+
+
+@router.get("/memory/lessons")
+async def list_lesson_proposals(
+    state: AppStateDep,
+    user: User = _RequireAlphaMemoryView,
+    status: LessonProposalStatus | None = None,
+    limit: int = 50,
+) -> list[dict]:
+    """Human-reviewable lesson proposals AlphaMemory(TM) drafted from closed-trade
+    outcomes (docs/alpha-intelligence.md section 8), most recent first."""
+    organization_id = await resolve_organization_id(user, state)
+    return await state.repo.list_lesson_proposals(
+        status=status.value if status is not None else None, organization_id=organization_id, limit=limit
+    )
+
+
+@router.get("/memory/lessons/{lesson_id}")
+async def get_lesson_proposal(lesson_id: str, state: AppStateDep, user: User = _RequireAlphaMemoryView) -> dict:
+    lesson = await state.repo.get_lesson_proposal(lesson_id)
+    if lesson is None:
+        raise HTTPException(status_code=404, detail="Lesson proposal not found")
+    return lesson
+
+
+@router.post("/memory/lessons/{lesson_id}/review")
+async def review_lesson_proposal(
+    lesson_id: str, body: _LessonReviewRequest, state: AppStateDep, user: User = _RequireAlphaMemoryReview
+) -> dict:
+    """Approves or rejects a lesson proposal (docs/alpha-intelligence.md section 8:
+    "lesson proposals are AI-drafted but always human-reviewed... never an
+    automatic feedback loop"). This never wires an approved lesson back into any
+    production model or threshold -- that remains future work."""
+    if body.status == LessonProposalStatus.PENDING:
+        raise HTTPException(status_code=400, detail="Cannot review a lesson back to PENDING")
+    updated = await state.review_lesson_proposal(lesson_id, status=body.status.value, reviewed_by=user.user_id)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Lesson proposal not found")
+    return updated
+
+
+@router.get("/memory")
+async def list_memory_records(
+    state: AppStateDep,
+    user: User = _RequireAlphaMemoryView,
+    memory_type: str | None = None,
+    since_hours: int = 24 * 30,
+    limit: int = 50,
+) -> list[dict]:
+    """AlphaMemory(TM)'s decision records (docs/alpha-intelligence.md section 8),
+    most recent first. Defaults to a 30-day window since decision memory is meant
+    to be looked back on, not just the last day's activity."""
+    organization_id = await resolve_organization_id(user, state)
+    since = datetime.now(timezone.utc) - timedelta(hours=since_hours)
+    return await state.repo.list_memory_records(
+        memory_type=memory_type, organization_id=organization_id, since=since, limit=limit
+    )
+
+
+@router.get("/memory/{memory_id}")
+async def get_memory_record(memory_id: str, state: AppStateDep, user: User = _RequireAlphaMemoryView) -> dict:
+    memory = await state.repo.get_memory_record(memory_id)
+    if memory is None:
+        raise HTTPException(status_code=404, detail="Memory record not found")
+    return memory

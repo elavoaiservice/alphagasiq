@@ -12,6 +12,8 @@ from schemas import (
     ConsensusView,
     ImpactAnalysis,
     InvestmentCommitteeDecision,
+    LessonProposal,
+    MemoryRecord,
     PostTradeAnalysis,
     PriceForecast,
     RiskCheckResult,
@@ -40,7 +42,9 @@ from .models import (
     DecisionJournalRow,
     FeatureRow,
     ImpactAnalysisRow,
+    LessonProposalRow,
     MagicLinkTokenRow,
+    MemoryRecordRow,
     ModelDefinitionRow,
     OrganizationFeatureEntitlementRow,
     OrganizationRow,
@@ -120,6 +124,8 @@ _PERMISSION_KEYS = [
     "alpha_consensus.view",
     "alpha_scenarios.view",
     "alpha_scenarios.run",
+    "alpha_memory.view",
+    "alpha_memory.review",
 ]
 
 # Permissions reserved for SUPER_ADMIN: the system-level/risk/model/agent-optimization
@@ -156,6 +162,7 @@ _ROLE_PERMISSIONS: dict[str, list[str]] = {
         "alpha_consensus.view",
         "alpha_scenarios.view",
         "alpha_scenarios.run",
+        "alpha_memory.view",
         "trading_recommendations.challenge",
         "chief_agent.chat",
         "portfolio.view",
@@ -178,6 +185,8 @@ _ROLE_PERMISSIONS: dict[str, list[str]] = {
         "alpha_consensus.view",
         "alpha_scenarios.view",
         "alpha_scenarios.run",
+        "alpha_memory.view",
+        "alpha_memory.review",
         "chief_agent.chat",
         "portfolio.view",
         "risk.view",
@@ -199,6 +208,8 @@ _ROLE_PERMISSIONS: dict[str, list[str]] = {
         "alpha_consensus.view",
         "alpha_scenarios.view",
         "alpha_scenarios.run",
+        "alpha_memory.view",
+        "alpha_memory.review",
         "trading_recommendations.challenge",
         "chief_agent.chat",
         "portfolio.view",
@@ -220,6 +231,7 @@ _ROLE_PERMISSIONS: dict[str, list[str]] = {
         "alpha_consensus.view",
         "alpha_scenarios.view",
         "alpha_scenarios.run",
+        "alpha_memory.view",
         "portfolio.view",
         "risk.view",
         "chief_agent.chat",
@@ -668,6 +680,37 @@ def _scenario_run_row_to_dict(row: ScenarioRunRow) -> dict:
         "largest_risk_contributor": row.largest_risk_contributor,
         "requested_by": row.requested_by,
         "run_at": row.run_at,
+    }
+
+
+def _memory_record_row_to_dict(row: MemoryRecordRow) -> dict:
+    return {
+        "id": row.id,
+        "organization_id": row.organization_id,
+        "memory_type": row.memory_type,
+        "trade_id": row.trade_id,
+        "market": row.market,
+        "strategy": row.strategy,
+        "title": row.title,
+        "summary": row.summary,
+        "outcome_quadrant": row.outcome_quadrant,
+        "structured_context": row.structured_context,
+        "tags": row.tags,
+        "created_at": row.created_at,
+    }
+
+
+def _lesson_proposal_row_to_dict(row: LessonProposalRow) -> dict:
+    return {
+        "id": row.id,
+        "organization_id": row.organization_id,
+        "memory_record_id": row.memory_record_id,
+        "proposed_lesson": row.proposed_lesson,
+        "rationale": row.rationale,
+        "status": row.status,
+        "reviewed_by": row.reviewed_by,
+        "reviewed_at": row.reviewed_at,
+        "created_at": row.created_at,
     }
 
 
@@ -2261,6 +2304,109 @@ class SqlAppRepository:
                 await session.execute(select(ScenarioRunRow).where(ScenarioRunRow.id == run_id))
             ).scalar_one_or_none()
         return _scenario_run_row_to_dict(row) if row is not None else None
+
+    async def save_memory_record(self, memory: MemoryRecord) -> None:
+        row = MemoryRecordRow(
+            id=str(memory.id),
+            organization_id=memory.organization_id,
+            memory_type=memory.memory_type.value,
+            trade_id=str(memory.trade_id) if memory.trade_id is not None else None,
+            market=memory.market,
+            strategy=memory.strategy,
+            title=memory.title,
+            summary=memory.summary,
+            outcome_quadrant=memory.outcome_quadrant.value if memory.outcome_quadrant is not None else None,
+            structured_context=memory.structured_context,
+            tags=memory.tags,
+            created_at=_naive_utc(memory.created_at),
+        )
+        async with self.session_factory() as session:
+            session.add(row)
+            await session.commit()
+
+    async def list_memory_records(
+        self,
+        *,
+        memory_type: str | None = None,
+        organization_id: str | None = None,
+        since: datetime | None = None,
+        limit: int = 50,
+    ) -> list[dict]:
+        query = select(MemoryRecordRow).order_by(MemoryRecordRow.created_at.desc()).limit(limit)
+        if memory_type is not None:
+            query = query.where(MemoryRecordRow.memory_type == memory_type)
+        if organization_id is not None:
+            query = query.where(
+                (MemoryRecordRow.organization_id == organization_id) | (MemoryRecordRow.organization_id.is_(None))
+            )
+        if since is not None:
+            query = query.where(MemoryRecordRow.created_at >= _naive_utc(since))
+        async with self.session_factory() as session:
+            rows = (await session.execute(query)).scalars().all()
+        return [_memory_record_row_to_dict(r) for r in rows]
+
+    async def get_memory_record(self, memory_id: str) -> dict | None:
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(select(MemoryRecordRow).where(MemoryRecordRow.id == memory_id))
+            ).scalar_one_or_none()
+        return _memory_record_row_to_dict(row) if row is not None else None
+
+    async def save_lesson_proposal(self, lesson: LessonProposal) -> None:
+        row = LessonProposalRow(
+            id=str(lesson.id),
+            organization_id=lesson.organization_id,
+            memory_record_id=str(lesson.memory_record_id),
+            proposed_lesson=lesson.proposed_lesson,
+            rationale=lesson.rationale,
+            status=lesson.status.value,
+            reviewed_by=lesson.reviewed_by,
+            reviewed_at=_naive_utc(lesson.reviewed_at) if lesson.reviewed_at is not None else None,
+            created_at=_naive_utc(lesson.created_at),
+        )
+        async with self.session_factory() as session:
+            session.add(row)
+            await session.commit()
+
+    async def list_lesson_proposals(
+        self,
+        *,
+        status: str | None = None,
+        organization_id: str | None = None,
+        limit: int = 50,
+    ) -> list[dict]:
+        query = select(LessonProposalRow).order_by(LessonProposalRow.created_at.desc()).limit(limit)
+        if status is not None:
+            query = query.where(LessonProposalRow.status == status)
+        if organization_id is not None:
+            query = query.where(
+                (LessonProposalRow.organization_id == organization_id) | (LessonProposalRow.organization_id.is_(None))
+            )
+        async with self.session_factory() as session:
+            rows = (await session.execute(query)).scalars().all()
+        return [_lesson_proposal_row_to_dict(r) for r in rows]
+
+    async def get_lesson_proposal(self, lesson_id: str) -> dict | None:
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(select(LessonProposalRow).where(LessonProposalRow.id == lesson_id))
+            ).scalar_one_or_none()
+        return _lesson_proposal_row_to_dict(row) if row is not None else None
+
+    async def update_lesson_proposal_status(
+        self, lesson_id: str, *, status: str, reviewed_by: str, reviewed_at: datetime
+    ) -> dict | None:
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(select(LessonProposalRow).where(LessonProposalRow.id == lesson_id))
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            row.status = status
+            row.reviewed_by = reviewed_by
+            row.reviewed_at = _naive_utc(reviewed_at)
+            await session.commit()
+            return _lesson_proposal_row_to_dict(row)
 
     async def save_committee_decision(self, trade_id: UUID, decision: InvestmentCommitteeDecision) -> None:
         row = CommitteeDecisionRow(

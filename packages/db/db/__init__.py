@@ -17,7 +17,9 @@ from .models import (
     DecisionJournalRow,
     FeatureRow,
     ImpactAnalysisRow,
+    LessonProposalRow,
     MagicLinkTokenRow,
+    MemoryRecordRow,
     ModelDefinitionRow,
     OrganizationFeatureEntitlementRow,
     OrganizationRow,
@@ -80,5 +82,7 @@ __all__ = [
     "AgentAlphaScoreRow",
     "ConsensusViewRow",
     "ScenarioRunRow",
+    "MemoryRecordRow",
+    "LessonProposalRow",
     "SqlAppRepository",
 ]

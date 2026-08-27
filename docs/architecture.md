@@ -540,7 +540,7 @@ Six components, documented in full in `docs/alpha-intelligence.md`:
   forecast aggregation. **Implemented (Milestone 3 of this layer).**
 - **AlphaScenario™** — counterfactual/stress-test engine, extending `services/risk/
   risk_service/scenarios.py`. **Implemented (Milestone 4 of this layer).**
-- **AlphaMemory™** — decision/institutional memory. Planned (Milestone 5).
+- **AlphaMemory™** — decision/institutional memory. **Implemented (Milestone 5 of this layer).**
 - **AlphaReplay™** — bitemporal historical reconstruction ("as-known-at" querying, no
   look-ahead bias). Planned (Milestone 6, the most invasive since it retrofits bitemporal
   columns onto existing observation tables).
@@ -631,3 +631,23 @@ comparison/persistence). The pre-existing `run_named_scenario` chat topic now co
 explicit percentage shock when one is named in the question; a new `"scenario_comparison"`
 topic runs the whole standing library. See `docs/alpha-intelligence.md` section 7 for the
 full design.
+
+### AlphaMemory™ (implemented)
+
+`services/alpha/alpha_service/memory_builder.py`'s `MemoryBuilder`/`LessonEngine` are pure:
+`MemoryBuilder.build_decision_memory()` assembles a `MemoryRecord` (`packages/schemas/schemas/
+alpha.py`) from a closed trade's already-computed `TradeIdea`/`InvestmentCommitteeDecision`/
+`RiskCheckResult`/`PostTradeAnalysis` (and its attached `PriceForecast`, if any) — carrying
+forward `PostTradeAnalysis.quadrant`/`.lessons` unchanged rather than reclassifying the outcome.
+`LessonEngine.propose()` drafts a `LessonProposal` from a fixed template keyed off the memory's
+`OutcomeQuadrant` — not an LLM, matching every other Alpha* engine's "no LLM in the engine path"
+discipline. `AppState._build_decision_memory()` runs immediately after `close_trade()` persists
+its `PostTradeAnalysis`, publishing `MEMORY_RECORD_CREATED`/`LESSON_PROPOSED`;
+`AppState.review_lesson_proposal()` is the only way a proposal's status changes, and approving
+one never wires it back into any production model or threshold automatically. Exposed via
+`GET /alpha/memory`/`GET /alpha/memory/{id}`, `GET /alpha/memory/lessons`/`GET /alpha/memory/
+lessons/{id}`, and `POST /alpha/memory/lessons/{id}/review` (new `alpha_memory.view`/
+`alpha_memory.review` permissions — the latter narrower, granted only to RISK_MANAGER/
+RESEARCHER), a new "what have we learned" chat topic, and a fifth "AlphaMemory" tab in the
+Alpha Intelligence dashboard with an inline lesson-review panel. See
+`docs/alpha-intelligence.md` section 8 for the full design.
