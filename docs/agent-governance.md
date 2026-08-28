@@ -140,8 +140,8 @@ approved model on its next call. This runs at boot (right after the initial seed
 from `POST .../versions/{version_id}/transition` every time a version reaches `PRODUCTION` or
 `ROLLED_BACK` — a rollback leaves the agent_type with no `PRODUCTION` row at all, so the live
 instance's `system_instructions` resets to `None` (no override) rather than keeping a stale prompt.
-An agent with no live instance (`RISK_GOVERNOR`, `NEWS_INTELLIGENCE`) is a documented no-op, not an
-error.
+An agent with no live instance (`RISK_GOVERNOR` -- it isn't a `BaseAgent` at all, see §1) is a
+documented no-op, not an error.
 
 At boot, every implemented, administrable agent is given a real `PRODUCTION` version snapshotted
 from its actual live configuration (`AppState._seed_initial_agent_versions()` — version string

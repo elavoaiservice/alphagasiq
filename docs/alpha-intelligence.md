@@ -221,10 +221,12 @@ entirely (its magnitude/rarity components are calibrated for market percent-chan
 z-scores, not "fraction of a fixed limit consumed"; `materiality_score` is instead the usage
 fraction itself, scaled to 0-100, with a provisional documented threshold of 70% usage before
 a signal fires — `_RISK_LIMIT_APPROACH_THRESHOLD_FRACTION`). Still not produced, and why:
-`NEWS_EVENT`/`CUSTOMER_DATA_CHANGE` need a source that actually refreshes cycle-over-cycle
-(`AppState.news_events` is set once at boot and never re-fetched; enterprise records have no
-polling loop) — natural follow-ups once NEWS_INTELLIGENCE is wired into orchestration and
-per-organization enterprise detection exists, respectively; `POSITION_CHANGE` is the same
+`NEWS_EVENT`/`CUSTOMER_DATA_CHANGE` need a source that actually refreshes cycle-over-cycle.
+`NEWS_INTELLIGENCE` is now a real, wired agent (docs/agents.md §4), but `AppState.news_events`
+is still only populated once at boot -- nothing re-fetches raw news mid-run yet, so there is
+no "new since last cycle" to diff against; enterprise records have no polling loop either.
+Both are natural follow-ups (re-fetch news on a cadence, then diff; per-organization
+enterprise detection), not something to fake here. `POSITION_CHANGE` is the same
 per-organization-loop problem; `REGULATORY_EVENT` has no data source anywhere in this
 codebase; `MODEL_DISAGREEMENT` would require running multiple Quantitative Team models per
 cycle instead of the one `ForecastingAgent` runs today, judged too invasive to bolt on here.

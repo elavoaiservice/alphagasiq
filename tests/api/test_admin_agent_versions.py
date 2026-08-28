@@ -84,6 +84,20 @@ def test_boot_seeds_a_real_production_version_for_implemented_agents(client):
     assert prod.json()["id"] == versions[0]["id"]
 
 
+def test_boot_seeds_a_real_production_version_for_news_intelligence(client):
+    """#5: NEWS_INTELLIGENCE now has a live `BaseAgent` instance
+    (`agent_catalog.resolve_agent_instance`), so it gets the same boot-time PRODUCTION
+    snapshot every other implemented, administrable agent gets -- it used to be skipped
+    entirely (`resolve_agent_instance` returned `None`, so `_seed_initial_agent_
+    versions()`'s `if instance is None: continue` never created a row for it)."""
+    r = client.get("/api/v1/admin/agents/NEWS_INTELLIGENCE/versions", headers=_admin_headers(client))
+    assert r.status_code == 200
+    versions = r.json()
+    assert len(versions) == 1
+    assert versions[0]["status"] == "PRODUCTION"
+    assert versions[0]["model_provider"] is not None
+
+
 def test_list_versions_requires_permission(client):
     r = client.get("/api/v1/admin/agents/SUPPLY/versions", headers=_trader_headers(client))
     assert r.status_code == 403

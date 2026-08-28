@@ -108,6 +108,11 @@ power-burn estimate over the seeded ISO/RTO roster — both follow the same patt
 other fundamental agent (a deterministic calculation plus one LLM summarization call), and both
 run every research cycle alongside the Pipeline Agent, gated by the same admin
 enable/disable/pause control every other implemented agent has (docs/agent-governance.md §3).
+The News Intelligence Agent runs at boot (`AppState._run_news_intelligence()`), classifying
+that cycle's raw news observations into `NewsEvent`s and logging a real `AgentResult` like
+every other agent -- it does not yet re-run mid-session, since nothing currently re-fetches
+raw news after boot (docs/alpha-intelligence.md section 2's signal-detector scope notes cover
+why that also means AlphaSignal's `NEWS_EVENT` type isn't produced yet).
 
 Every `AgentType` enum member is defined whether or not a concrete agent exists for it yet.
 Unbuilt seats (Market Data, Event Detection, Sentiment, the remaining Strategy Team members,

@@ -127,10 +127,11 @@ def catalog_entry(agent_type: str) -> dict[str, Any]:
 def resolve_agent_instance(state: Any, agent_type: str):
     """Returns the live `BaseAgent` instance backing an implemented, LLM-driven seat,
     or `None` when there isn't a live instance to introspect -- either because the seat
-    isn't implemented, or (NEWS_INTELLIGENCE) the class exists and is tested but isn't
-    yet wired into any running pipeline (see docs/agents.md §4). Never fabricates a
-    stand-in. `RISK_GOVERNOR` is deliberately excluded -- it isn't a `BaseAgent` at all
-    (see docs/agent-governance.md §1) and callers should handle it separately."""
+    isn't implemented, or because it's a genuine placeholder team seat the org chart
+    lists but the codebase hasn't built a `BaseAgent` subclass for at all. Never
+    fabricates a stand-in. `RISK_GOVERNOR` is deliberately excluded -- it isn't a
+    `BaseAgent` at all (see docs/agent-governance.md §1) and callers should handle it
+    separately."""
     accessors: dict[str, Any] = {
         "SUPPLY": lambda: state.chief_trading_agent.supply_agent,
         "DEMAND": lambda: state.chief_trading_agent.demand_agent,
@@ -140,6 +141,7 @@ def resolve_agent_instance(state: Any, agent_type: str):
         "PIPELINE": lambda: state.pipeline_agent,
         "LNG": lambda: state.lng_agent,
         "POWER_MARKET": lambda: state.power_market_agent,
+        "NEWS_INTELLIGENCE": lambda: state.news_intelligence_agent,
         "FORECASTING": lambda: state.forecasting_agent,
         "REGIME_DETECTION": lambda: state.regime_detection_agent,
         "RELATIVE_VALUE": lambda: state.relative_value_agent,

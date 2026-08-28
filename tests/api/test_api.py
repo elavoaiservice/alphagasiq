@@ -85,6 +85,22 @@ def test_news_events_endpoint(client):
     assert len(r.json()) == 5
 
 
+def test_news_intelligence_agent_runs_at_boot_and_populates_news_events(client):
+    """#5: NEWS_INTELLIGENCE follow-up -- `state.news_events` is now produced by
+    actually running `NewsIntelligenceAgent`, not a hand-rolled duplicate of its
+    ingest/classify logic. Proves the real agent ran (a logged `AgentResult`) and that
+    its structured output is what `state.news_events` holds."""
+    from api_app import state as state_module
+    from schemas import AgentType
+
+    state = state_module._state
+    news_results = [r for r in state.agent_execution_log if r.agent_type == AgentType.NEWS_INTELLIGENCE]
+    assert len(news_results) == 1
+    assert news_results[0].agent_id == "market_intel.news_intelligence.v1"
+    assert len(state.news_events) == len(news_results[0].outputs["events"])
+    assert state.news_events[0].headline == news_results[0].outputs["events"][0]["headline"]
+
+
 def test_org_chart_lists_every_agent_type(client):
     r = client.get("/api/v1/agents")
     assert r.status_code == 200

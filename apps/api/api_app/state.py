@@ -23,6 +23,7 @@ from agents_service import (
     ForecastingAgent,
     InvestmentCommittee,
     LNGAgent,
+    NewsIntelligenceAgent,
     PipelineAgent,
     PowerMarketAgent,
     RegimeDetectionAgent,
@@ -144,6 +145,7 @@ class AppState:
         self.pipeline_agent = PipelineAgent(llm=llm)
         self.lng_agent = LNGAgent(llm=llm)
         self.power_market_agent = PowerMarketAgent(llm=llm)
+        self.news_intelligence_agent = NewsIntelligenceAgent(llm=llm)
         self.forecasting_agent = ForecastingAgent(llm=llm)
         self.regime_detection_agent = RegimeDetectionAgent(llm=llm)
         self.relative_value_agent = RelativeValueAgent(llm=llm)
@@ -423,7 +425,18 @@ class AppState:
 
         news_provider = self.providers.get("mock_news")
         news_observations = await news_provider.fetch(FetchRequest(end=as_of))
-        self.news_events = _observations_to_news_events(news_observations)
+        await self._run_news_intelligence(news_observations)
+
+    async def _run_news_intelligence(self, raw_items: list[ObservationDraft]) -> None:
+        """Milestone 1 follow-up (docs/agents.md §4): `NewsIntelligenceAgent` existed and
+        was tested but had no live call site -- `agent_catalog.resolve_agent_instance`
+        returned `None` for `NEWS_INTELLIGENCE` and a hand-rolled `_observations_to_news_
+        events()` duplicated the agent's own ingest/classify logic inline instead of
+        running it. This runs the real agent, logs its `AgentResult` like every other
+        agent, and sets `self.news_events` from its structured output."""
+        result = await self.news_intelligence_agent.run(raw_items=raw_items)
+        self.agent_execution_log.append(result)
+        self.news_events = [NewsEvent.model_validate(e) for e in result.outputs.get("events", [])]
 
     def primary_instrument(self) -> str:
         """The tradable instrument for strategy/research purposes: always the actual
@@ -1677,31 +1690,6 @@ class AppState:
             if obs.symbol == instrument:
                 return obs.value
         return self.market_curve[0].value if self.market_curve else 3.0
-
-
-def _observations_to_news_events(observations: list[ObservationDraft]) -> list[NewsEvent]:
-    events: list[NewsEvent] = []
-    for obs in observations:
-        magnitude = float(obs.value)
-        bullish_bearish = obs.metadata.get("bullish_bearish", "NEUTRAL")
-        events.append(
-            NewsEvent(
-                headline=obs.metadata.get("headline", ""),
-                source=obs.source,
-                source_url=obs.metadata.get("source_url", ""),
-                published_at=obs.publication_time,
-                event_type=obs.sub_category or "other",
-                locations=obs.metadata.get("locations", [obs.geography] if obs.geography else []),
-                summary=obs.metadata.get("headline", ""),
-                supply_impact_bcf_day=round(-magnitude * 2 if bullish_bearish == "BULLISH" else magnitude * 2 if bullish_bearish == "BEARISH" else 0.0, 2),
-                affected_markets=["Henry Hub"],
-                bullish_bearish=bullish_bearish,
-                magnitude=magnitude,
-                confidence=0.6,
-                citations=[obs.metadata.get("source_url", obs.source)],
-            )
-        )
-    return events
 
 
 _state: AppState | None = None
