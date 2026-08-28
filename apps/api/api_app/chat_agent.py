@@ -27,10 +27,10 @@ from agent_sdk import LLMMessage, LLMProvider
 from alpha_service import ScenarioEngine
 from risk_service.metrics import PositionSnapshot
 from risk_service.scenarios import get_scenario, run_scenario
-from schemas import ScenarioDefinition, ScenarioFactorType, ScenarioVariable
+from schemas import EnterpriseDataClassification, ModelRoutingPolicy, ScenarioDefinition, ScenarioFactorType, ScenarioVariable
 
 from .auth import User
-from .entitlements import get_effective_permissions
+from .entitlements import get_effective_permissions, resolve_organization_id
 from .state import AppState
 
 
@@ -95,6 +95,7 @@ _TOOL_PERMISSIONS: dict[str, str] = {
     "decision_memory": "alpha_memory.view",
     "replay_snapshot": "alpha_replay.view",
     "overnight_brief": "alpha_brief.view",
+    "enterprise_data_query": "enterprise_data.query",
     "what_changed": "dashboard.view",
     "todays_move": "news.view",
     "general_status": "dashboard.view",
@@ -134,6 +135,8 @@ class ChatAgent:
             return "agent_consensus"
         elif "what have we learned" in q or "lesson" in q or "past decision" in q or "alphamemory" in q or "decision memory" in q:
             return "decision_memory"
+        elif "my data" in q or "our data" in q or "enterprise data" in q or "my position" in q or "our position" in q or "my proprietary data" in q:
+            return "enterprise_data_query"
         elif "time machine" in q or "what did we know" in q or "as of" in q or "alphareplay" in q or "replay" in q:
             return "replay_snapshot"
         elif "what changed" in q or "last six hours" in q or "recent" in q:
@@ -145,7 +148,7 @@ class ChatAgent:
         else:
             return "general_status"
 
-    async def _dispatch(self, topic: str, q: str, state: AppState) -> ToolResult:
+    async def _dispatch(self, topic: str, q: str, state: AppState, user: User) -> ToolResult:
         if topic == "what_invalidates":
             return self._what_invalidates(q, state)
         elif topic == "most_disagreeing_agent":
@@ -176,6 +179,8 @@ class ChatAgent:
             return await self._replay_snapshot(q, state)
         elif topic == "overnight_brief":
             return self._overnight_brief(state)
+        elif topic == "enterprise_data_query":
+            return await self._enterprise_data_query(state, user)
         elif topic == "what_changed":
             return self._what_changed(q, state)
         elif topic == "todays_move":
@@ -207,7 +212,7 @@ class ChatAgent:
             )
             model_used = None
         else:
-            result = await self._dispatch(topic, q, state)
+            result = await self._dispatch(topic, q, state, user)
             prompt = (
                 "You are the AlphaGasIQ AI Trader Chat assistant. Using ONLY the facts below "
                 "(never invent numbers), answer the trader's question concisely and professionally.\n\n"
@@ -450,6 +455,61 @@ class ChatAgent:
                 "period_start": brief.period_start.isoformat(),
                 "period_end": brief.period_end.isoformat(),
             },
+        )
+
+    async def _enterprise_data_query(self, state: AppState, user: User) -> ToolResult:
+        """EnterpriseCTATool (docs/alpha-intelligence.md section 11.7, Milestone
+        10) -- the "Enterprise-specific Chief Trading Agent" from the original
+        plan: answers using the caller's own organization's registered enterprise
+        datasets. This is the first real caller of `ModelRoutingEngine`
+        (Milestone 9's `services/enterprise_data/enterprise_data_service/
+        model_routing.py`, built with no live caller at the time): a dataset
+        whose resolved `ModelRoutingPolicy` denies external LLM processing is
+        named in the response but its actual content is withheld -- never
+        silently included in the prompt this method's caller (`ask()`) hands to
+        `self.llm.complete()`, regardless of which provider that is. Scoped by
+        organization only, not by fine-grained per-dataset
+        `EnterpriseDataEntitlement` grants -- docs/alpha-intelligence.md section
+        11.2 already flags that non-admin, per-dataset entitlement enforcement
+        isn't wired into any read path yet; this reuses that same honest
+        limitation rather than pretending to solve it here."""
+        organization_id = await resolve_organization_id(user, state)
+        if organization_id is None:
+            return ToolResult(
+                "I can't identify your organization, so I have no enterprise data to draw on.", [], {}
+            )
+        datasets = await state.repo.list_enterprise_datasets(organization_id=organization_id)
+        if not datasets:
+            return ToolResult("Your organization hasn't registered any enterprise datasets yet.", [], {})
+
+        policies_raw = await state.repo.list_model_routing_policies(organization_id=organization_id)
+        policies = [ModelRoutingPolicy.model_validate(p) for p in policies_raw]
+
+        lines: list[str] = []
+        citations: list[dict[str, Any]] = []
+        withheld_count = 0
+        for dataset in datasets:
+            classification = EnterpriseDataClassification(dataset["classification"])
+            decision = state.model_routing_engine.evaluate(
+                data_classification=classification, policies=policies, organization_id=organization_id
+            )
+            citations.append({"source": "enterprise_data_service", "reference": dataset["id"]})
+            if not decision.allowed:
+                withheld_count += 1
+                lines.append(
+                    f"- {dataset['name']} ({dataset['domain']}, {classification.value}): withheld -- your "
+                    f"organization's model routing policy does not allow this classification to reach an "
+                    f"external LLM provider ({decision.reason})."
+                )
+                continue
+            lines.append(
+                f"- {dataset['name']} ({dataset['domain']}, {classification.value}, "
+                f"{dataset['row_count']} row(s) ingested)."
+            )
+        return ToolResult(
+            "\n".join(lines),
+            citations,
+            {"dataset_count": len(datasets), "withheld_count": withheld_count},
         )
 
     def _show_evidence(self, q: str, state: AppState) -> ToolResult:

@@ -62,6 +62,9 @@ from .enterprise import (
     EnterpriseDataset,
     EnterpriseDataSource,
     EnterpriseEntitlementPrincipalType,
+    EnterpriseOpportunity,
+    EnterpriseOpportunityStatus,
+    EnterpriseOpportunityType,
     EnterpriseSourceStatus,
     ModelRoutingPolicy,
     RetentionPolicy,
@@ -140,4 +143,7 @@ __all__ = [
     "EnterpriseDataEntitlement",
     "ModelRoutingPolicy",
     "RetentionPolicy",
+    "EnterpriseOpportunityType",
+    "EnterpriseOpportunityStatus",
+    "EnterpriseOpportunity",
 ]

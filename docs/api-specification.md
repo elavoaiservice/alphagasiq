@@ -217,7 +217,7 @@ All list endpoints support `limit`/`cursor` pagination. All responses embed
 `data_sources`/`citations`/`freshness` metadata wherever the payload includes market or research
 facts, per the platform's explainability requirement.
 
-## Alpha Intelligence — AlphaSignal + AlphaImpact + AlphaConsensus + AlphaScenario + AlphaMemory + AlphaReplay + Chief Trading Agent integration (Alpha Intelligence Layer Milestones 1-7, `docs/alpha-intelligence.md`)
+## Alpha Intelligence — AlphaSignal + AlphaImpact + AlphaConsensus + AlphaScenario + AlphaMemory + AlphaReplay + Chief Trading Agent integration + Enterprise Opportunity Engine + Enterprise Digital Twin overlay (Alpha Intelligence Layer Milestones 1-7 and 10, `docs/alpha-intelligence.md`)
 
 | Method | Path | Notes |
 |---|---|---|
@@ -251,9 +251,23 @@ so the endpoint never confirms a record's existence to an unauthorized caller).
 | GET | `/alpha/briefs` | requires `alpha_brief.view`. Brief history, most recent first. Query params: `market`, `limit` (default 20) |
 | GET | `/alpha/briefs/{brief_id}` | requires `alpha_brief.view`. 404 if unknown or outside the caller's visibility |
 
-AlphaSignal, AlphaImpact, AlphaConsensus, AlphaScenario, AlphaMemory, AlphaReplay, and the Chief
+Every `/alpha/enterprise/*` endpoint below (Milestone 10, docs/alpha-intelligence.md section
+11.7) is scoped to the caller's own resolved organization only — there is no platform-wide
+fallback the way `/alpha/*` above has, since this data is inherently one organization's own.
+
+| POST | `/alpha/enterprise/opportunities/generate` | requires `enterprise_opportunities.generate`. Runs `EnterpriseOpportunityEngine` for the caller's own organization and persists every candidate as `PENDING`. 400 if the caller's organization can't be resolved |
+| GET | `/alpha/enterprise/opportunities` | requires `enterprise_opportunities.view`. Most-recent-first, scoped to the caller's own organization. Query params: `status` (`PENDING`/`APPROVED`/`REJECTED`), `limit` (default 50). An unresolvable-organization caller gets an empty list, not an error |
+| GET | `/alpha/enterprise/opportunities/{opportunity_id}` | requires `enterprise_opportunities.view`. 404 if unknown or outside the caller's visibility (`record_is_visible`, same as every other Alpha* get-by-id endpoint) |
+| POST | `/alpha/enterprise/opportunities/{opportunity_id}/review` | requires `enterprise_opportunities.review`. Body: `{"status": "APPROVED"\|"REJECTED"}`; 400 if asked to review back to `PENDING`; 404 if unknown or outside the caller's visibility. Never auto-executes a trade or position change |
+| GET | `/alpha/enterprise/pipeline-overlay` | requires `enterprise_data.query`. Returns the same public pipeline digital twin `GET /fundamentals/pipeline/graph` returns, plus `overlay.assets` — the caller's own organization's `ASSET`/`FACILITY`-domain enterprise records that name a real node in the graph. An unresolvable-organization caller gets the public graph with an empty overlay |
+
+AlphaSignal, AlphaImpact, AlphaConsensus, AlphaScenario, AlphaMemory, AlphaReplay, the Chief
 Trading Agent integration (AlphaSignal/AlphaConsensus feedback into trade generation, the
-Overnight Intelligence Brief) are all implemented now.
+Overnight Intelligence Brief), the Enterprise Opportunity Engine, and the Enterprise Digital
+Twin pipeline overlay are all implemented now. The Enterprise-specific Chief Trading Agent
+chat integration (a new `enterprise_data_query` chat topic, gated by `enterprise_data.query`)
+is documented under "AI Trader Chat" below, not here — it has no dedicated REST endpoint of
+its own.
 
 ## Admin: Enterprise Data Platform foundation (Milestone 8, `docs/alpha-intelligence.md` section 11)
 

@@ -559,7 +559,9 @@ get-by-id endpoint now enforces cross-organization data-visibility correctly
 `ModelRoutingPolicy`/`RetentionPolicy` governance layer and `organization_id` schema readiness
 on the core trading tables — but there is still no database-level Row Level Security backstop,
 and `AppState` remains a process-wide singleton (see that doc's section 11 for the exact
-built-vs-not-built line).
+built-vs-not-built line). Milestone 10 (the Enterprise Opportunity Engine, an
+Enterprise-specific Chief Trading Agent chat integration, and an Enterprise Digital Twin
+pipeline overlay) is also implemented — see below.
 
 ### AlphaSignal™ (implemented)
 
@@ -751,9 +753,10 @@ end-to-end. Also new: `ModelRoutingPolicy`/`RetentionPolicy`
 tables) — per-`(organization_id, EnterpriseDataClassification)` governance rows, with
 `organization_id=None` as the platform default. `ModelRoutingEngine`/`RetentionEngine`
 (`services/enterprise_data/enterprise_data_service/`) are pure policy-resolution functions;
-`PolicyGatedLLMProvider` (`packages/agent-sdk/agent_sdk/llm.py`) is the enforcement primitive
-for `ModelRoutingPolicy` (no agent call site constructs one with a real classification yet —
-that's Milestone 10's job, once enterprise data actually flows into agent prompts);
+`PolicyGatedLLMProvider` (`packages/agent-sdk/agent_sdk/llm.py`) is the provider-swapping
+enforcement primitive for `ModelRoutingPolicy` (still no live caller — Milestone 10's
+`ChatAgent._enterprise_data_query`, below, enforces the same policy a different way: by
+deciding what goes into the prompt rather than swapping which `LLMProvider` handles it);
 `AppState.apply_retention_policy()` is the I/O half of `RetentionPolicy`, purging expired
 `EnterpriseRecordRow`s. Both exposed via `/admin/model-routing-policies`/
 `/admin/retention-policies(/apply)` (new `admin.model_routing_policy`/`admin.retention_policy`
@@ -765,3 +768,38 @@ comes from the single process-wide `AppState`'s system-generated research cycle,
 per-organization submission path. See `docs/alpha-intelligence.md` section 11.1/11.5/11.6 for
 the full built-vs-not-built design, including what real database-level RLS enforcement would
 still add on top of this.
+
+### Enterprise Opportunity Engine + Enterprise-specific Chief Trading Agent + Enterprise
+Digital Twin overlay (implemented — Milestone 10)
+
+`EnterpriseOpportunity` (`packages/schemas/schemas/enterprise.py`) is a human-reviewed
+candidate opportunity — `organization_id` **required**, not nullable, since it's inherently
+derived from one organization's own data — drafted by `EnterpriseOpportunityEngine`
+(`services/enterprise_data/enterprise_data_service/opportunity.py`, pure, zero I/O): it
+cross-references the organization's own `POSITION`/`PORTFOLIO`-domain enterprise records
+against recent `Signal`s/`ConsensusView`s and detects two shapes,
+`HEDGE_MISALIGNED_POSITION` (a held position runs counter to a high-confidence consensus view)
+and `NEW_POSITION_HIGH_CONVICTION_SIGNAL` (a high-materiality directional signal in a market
+with no existing position). `AppState.generate_enterprise_opportunities()` does the I/O
+(load datasets/records/signals/consensus, run the engine, persist, publish
+`OPPORTUNITY_PROPOSED`); `GET/POST /alpha/enterprise/opportunities*`
+(`enterprise_opportunities.view`/`.generate`/`.review`) is the API, tenant-isolated via the
+same `resolve_organization_scope`/`record_is_visible` helpers Milestone 9 built; a dashboard
+tab (`OpportunitiesTable.tsx`) lists/generates/reviews.
+
+`ChatAgent._enterprise_data_query` (`apps/api/api_app/chat_agent.py`, topic
+`enterprise_data_query`, gated by new `enterprise_data.query`) is the Enterprise-specific
+Chief Trading Agent chat integration: answers using the caller's own organization's registered
+enterprise datasets, and is the first real caller `ModelRoutingEngine` has had since Milestone
+9 — a dataset whose resolved `ModelRoutingPolicy` denies external LLM processing is named but
+its content withheld from the facts handed to `self.llm.complete()`. Scoped by organization
+only, not by fine-grained per-dataset `EnterpriseDataEntitlement` grants (that gap was already
+flagged in Milestone 8's write-up and isn't solved here).
+
+`GET /alpha/enterprise/pipeline-overlay` (`enterprise_data.query`) is the Enterprise Digital
+Twin overlay: the same public pipeline graph `GET /fundamentals/pipeline/graph` returns, plus
+`overlay.assets` — the caller's own organization's `ASSET`/`FACILITY`-domain enterprise records
+that name a real node in the graph, via `PipelineOverlayPoint.from_record`/`build_overlay`
+(`services/enterprise_data/enterprise_data_service/pipeline_overlay.py`, pure). The pipeline
+map page gained a "Show my enterprise assets" toggle. See `docs/alpha-intelligence.md` section
+11.7 for the full built-vs-not-built design.

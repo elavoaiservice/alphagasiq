@@ -49,7 +49,7 @@ from data_service.providers.mock_market_data import MockCMEProvider, MockICEProv
 from data_service.providers.mock_news import MockNewsProvider
 from data_service.registry import build_default_registry
 from db import SqlAppRepository
-from enterprise_data_service import ModelRoutingEngine, RetentionEngine
+from enterprise_data_service import EnterpriseOpportunityEngine, EnterprisePosition, ModelRoutingEngine, RetentionEngine
 from fundamentals_service.lng import LNGTerminalState, compute_netback
 from fundamentals_service.pipeline_graph import PipelineGraph, build_default_pipeline_graph
 from fundamentals_service.pipeline_graph_neo4j import sync_pipeline_graph_via_neo4j
@@ -77,6 +77,9 @@ from schemas import (
     DataClassification,
     DomainEvent,
     EnterpriseDataClassification,
+    EnterpriseDataDomain,
+    EnterpriseOpportunity,
+    EnterpriseOpportunityType,
     EventType,
     ForecastHorizon,
     ImpactAnalysis,
@@ -152,6 +155,7 @@ class AppState:
         self.alpha_brief_engine = BriefEngine()
         self.model_routing_engine = ModelRoutingEngine()
         self.retention_engine = RetentionEngine()
+        self.enterprise_opportunity_engine = EnterpriseOpportunityEngine()
         # Bounded caches of the most recently detected signals/impact analyses/
         # consensus views, kept in-memory alongside the durable `alpha_signals`/
         # `alpha_impact_analyses`/`alpha_consensus_views` tables so the (synchronous)
@@ -1293,6 +1297,77 @@ class AppState:
             DomainEvent(event_type=EventType.RETENTION_PURGE_COMPLETED, source_service="enterprise_data_service", payload=result)
         )
         return result
+
+    async def generate_enterprise_opportunities(self, *, organization_id: str) -> list[EnterpriseOpportunity]:
+        """`EnterpriseOpportunityEngine`'s integration point (docs/alpha-intelligence.md
+        section 11.7, Milestone 10): cross-references `organization_id`'s own
+        `POSITION`/`PORTFOLIO`-domain enterprise records against recent Alpha
+        Intelligence signals/consensus, persists every candidate as a `PENDING`
+        `EnterpriseOpportunity`, and publishes `OPPORTUNITY_PROPOSED`. Always scoped
+        to one organization's own registered datasets -- there is no platform-wide
+        opportunity feed, and this does not yet check per-dataset
+        `EnterpriseDataEntitlement` grants (docs/alpha-intelligence.md section 11.2
+        already flags that non-admin, per-dataset entitlement enforcement isn't
+        wired into any read path yet; this reuses that same honest limitation
+        rather than pretending to solve it here)."""
+        datasets = await self.repo.list_enterprise_datasets(organization_id=organization_id)
+        position_datasets = [
+            d for d in datasets if d["domain"] in (EnterpriseDataDomain.POSITION.value, EnterpriseDataDomain.PORTFOLIO.value)
+        ]
+        positions: list[EnterprisePosition] = []
+        for dataset in position_datasets:
+            records = await self.repo.list_enterprise_records(dataset["id"], limit=200)
+            for record in records:
+                pos = EnterprisePosition.from_record(
+                    dataset_id=dataset["id"], record_id=record["id"], row_data=record["row_data"]
+                )
+                if pos is not None:
+                    positions.append(pos)
+
+        since = datetime.now(timezone.utc) - timedelta(hours=24 * 30)
+        signals_raw = await self.repo.list_signals(organization_id=organization_id, since=since, limit=200)
+        consensus_raw = await self.repo.list_consensus_views(organization_id=organization_id, since=since, limit=200)
+        candidates = self.enterprise_opportunity_engine.generate(
+            positions=positions,
+            signals=[Signal.model_validate(s) for s in signals_raw],
+            consensus_views=[ConsensusView.model_validate(c) for c in consensus_raw],
+        )
+
+        created: list[EnterpriseOpportunity] = []
+        for candidate in candidates:
+            opportunity = EnterpriseOpportunity(
+                organization_id=organization_id,
+                opportunity_type=EnterpriseOpportunityType(candidate.opportunity_type),
+                market=candidate.market,
+                title=candidate.title,
+                summary=candidate.summary,
+                confidence=candidate.confidence,
+                supporting_signal_ids=candidate.supporting_signal_ids,
+                supporting_consensus_id=candidate.supporting_consensus_id,
+                related_dataset_id=candidate.related_dataset_id,
+                related_record_id=candidate.related_record_id,
+            )
+            await self.repo.save_enterprise_opportunity(opportunity)
+            created.append(opportunity)
+            await self.event_bus.publish(
+                DomainEvent(
+                    event_type=EventType.OPPORTUNITY_PROPOSED,
+                    source_service="enterprise_data_service",
+                    payload=opportunity.model_dump(mode="json"),
+                )
+            )
+        return created
+
+    async def review_enterprise_opportunity(self, opportunity_id: str, *, status: str, reviewed_by: str) -> dict | None:
+        updated = await self.repo.update_enterprise_opportunity_status(
+            opportunity_id, status=status, reviewed_by=reviewed_by, reviewed_at=datetime.now(timezone.utc)
+        )
+        if updated is None:
+            return None
+        await self.event_bus.publish(
+            DomainEvent(event_type=EventType.OPPORTUNITY_REVIEWED, source_service="enterprise_data_service", payload=updated)
+        )
+        return updated
 
     @staticmethod
     def _forecast_model_type_and_version(forecast: PriceForecast) -> tuple[ModelType, str]:

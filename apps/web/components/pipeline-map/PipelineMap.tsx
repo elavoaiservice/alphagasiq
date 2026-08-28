@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { API_BASE } from "@/lib/api-client";
+import { API_BASE, apiGet } from "@/lib/api-client";
+import { useAuth } from "@/lib/auth-context";
 import { project } from "./projection";
 import { PipelineNodeInspector } from "./PipelineNodeInspector";
 
@@ -32,6 +33,17 @@ interface GraphResponse {
   classification: string;
 }
 
+interface OverlayAsset {
+  dataset_id: string;
+  record_id: string;
+  pipeline_node_id: string;
+  label: string;
+}
+
+interface OverlayResponse extends GraphResponse {
+  overlay: { assets: OverlayAsset[] };
+}
+
 const WIDTH = 900;
 const HEIGHT = 520;
 
@@ -48,9 +60,13 @@ const NODE_COLORS: Record<string, string> = {
 };
 
 export function PipelineMap() {
+  const { token } = useAuth();
   const [graph, setGraph] = useState<GraphResponse | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [hovered, setHovered] = useState<string | null>(null);
+  const [showOverlay, setShowOverlay] = useState(false);
+  const [overlayAssets, setOverlayAssets] = useState<OverlayAsset[] | null>(null);
+  const [overlayMessage, setOverlayMessage] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -62,6 +78,23 @@ export function PipelineMap() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!showOverlay || !token) return;
+    let cancelled = false;
+    apiGet<OverlayResponse>("/alpha/enterprise/pipeline-overlay", token)
+      .then((d) => !cancelled && setOverlayAssets(d.overlay.assets))
+      .catch(
+        () =>
+          !cancelled &&
+          setOverlayMessage(
+            "Unable to load your enterprise asset overlay — this requires the 'enterprise_data.query' permission."
+          )
+      );
+    return () => {
+      cancelled = true;
+    };
+  }, [showOverlay, token]);
 
   if (!graph) {
     return (
@@ -79,10 +112,21 @@ export function PipelineMap() {
       <div className="panel flex-1">
         <div className="flex items-center justify-between mb-1">
           <div className="panel-title mb-0">Pipeline Digital Twin — U.S. Infrastructure (simplified projection)</div>
-          <span className="text-[10px] px-1.5 py-0.5 border border-terminal-muted text-terminal-muted rounded">
-            {graph.classification}
-          </span>
+          <div className="flex items-center gap-2">
+            <label className="flex items-center gap-1 text-[10px] text-terminal-muted cursor-pointer">
+              <input
+                type="checkbox"
+                checked={showOverlay}
+                onChange={(e) => setShowOverlay(e.target.checked)}
+              />
+              Show my enterprise assets
+            </label>
+            <span className="text-[10px] px-1.5 py-0.5 border border-terminal-muted text-terminal-muted rounded">
+              {graph.classification}
+            </span>
+          </div>
         </div>
+        {showOverlay && overlayMessage && <p className="text-[10px] text-terminal-bear mb-1">{overlayMessage}</p>}
         <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} className="w-full h-auto bg-terminal-bg rounded">
           {graph.edges.map((e) => {
             const from = nodeById.get(e.from);
@@ -139,6 +183,26 @@ export function PipelineMap() {
               </g>
             );
           })}
+          {showOverlay &&
+            overlayAssets?.map((asset) => {
+              const node = nodeById.get(asset.pipeline_node_id);
+              if (!node) return null;
+              const p = project(node.lat, node.lon, WIDTH, HEIGHT);
+              return (
+                <rect
+                  key={asset.record_id}
+                  x={p.x - 4}
+                  y={p.y - 14}
+                  width={8}
+                  height={8}
+                  fill="#a988ff"
+                  stroke="#0a0e14"
+                  strokeWidth={1}
+                >
+                  <title>{asset.label} (your organization&apos;s asset)</title>
+                </rect>
+              );
+            })}
         </svg>
         <div className="mt-2 flex flex-wrap gap-3 text-[10px] text-terminal-muted">
           {Object.entries(NODE_COLORS)
@@ -155,6 +219,12 @@ export function PipelineMap() {
           <span className="flex items-center gap-1">
             <span className="inline-block w-3 h-0.5" style={{ backgroundColor: "#e5534b" }} /> under maintenance
           </span>
+          {showOverlay && (
+            <span className="flex items-center gap-1">
+              <span className="inline-block w-2 h-2" style={{ backgroundColor: "#a988ff" }} /> your organization&apos;s
+              asset
+            </span>
+          )}
         </div>
       </div>
       {selected && <PipelineNodeInspector nodeId={selected} onClose={() => setSelected(null)} />}

@@ -1034,3 +1034,31 @@ class RetentionPolicyRow(Base):
     created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class EnterpriseOpportunityRow(Base):
+    """A candidate opportunity `EnterpriseOpportunityEngine` drafted
+    (docs/alpha-intelligence.md section 11.7, Milestone 10) -- always
+    human-reviewed, never auto-executed. Unlike every other Alpha*/enterprise
+    table, `organization_id` is **required**: an opportunity is inherently
+    derived from one organization's own proprietary position data, so there is
+    no meaningful platform-wide row here."""
+
+    __tablename__ = "enterprise_opportunities"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    organization_id: Mapped[str] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=False)
+    workspace_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    opportunity_type: Mapped[str] = mapped_column(String, nullable=False)
+    market: Mapped[str] = mapped_column(String, nullable=False)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    summary: Mapped[str] = mapped_column(String, nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    supporting_signal_ids: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    supporting_consensus_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    related_dataset_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    related_record_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="PENDING")
+    reviewed_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)

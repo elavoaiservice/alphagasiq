@@ -221,3 +221,49 @@ class RetentionPolicy(BaseModel):
     created_by: str | None = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class EnterpriseOpportunityType(str, Enum):
+    """The two opportunity shapes `EnterpriseOpportunityEngine`
+    (docs/alpha-intelligence.md section 11.7, Milestone 10) detects -- a
+    deliberately small, documented set, not an open-ended taxonomy."""
+
+    HEDGE_MISALIGNED_POSITION = "HEDGE_MISALIGNED_POSITION"
+    NEW_POSITION_HIGH_CONVICTION_SIGNAL = "NEW_POSITION_HIGH_CONVICTION_SIGNAL"
+
+
+class EnterpriseOpportunityStatus(str, Enum):
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+
+
+class EnterpriseOpportunity(BaseModel):
+    """A candidate opportunity `EnterpriseOpportunityEngine` drafted by
+    cross-referencing an organization's own proprietary position data against
+    the Alpha Intelligence Layer's signals/consensus (docs/alpha-intelligence.md
+    section 11.7, Milestone 10) -- always human-reviewed, exactly the same
+    "AI-drafted but never an automatic feedback loop" posture
+    `LessonProposal` already establishes for AlphaMemory(TM); nothing here is
+    ever auto-executed into a trade or position change. Unlike every other
+    Alpha*/enterprise table, `organization_id` is **required**, not nullable --
+    an opportunity is inherently derived from one organization's own
+    proprietary position data, so a platform-wide opportunity is not a
+    meaningful concept the way a platform-wide `Signal` is."""
+
+    id: UUID = Field(default_factory=uuid4)
+    organization_id: str
+    workspace_id: str | None = None
+    opportunity_type: EnterpriseOpportunityType
+    market: str
+    title: str
+    summary: str
+    confidence: float = Field(ge=0, le=1)
+    supporting_signal_ids: list[str] = Field(default_factory=list)
+    supporting_consensus_id: str | None = None
+    related_dataset_id: str | None = None
+    related_record_id: str | None = None
+    status: EnterpriseOpportunityStatus = EnterpriseOpportunityStatus.PENDING
+    reviewed_by: str | None = None
+    reviewed_at: datetime | None = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)

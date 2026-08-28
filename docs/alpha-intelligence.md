@@ -18,9 +18,11 @@ include. Milestone 9 (tenant isolation retrofit — cross-org data-visibility fi
 Alpha* endpoint, `ModelRoutingPolicy`, `RetentionPolicy`, `organization_id` readiness on core
 trading tables) is implemented at the *application* layer only — no database-level Row Level
 Security backstop yet; see section 11.1/11.5/11.6 for the exact line. Milestone 10
-(enterprise-specific Chief Trading Agent overlays, database-level RLS) is architecture +
-roadmap only — not yet built. Do not assume any capability described here beyond the
-"Implemented" sections actually exists in the codebase yet.
+(Enterprise Opportunity Engine, Enterprise-specific Chief Trading Agent chat integration,
+Enterprise Digital Twin pipeline overlay) is implemented — see section 11.7 for exactly what
+that does and does not include; database-level RLS remains unbuilt. Do not assume any
+capability described here beyond the "Implemented" sections actually exists in the codebase
+yet.
 
 ## 1. Where this sits in the pipeline
 
@@ -127,7 +129,7 @@ can ship.
 | 7 | Chief Trading Agent full integration — AlphaSignal/AlphaConsensus feedback into trade generation, Overnight Intelligence Brief, Overview dashboard | **Implemented** |
 | 8 | Enterprise Data Platform foundation — Workspace, connectors, admin onboarding UI | **Implemented (foundation)** |
 | 9 | Tenant isolation retrofit — cross-org data-visibility fix on every Alpha* endpoint, model routing policy, retention policy, `organization_id` readiness on core trading tables | **Implemented (application-layer)** |
-| 10 | Enterprise-specific Chief Trading Agent + Enterprise Digital Twin overlays + Opportunity Engine | Planned |
+| 10 | Enterprise-specific Chief Trading Agent chat integration + Enterprise Digital Twin pipeline overlay + Opportunity Engine | **Implemented** |
 
 AlphaImpact through the Chief Trading Agent integration (2-7) are sequenced before the
 Enterprise Data Platform (8-10) deliberately: they deliver real value against today's shared
@@ -686,7 +688,8 @@ once per boot/full research cycle, not on a fixed schedule); brief-to-brief diff
 changed since yesterday's brief").
 
 ## 11. Enterprise Data Platform (foundation implemented — Milestone 8; tenant isolation
-implemented at the application layer — Milestone 9; Milestone 10 planned)
+implemented at the application layer — Milestone 9; Opportunity Engine/Enterprise CTA/Digital
+Twin overlay implemented — Milestone 10)
 
 **Milestone 8 delivers a genuine, testable foundation**: an admin can register a `Workspace`,
 register an `EnterpriseDataSource`, run it through a real `BaseEnterpriseDataConnector`
@@ -842,13 +845,16 @@ llm.py`) is the enforcement primitive: wraps a primary (external) and fallback (
 says to use. `GET/POST/DELETE /admin/model-routing-policies` is the admin CRUD surface,
 gated by `admin.model_routing_policy`.
 
-**Honest about what this is not**: nothing in the codebase constructs a `PolicyGatedLLMProvider`
-with a real, non-trivial `RoutingDecision` today — no agent call site (`ChatAgent`, the
-Chief Trading Agent, any fundamental/quant agent) classifies the content it's about to send an
-LLM, because no agent reads a classified `EnterpriseRecordRow` into its prompt yet (that
-integration — enterprise data actually flowing into agent reasoning — is Milestone 10's job).
-The engine and the gated provider are real, tested infrastructure with no live caller yet, not
-theater: the day an agent starts reading `CUSTOMER_RESTRICTED` data, this is what it calls.
+**Update (Milestone 10)**: `ModelRoutingEngine` now has a real live caller —
+`ChatAgent._enterprise_data_query` (section 11.7 below) evaluates it per dataset before
+deciding whether that dataset's content may appear in the facts handed to
+`self.llm.complete()`, withholding (never silently including) anything a resolved
+`RoutingDecision` denies. `PolicyGatedLLMProvider` itself (the provider-swapping primitive)
+still has no live caller — the chat tool enforces the policy by deciding what goes *into* the
+prompt rather than by swapping which `LLMProvider` handles it, which is provider-agnostic and
+arguably the more robust enforcement point regardless of which LLM backend is configured. No
+fundamental/quant agent or the Chief Trading Agent itself reads a classified
+`EnterpriseRecordRow` into its own reasoning yet — only the chat tool does.
 
 ### 11.6 Retention policy (implemented — Milestone 9)
 
@@ -882,7 +888,81 @@ depends on this dataset" the way `admin/data-feeds/dependency-map` does for the 
 admin UI for `ModelRoutingPolicy`/`RetentionPolicy` (API-only today — no dashboard page yet);
 and the broader data-loss-prevention posture (logs, monitoring payloads, cross-organization
 vector search never leaking one customer's confidential data into another's outputs) the
-original plan described. All of this is Milestone 10+ scope.
+original plan described. All of this remains future scope.
+
+### 11.7 Enterprise Opportunity Engine + Enterprise-specific Chief Trading Agent + Enterprise
+Digital Twin overlay (implemented — Milestone 10)
+
+**Implemented — Opportunity Engine**: `EnterpriseOpportunity`
+(`packages/schemas/schemas/enterprise.py`) — a candidate opportunity drafted by
+cross-referencing an organization's own `POSITION`/`PORTFOLIO`-domain enterprise records
+against the Alpha Intelligence Layer's `Signal`s/`ConsensusView`s, always human-reviewed
+(`PENDING`/`APPROVED`/`REJECTED`, the same posture `LessonProposal` already establishes for
+AlphaMemory — nothing here is ever auto-executed into a trade or position change). Unlike
+every other Alpha\*/enterprise table, `organization_id` is **required**, not nullable: an
+opportunity is inherently derived from one organization's own data, so there is no meaningful
+platform-wide row. `EnterpriseOpportunityEngine`
+(`services/enterprise_data/enterprise_data_service/opportunity.py`) is pure — zero I/O,
+deterministic, exhaustively unit-tested (`tests/enterprise_data/test_opportunity.py`) — and
+detects exactly two opportunity shapes: `HEDGE_MISALIGNED_POSITION` (the organization holds a
+position in a market where the current `ConsensusView` leans meaningfully the opposite
+direction at high confidence — divergence ≥ 0.3, confidence ≥ 0.6, both documented, tunable
+judgment calls) and `NEW_POSITION_HIGH_CONVICTION_SIGNAL` (a high-materiality — ≥ 65, a few
+points above AlphaSignal's own 60 default, since this drives a human-facing capital
+recommendation — clearly-directional `Signal` in a market the organization holds no position
+in at all). A position record's `row_data` is assumed to carry `market`/`instrument` and
+optionally `direction`/`quantity` — there is no enforced schema for enterprise records, so a
+record missing a recognizable market field is skipped defensively, never guessed at.
+`AppState.generate_enterprise_opportunities(organization_id=...)` does the I/O: loads the
+organization's `POSITION`/`PORTFOLIO` datasets and records, the organization's recent
+signals/consensus, runs the engine, and persists+publishes (`OPPORTUNITY_PROPOSED`) every
+candidate. `GET/POST /alpha/enterprise/opportunities*` (`enterprise_opportunities.view`/
+`.generate`/`.review`) is the API, always scoped to the caller's own resolved organization
+(`resolve_organization_scope`/`record_is_visible`, the same Milestone 9 helpers every other
+Alpha\* get-by-id endpoint uses) — there is no platform-wide opportunity feed to fall back to.
+A dashboard tab (`apps/web/components/alpha-intelligence/OpportunitiesTable.tsx`, under
+"Alpha Intelligence → Opportunities") lists/generates/reviews.
+
+**Implemented — Enterprise-specific Chief Trading Agent**: a new chat topic,
+`ChatAgent._enterprise_data_query` (`apps/api/api_app/chat_agent.py`, routed from phrasing
+like "my data"/"our position"/"enterprise data", gated by `enterprise_data.query`), answers
+using the caller's own organization's registered enterprise datasets — the "Enterprise-specific
+Chief Trading Agent" from the original plan, and the first real caller `ModelRoutingEngine`
+(section 11.5) has had since it shipped in Milestone 9 (see that section's "Update (Milestone
+10)" note for exactly how). Each dataset's resolved `ModelRoutingPolicy` decision gates whether
+its content is described or withheld in the response — a `CUSTOMER_RESTRICTED` dataset with no
+organization override defaults to withheld and says why, never silently included in the facts
+handed to `self.llm.complete()`. **Honest about scope**: this is scoped by organization only,
+not by fine-grained per-dataset `EnterpriseDataEntitlement` grants — section 11.2 already
+flagged that non-admin, per-dataset entitlement enforcement isn't wired into any read path yet;
+this reuses that same limitation rather than solving it here. A caller sees every dataset their
+organization has registered, not only ones they were specifically entitled to.
+
+**Implemented — Enterprise Digital Twin overlay**: `GET /alpha/enterprise/pipeline-overlay`
+(`enterprise_data.query`) returns the same public pipeline digital twin `GET
+/fundamentals/pipeline/graph` returns, plus `overlay.assets` — the caller's own organization's
+`ASSET`/`FACILITY`-domain enterprise records that name a real node in the graph, pinned onto
+it. Tenant-isolated (only the caller's own resolved organization's datasets; an
+unresolvable-organization caller gets the public graph with an empty overlay, never an error)
+and never merged into the public graph object itself.
+`PipelineOverlayPoint.from_record`/`build_overlay`
+(`services/enterprise_data/enterprise_data_service/pipeline_overlay.py`) are pure parsing —
+zero I/O — assuming a record's `row_data` carries `pipeline_node_id` (required) and optionally
+`label`; a record naming an unknown node id, or missing the field entirely, is skipped
+defensively. The pipeline map page (`apps/web/components/pipeline-map/PipelineMap.tsx`) gained
+a "Show my enterprise assets" toggle that fetches this endpoint and renders each asset as a
+marker pinned to its node.
+
+**Not yet built**: a scheduled/automatic opportunity-generation cadence (admin/user-triggered
+only, via `POST /alpha/enterprise/opportunities/generate`); opportunity types beyond the two
+documented above (no volatility/curve-shape/basis-specific opportunity detection); the
+Enterprise-specific Chief Trading Agent integrated into the Chief Trading Agent's own
+trade-generation reasoning itself (today it is a standalone chat topic, not wired into
+`ChiefTradingAgent`/`InvestmentCommittee`); fine-grained per-dataset entitlement enforcement on
+either the chat tool or the pipeline overlay (both scoped by organization only, per above);
+`FACILITY`-domain overlay fields beyond a single pinned point (no polygon/area assets, no
+per-asset detail panel); and real database-level Row Level Security, which remains the one
+piece of the original Milestone 9/10 scope not built anywhere in this codebase.
 
 ## 12. Transparency and explainability
 

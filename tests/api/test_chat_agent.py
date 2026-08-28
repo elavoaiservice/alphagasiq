@@ -535,3 +535,151 @@ async def test_overnight_brief_declined_without_permission(monkeypatch, user):
     assert result.access_granted is False
     assert result.tool_used == "overnight_brief"
     assert "alpha_brief.view" in result.content
+
+
+class _FakeEnterpriseRepo:
+    """Minimal stand-in for `Repository`'s enterprise-data read methods used by
+    `ChatAgent._enterprise_data_query` -- returns whatever dataset/policy dicts a
+    test sets up, without a real database."""
+
+    def __init__(self, *, datasets=None, policies=None):
+        self.datasets = datasets or []
+        self.policies = policies or []
+
+    async def list_enterprise_datasets(self, *, organization_id):
+        return [d for d in self.datasets if d["organization_id"] == organization_id]
+
+    async def list_model_routing_policies(self, *, organization_id):
+        return [p for p in self.policies if p["organization_id"] in (organization_id, None)]
+
+
+class _EnterpriseDataState(_FakeState):
+    def __init__(self, *, datasets=None, policies=None):
+        super().__init__()
+        from enterprise_data_service import ModelRoutingEngine
+
+        self.repo = _FakeEnterpriseRepo(datasets=datasets, policies=policies)
+        self.model_routing_engine = ModelRoutingEngine()
+
+
+async def test_enterprise_data_query_routes_and_requires_permission(monkeypatch, user):
+    async def fake_permissions(_user, _state):
+        return set()
+
+    monkeypatch.setattr(chat_agent_module, "get_effective_permissions", fake_permissions)
+    agent = ChatAgent(llm=MockLLMProvider())
+
+    # _FakeState has no `repo` attribute -- a wrongly-dispatched tool call would
+    # raise AttributeError instead of returning a declined result.
+    result = await agent.ask("What is in my enterprise data?", _FakeState(), user)
+
+    assert result.access_granted is False
+    assert result.tool_used == "enterprise_data_query"
+    assert "enterprise_data.query" in result.content
+
+
+async def test_enterprise_data_query_declines_when_org_unresolvable(monkeypatch, user):
+    async def fake_permissions(_user, _state):
+        return {"enterprise_data.query"}
+
+    async def fake_resolve(_user, _state):
+        return None
+
+    monkeypatch.setattr(chat_agent_module, "get_effective_permissions", fake_permissions)
+    monkeypatch.setattr(chat_agent_module, "resolve_organization_id", fake_resolve)
+    agent = ChatAgent(llm=MockLLMProvider())
+
+    result = await agent.ask("What is in my enterprise data?", _EnterpriseDataState(), user)
+
+    assert result.access_granted is True
+    assert result.tool_used == "enterprise_data_query"
+    assert "can't identify your organization" in result.content
+
+
+async def test_enterprise_data_query_withholds_data_blocked_by_routing_policy(monkeypatch, user):
+    """The core Milestone 10 integration: a `CUSTOMER_RESTRICTED` dataset with no
+    `ModelRoutingPolicy` override defaults to blocked (Milestone 9's
+    `ModelRoutingEngine`), so its content is named but withheld -- never
+    silently included in the facts handed to the LLM."""
+
+    async def fake_permissions(_user, _state):
+        return {"enterprise_data.query"}
+
+    async def fake_resolve(_user, _state):
+        return "org-a"
+
+    monkeypatch.setattr(chat_agent_module, "get_effective_permissions", fake_permissions)
+    monkeypatch.setattr(chat_agent_module, "resolve_organization_id", fake_resolve)
+    agent = ChatAgent(llm=MockLLMProvider())
+
+    state = _EnterpriseDataState(
+        datasets=[
+            {
+                "id": "ds-1",
+                "organization_id": "org-a",
+                "name": "positions",
+                "domain": "POSITION",
+                "classification": "CUSTOMER_RESTRICTED",
+                "row_count": 5,
+            },
+            {
+                "id": "ds-2",
+                "organization_id": "org-a",
+                "name": "wells",
+                "domain": "ASSET",
+                "classification": "PUBLIC",
+                "row_count": 3,
+            },
+        ],
+        policies=[],
+    )
+
+    result = await agent.ask("What is in my enterprise data?", state, user)
+
+    assert result.access_granted is True
+    assert result.tool_used == "enterprise_data_query"
+    assert "withheld" in result.content
+    assert "positions" in result.content
+    assert "wells" in result.content
+    assert result.freshness == {"dataset_count": 2, "withheld_count": 1}
+
+
+async def test_enterprise_data_query_includes_data_allowed_by_org_override(monkeypatch, user):
+    async def fake_permissions(_user, _state):
+        return {"enterprise_data.query"}
+
+    async def fake_resolve(_user, _state):
+        return "org-a"
+
+    monkeypatch.setattr(chat_agent_module, "get_effective_permissions", fake_permissions)
+    monkeypatch.setattr(chat_agent_module, "resolve_organization_id", fake_resolve)
+    agent = ChatAgent(llm=MockLLMProvider())
+
+    state = _EnterpriseDataState(
+        datasets=[
+            {
+                "id": "ds-1",
+                "organization_id": "org-a",
+                "name": "positions",
+                "domain": "POSITION",
+                "classification": "CUSTOMER_RESTRICTED",
+                "row_count": 5,
+            }
+        ],
+        policies=[
+            {
+                "organization_id": "org-a",
+                "data_classification": "CUSTOMER_RESTRICTED",
+                "allow_external_llm_processing": True,
+                "allowed_provider": None,
+                "allowed_region": None,
+                "logging_allowed": True,
+            }
+        ],
+    )
+
+    result = await agent.ask("What is in my enterprise data?", state, user)
+
+    assert result.access_granted is True
+    assert "withheld" not in result.content
+    assert result.freshness == {"dataset_count": 1, "withheld_count": 0}

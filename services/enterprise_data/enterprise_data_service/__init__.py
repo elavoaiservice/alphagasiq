@@ -8,6 +8,8 @@ from .connector import (
     build_connector,
 )
 from .model_routing import ModelRoutingEngine, RoutingDecision
+from .opportunity import EnterpriseOpportunityEngine, EnterprisePosition, OpportunityCandidate
+from .pipeline_overlay import PipelineOverlayPoint, build_overlay
 from .retention import RetentionEngine
 
 __all__ = [
@@ -21,4 +23,9 @@ __all__ = [
     "ModelRoutingEngine",
     "RoutingDecision",
     "RetentionEngine",
+    "EnterpriseOpportunityEngine",
+    "EnterprisePosition",
+    "OpportunityCandidate",
+    "PipelineOverlayPoint",
+    "build_overlay",
 ]

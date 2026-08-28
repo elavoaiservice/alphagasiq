@@ -351,13 +351,15 @@ Agents — all six components (AlphaSignal™/AlphaImpact™/AlphaConsensus™/A
 AlphaMemory™/AlphaReplay™) plus their integration back into the Chief Trading Agent
 (AlphaSignal/AlphaConsensus feedback into trade generation, the Overnight Intelligence Brief,
 an Overview dashboard) are now implemented, plus the multi-tenant Enterprise Data Platform
-(Workspace, one real connector, admin onboarding UI) and a tenant-isolation retrofit
+(Workspace, one real connector, admin onboarding UI), a tenant-isolation retrofit
 (cross-organization data-visibility fix on every Alpha* endpoint, `ModelRoutingPolicy`,
 `RetentionPolicy`, `organization_id` schema readiness on core trading tables) — application-
-layer only, no database-level Row Level Security yet.** See `docs/alpha-intelligence.md` for
-the full target architecture and what's still planned (Milestone 10: enterprise-specific Chief
-Trading Agent overlays, database-level RLS), sequenced across 10 milestones the same
-incremental way the access-model spec was.
+layer only, no database-level Row Level Security yet — and the Enterprise Opportunity Engine
++ Enterprise-specific Chief Trading Agent chat integration + Enterprise Digital Twin pipeline
+overlay.** All 10 milestones of the original roadmap are now implemented; see
+`docs/alpha-intelligence.md` for the full target architecture and the one piece still
+genuinely unbuilt (real database-level Row Level Security), sequenced across those 10
+milestones the same incremental way the access-model spec was.
 AlphaSignal
 (new `services/alpha` package) is a deterministic materiality engine
 (`alpha_service.materiality.MaterialityEngine`, in the same pure-function/exhaustively-tested
@@ -529,14 +531,45 @@ provider and how long data may be retained — `ModelRoutingEngine`/`RetentionEn
 (`services/enterprise_data/enterprise_data_service/`) resolve policy purely (organization
 override winning over a platform default), `PolicyGatedLLMProvider`
 (`packages/agent-sdk/agent_sdk/llm.py`) and `AppState.apply_retention_policy()` are the real
-enforcement primitives — honest that no agent call site constructs a `PolicyGatedLLMProvider`
-with a real classification yet, since no agent reads classified enterprise data into a prompt
-today (Milestone 10's job). Exposed via `/admin/model-routing-policies`/
+enforcement primitives — `PolicyGatedLLMProvider` itself (provider-swapping) still has no live
+caller, but `ModelRoutingEngine` gained one in Milestone 10 (below: the Enterprise-specific
+Chief Trading Agent chat tool). Exposed via `/admin/model-routing-policies`/
 `/admin/retention-policies(/apply)` (new `admin.model_routing_policy`/`admin.retention_policy`
 permissions) — API-only, no admin UI yet. Finally, `trade_ideas`/`committee_decisions`/
 `risk_checks`/`approvals` each gained a nullable `organization_id` column that now round-trips
 from `TradeIdea.organization_id` through `AppState.submit_trade_idea()` — schema readiness
 only, since every trade idea today still comes from the single process-wide `AppState`'s
-system-generated research cycle, never a per-organization submission path. The only planned
-work left in `docs/alpha-intelligence.md` is Milestone 10 — real database-level RLS enforcement
-and enterprise-specific Chief Trading Agent overlays.
+system-generated research cycle, never a per-organization submission path.
+
+**Milestone 10 (Enterprise Opportunity Engine + Enterprise-specific Chief Trading Agent chat
+integration + Enterprise Digital Twin pipeline overlay) completes the original 10-milestone
+Alpha Intelligence Layer roadmap.** `EnterpriseOpportunity`
+(`packages/schemas/schemas/enterprise.py`, `organization_id` **required**, not nullable — an
+opportunity is inherently one organization's own, unlike every other Alpha*/enterprise table)
+is a human-reviewed candidate opportunity `EnterpriseOpportunityEngine`
+(`services/enterprise_data/enterprise_data_service/opportunity.py`, pure, zero I/O) drafts by
+cross-referencing an organization's own `POSITION`/`PORTFOLIO`-domain enterprise records
+against recent `Signal`s/`ConsensusView`s — `HEDGE_MISALIGNED_POSITION` (a held position runs
+counter to a high-confidence consensus view) or `NEW_POSITION_HIGH_CONVICTION_SIGNAL` (a
+high-materiality directional signal with no existing position); never auto-executed, the same
+"AI-drafted but always human-reviewed" posture `LessonProposal` already establishes.
+`AppState.generate_enterprise_opportunities()` does the I/O; `GET/POST
+/alpha/enterprise/opportunities*` (`enterprise_opportunities.view`/`.generate`/`.review`) is
+the API, tenant-isolated via the same `resolve_organization_scope`/`record_is_visible`
+Milestone 9 helpers; a new "Opportunities" dashboard tab lists/generates/reviews. A new chat
+topic, `ChatAgent._enterprise_data_query` (gated by new `enterprise_data.query`), is the
+Enterprise-specific Chief Trading Agent: answers using the caller's own organization's
+registered enterprise datasets, and is the first real caller `ModelRoutingEngine` has had —
+each dataset's resolved `ModelRoutingPolicy` decision gates whether its content is described
+or withheld, never silently included in the facts handed to the LLM. `GET
+/alpha/enterprise/pipeline-overlay` is the Enterprise Digital Twin overlay: the public
+pipeline graph plus the caller's own organization's `ASSET`/`FACILITY`-domain enterprise
+records pinned onto real nodes in it (`PipelineOverlayPoint.from_record`/`build_overlay`, pure)
+— the pipeline map page gained a "Show my enterprise assets" toggle. **Honest about scope**:
+both the chat tool and the pipeline overlay are scoped by organization only, not by
+fine-grained per-dataset `EnterpriseDataEntitlement` grants (a gap Milestone 8's own write-up
+already flagged and this doesn't solve); opportunity generation is admin/user-triggered only,
+no scheduled cadence; and the Enterprise-specific Chief Trading Agent is a standalone chat
+topic, not yet wired into `ChiefTradingAgent`/`InvestmentCommittee`'s own reasoning. The only
+piece of the original Milestone 9/10 scope not built anywhere in this codebase is real
+database-level Row Level Security.

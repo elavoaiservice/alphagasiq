@@ -13,6 +13,7 @@ from schemas import (
     EnterpriseDataEntitlement,
     EnterpriseDataset,
     EnterpriseDataSource,
+    EnterpriseOpportunity,
     ImpactAnalysis,
     IntelligenceBrief,
     InvestmentCommitteeDecision,
@@ -52,6 +53,7 @@ from .models import (
     EnterpriseDataEventRow,
     EnterpriseDatasetRow,
     EnterpriseDataSourceRow,
+    EnterpriseOpportunityRow,
     EnterpriseRecordRow,
     FeatureRow,
     ImpactAnalysisRow,
@@ -151,6 +153,10 @@ _PERMISSION_KEYS = [
     "alpha_memory.review",
     "alpha_replay.view",
     "alpha_brief.view",
+    "enterprise_data.query",
+    "enterprise_opportunities.view",
+    "enterprise_opportunities.generate",
+    "enterprise_opportunities.review",
 ]
 
 # Permissions reserved for SUPER_ADMIN: the system-level/risk/model/agent-optimization
@@ -190,6 +196,9 @@ _ROLE_PERMISSIONS: dict[str, list[str]] = {
         "alpha_memory.view",
         "alpha_replay.view",
         "alpha_brief.view",
+        "enterprise_data.query",
+        "enterprise_opportunities.view",
+        "enterprise_opportunities.generate",
         "trading_recommendations.challenge",
         "chief_agent.chat",
         "portfolio.view",
@@ -216,6 +225,9 @@ _ROLE_PERMISSIONS: dict[str, list[str]] = {
         "alpha_memory.review",
         "alpha_replay.view",
         "alpha_brief.view",
+        "enterprise_data.query",
+        "enterprise_opportunities.view",
+        "enterprise_opportunities.review",
         "chief_agent.chat",
         "portfolio.view",
         "risk.view",
@@ -241,6 +253,9 @@ _ROLE_PERMISSIONS: dict[str, list[str]] = {
         "alpha_memory.review",
         "alpha_replay.view",
         "alpha_brief.view",
+        "enterprise_data.query",
+        "enterprise_opportunities.view",
+        "enterprise_opportunities.review",
         "trading_recommendations.challenge",
         "chief_agent.chat",
         "portfolio.view",
@@ -265,6 +280,8 @@ _ROLE_PERMISSIONS: dict[str, list[str]] = {
         "alpha_memory.view",
         "alpha_replay.view",
         "alpha_brief.view",
+        "enterprise_data.query",
+        "enterprise_opportunities.view",
         "portfolio.view",
         "risk.view",
         "chief_agent.chat",
@@ -806,6 +823,27 @@ def _model_routing_policy_row_to_dict(row: ModelRoutingPolicyRow) -> dict:
         "created_by": row.created_by,
         "created_at": row.created_at,
         "updated_at": row.updated_at,
+    }
+
+
+def _enterprise_opportunity_row_to_dict(row: EnterpriseOpportunityRow) -> dict:
+    return {
+        "id": row.id,
+        "organization_id": row.organization_id,
+        "workspace_id": row.workspace_id,
+        "opportunity_type": row.opportunity_type,
+        "market": row.market,
+        "title": row.title,
+        "summary": row.summary,
+        "confidence": row.confidence,
+        "supporting_signal_ids": row.supporting_signal_ids,
+        "supporting_consensus_id": row.supporting_consensus_id,
+        "related_dataset_id": row.related_dataset_id,
+        "related_record_id": row.related_record_id,
+        "status": row.status,
+        "reviewed_by": row.reviewed_by,
+        "reviewed_at": row.reviewed_at,
+        "created_at": row.created_at,
     }
 
 
@@ -3488,3 +3526,72 @@ class SqlAppRepository:
                 await session.delete(row)
             await session.commit()
             return len(rows)
+
+    # -- Enterprise Opportunity Engine (docs/alpha-intelligence.md section 11.7, Milestone 10) --
+
+    async def save_enterprise_opportunity(self, opportunity: EnterpriseOpportunity) -> None:
+        row = EnterpriseOpportunityRow(
+            id=str(opportunity.id),
+            organization_id=opportunity.organization_id,
+            workspace_id=opportunity.workspace_id,
+            opportunity_type=opportunity.opportunity_type.value,
+            market=opportunity.market,
+            title=opportunity.title,
+            summary=opportunity.summary,
+            confidence=opportunity.confidence,
+            supporting_signal_ids=opportunity.supporting_signal_ids,
+            supporting_consensus_id=opportunity.supporting_consensus_id,
+            related_dataset_id=opportunity.related_dataset_id,
+            related_record_id=opportunity.related_record_id,
+            status=opportunity.status.value,
+            reviewed_by=opportunity.reviewed_by,
+            reviewed_at=_naive_utc(opportunity.reviewed_at) if opportunity.reviewed_at is not None else None,
+            created_at=_naive_utc(opportunity.created_at),
+        )
+        async with self.session_factory() as session:
+            session.add(row)
+            await session.commit()
+
+    async def list_enterprise_opportunities(
+        self, *, organization_id: str, status: str | None = None, limit: int = 50
+    ) -> list[dict]:
+        """`organization_id` is required (not optional/nullable) -- unlike every
+        Alpha* list method, there is no platform-wide opportunity feed to fall
+        back to; a caller always sees only their own organization's rows."""
+        query = (
+            select(EnterpriseOpportunityRow)
+            .where(EnterpriseOpportunityRow.organization_id == organization_id)
+            .order_by(EnterpriseOpportunityRow.created_at.desc())
+            .limit(limit)
+        )
+        if status is not None:
+            query = query.where(EnterpriseOpportunityRow.status == status)
+        async with self.session_factory() as session:
+            rows = (await session.execute(query)).scalars().all()
+        return [_enterprise_opportunity_row_to_dict(r) for r in rows]
+
+    async def get_enterprise_opportunity(self, opportunity_id: str) -> dict | None:
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(
+                    select(EnterpriseOpportunityRow).where(EnterpriseOpportunityRow.id == opportunity_id)
+                )
+            ).scalar_one_or_none()
+        return _enterprise_opportunity_row_to_dict(row) if row is not None else None
+
+    async def update_enterprise_opportunity_status(
+        self, opportunity_id: str, *, status: str, reviewed_by: str, reviewed_at: datetime
+    ) -> dict | None:
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(
+                    select(EnterpriseOpportunityRow).where(EnterpriseOpportunityRow.id == opportunity_id)
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            row.status = status
+            row.reviewed_by = reviewed_by
+            row.reviewed_at = _naive_utc(reviewed_at)
+            await session.commit()
+            return _enterprise_opportunity_row_to_dict(row)

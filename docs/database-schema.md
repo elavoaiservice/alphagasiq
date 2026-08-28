@@ -371,6 +371,16 @@ No column for chain-of-thought. `reasoning_summary` is a concise, human-auditabl
   nullable-organization_id platform-default convention as `model_routing_policies`. id,
   organization_id (nullable FK), data_classification, retention_days (nullable — `NULL` means
   retain indefinitely), created_by (nullable), created_at, updated_at.
+- **`enterprise_opportunities`** — a human-reviewed candidate opportunity
+  `EnterpriseOpportunityEngine` drafted (docs/alpha-intelligence.md section 11.7, Milestone
+  10), never auto-executed. Unlike every other Alpha\*/enterprise table, organization_id is
+  **required**, not nullable — an opportunity is inherently derived from one organization's own
+  data, so there is no meaningful platform-wide row. id, organization_id (FK, required),
+  workspace_id (nullable), opportunity_type (`HEDGE_MISALIGNED_POSITION`/
+  `NEW_POSITION_HIGH_CONVICTION_SIGNAL`), market, title, summary, confidence,
+  supporting_signal_ids (jsonb array), supporting_consensus_id (nullable), related_dataset_id
+  (nullable), related_record_id (nullable), status (`PENDING`/`APPROVED`/`REJECTED`),
+  reviewed_by (nullable), reviewed_at (nullable), created_at.
 
 ## 5. TimescaleDB Specifics
 
