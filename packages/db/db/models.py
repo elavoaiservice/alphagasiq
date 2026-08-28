@@ -626,13 +626,18 @@ class SignalRow(Base):
 class SignalBaselineRow(Base):
     """The last-known value + rolling window per `SignalDetector` key (e.g.
     `"STORAGE.forecast_bcf"`), so AlphaSignal can diff cycle-over-cycle without holding
-    that state in the process-wide `AppState` singleton itself."""
+    that state in the process-wide `AppState` singleton itself. `signal_emitted_history`
+    is the bounded recent-firing history `SignalDetector._novelty_score()` reads to
+    compute `Signal.novelty_score` -- persisted alongside `rolling_window` so novelty
+    genuinely accumulates across process restarts instead of resetting to "never seen
+    before" every boot."""
 
     __tablename__ = "alpha_signal_baselines"
 
     key: Mapped[str] = mapped_column(String, primary_key=True)
     value: Mapped[float] = mapped_column(Float, nullable=False)
     rolling_window: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    signal_emitted_history: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     observed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
 
 

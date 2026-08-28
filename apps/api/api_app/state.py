@@ -878,9 +878,27 @@ class AppState:
         raw_baselines = await self.repo.get_signal_baselines()
         baselines = {
             key: BaselineSnapshot(
-                key=key, value=b["value"], rolling_window=b["rolling_window"], observed_at=b["observed_at"]
+                key=key,
+                value=b["value"],
+                rolling_window=b["rolling_window"],
+                signal_emitted_history=b.get("signal_emitted_history", []),
+                observed_at=b["observed_at"],
             )
             for key, b in raw_baselines.items()
+        }
+        portfolio_exposure = sum(
+            abs(pos.quantity) * self.mark_price(instrument)
+            for instrument, pos in self.paper_adapter.portfolio.positions.items()
+        )
+        risk_limit_usage = {
+            "DAILY_LOSS": (
+                self.current_daily_loss / self.risk_limits.max_daily_loss
+                if self.risk_limits.max_daily_loss
+                else 0.0
+            ),
+            "DRAWDOWN": (
+                self.current_drawdown / self.risk_limits.max_drawdown if self.risk_limits.max_drawdown else 0.0
+            ),
         }
         signals, updated_baselines = self.alpha_signal_detector.detect(
             research_result=research_result,
@@ -889,10 +907,17 @@ class AppState:
             pipeline_result=pipeline_result,
             market_curve=self.market_curve,
             baselines=baselines,
+            portfolio_exposure=portfolio_exposure,
+            risk_limit_usage=risk_limit_usage,
         )
         await self.repo.save_signal_baselines(
             {
-                key: {"value": snap.value, "rolling_window": snap.rolling_window, "observed_at": snap.observed_at}
+                key: {
+                    "value": snap.value,
+                    "rolling_window": snap.rolling_window,
+                    "signal_emitted_history": snap.signal_emitted_history,
+                    "observed_at": snap.observed_at,
+                }
                 for key, snap in updated_baselines.items()
             }
         )
@@ -1484,6 +1509,25 @@ class AppState:
                 )
             )
         return created
+
+    async def generate_enterprise_opportunities_for_all_organizations(self) -> dict[str, list[EnterpriseOpportunity]]:
+        """Milestone 10 follow-up (docs/alpha-intelligence.md section 11.7): the scheduled
+        cadence `generate_enterprise_opportunities()` itself never had -- that method was
+        (and still is) reachable admin/user-triggered only, via `POST /alpha/enterprise/
+        opportunities/generate`. This enumerates every distinct `organization_id` that has
+        registered at least one enterprise dataset (platform-wide `list_enterprise_datasets()`,
+        no `organization_id` filter) and runs opportunity generation for each -- called
+        periodically by `worker.py`, the same home the Chief Trading Agent's own periodic
+        research cycle already uses, rather than inventing a second scheduling mechanism.
+        An organization with no registered datasets is never iterated (nothing to
+        cross-reference against, same as calling `generate_enterprise_opportunities()` for it
+        directly would return `[]`)."""
+        all_datasets = await self.repo.list_enterprise_datasets()
+        organization_ids = sorted({d["organization_id"] for d in all_datasets})
+        results: dict[str, list[EnterpriseOpportunity]] = {}
+        for organization_id in organization_ids:
+            results[organization_id] = await self.generate_enterprise_opportunities(organization_id=organization_id)
+        return results
 
     async def review_enterprise_opportunity(self, opportunity_id: str, *, status: str, reviewed_by: str) -> dict | None:
         updated = await self.repo.update_enterprise_opportunity_status(

@@ -211,6 +211,68 @@ def test_cross_organization_caller_cannot_get_or_review_opportunity(client):
     assert cross_review.status_code == 404
 
 
+def test_generate_opportunities_for_all_organizations_covers_every_registered_org(client):
+    """#9: scheduled enterprise opportunity generation cadence (docs/alpha-intelligence.md
+    section 11.7 follow-up) -- `generate_enterprise_opportunities_for_all_organizations()`
+    is what `worker.py`'s periodic loop calls instead of leaving generation
+    admin/user-triggered only."""
+    import asyncio
+
+    from api_app import state as state_module
+    from schemas import ConsensusView, EnterpriseDataClassification, EnterpriseDataDomain, EnterpriseDataset
+
+    org_a = _activate_via_magic_link(client, "trader-h@company-h.com", "TRADER", "Company H")
+    org_b = _activate_via_magic_link(client, "trader-i@company-i.com", "TRADER", "Company I")
+    org_a_id = org_a["user"]["organization_id"]
+    org_b_id = org_b["user"]["organization_id"]
+
+    state = state_module._state
+    for org_id, market in ((org_a_id, "WAHA"), (org_b_id, "SOCAL")):
+        ds = EnterpriseDataset(
+            source_id="00000000-0000-0000-0000-000000000000",
+            organization_id=org_id,
+            name="positions",
+            domain=EnterpriseDataDomain.POSITION,
+            classification=EnterpriseDataClassification.CUSTOMER_POSITION_DATA,
+        )
+        asyncio.run(state.repo.save_enterprise_dataset(ds))
+        asyncio.run(state.repo.save_enterprise_records(str(ds.id), [{"market": market, "direction": "LONG"}]))
+        asyncio.run(
+            state.repo.save_consensus_view(
+                ConsensusView(
+                    consensus_type="PRICE",
+                    market=market,
+                    target="price",
+                    bull_probability=0.1,
+                    bear_probability=0.8,
+                    confidence=0.75,
+                    agreement_label="HIGH",
+                    agent_count=5,
+                    organization_id=org_id,
+                )
+            )
+        )
+
+    results = asyncio.run(state.generate_enterprise_opportunities_for_all_organizations())
+
+    assert org_a_id in results
+    assert org_b_id in results
+    assert len(results[org_a_id]) == 1
+    assert len(results[org_b_id]) == 1
+    assert results[org_a_id][0].organization_id == org_a_id
+    assert results[org_b_id][0].organization_id == org_b_id
+
+
+def test_generate_opportunities_for_all_organizations_is_empty_with_no_registered_datasets(client):
+    import asyncio
+
+    from api_app import state as state_module
+
+    state = state_module._state
+    results = asyncio.run(state.generate_enterprise_opportunities_for_all_organizations())
+    assert results == {}
+
+
 def test_pipeline_overlay_returns_public_graph_with_empty_overlay_for_dev_mode_caller(client):
     r = client.get("/api/v1/alpha/enterprise/pipeline-overlay", headers=_trader_headers(client))
     assert r.status_code == 200

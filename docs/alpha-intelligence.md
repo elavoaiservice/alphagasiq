@@ -166,8 +166,13 @@ stress-tests it, AlphaMemory remembers it.
 `ANOMALY`), `category`, `subcategory`, `source_ids`, `detected_at`, `effective_at`, `market`,
 `geography`, `asset_ids`, `headline`, `description`, `previous_value`, `current_value`,
 `absolute_change`, `percent_change`, `z_score`, `historical_percentile`,
-`materiality_score` (0-100), `novelty_score` (0-100, always `0.0` in Milestone 1 — a real
-recurrence-based heuristic is deferred), `confidence`, `direction` (`SignalDirection`:
+`materiality_score` (0-100), `novelty_score` (0-100, a real recurrence-based heuristic --
+see `_novelty_score` in `services/alpha/alpha_service/signal_detector.py`: how often this
+detector key has actually produced a materiality-passing signal over its bounded recent
+history, inverted, so a key that fires every cycle scores near 0 and a key with no
+history at all -- "never seen before" -- scores 100, the maximally novel case, not the
+least. Purely informational: it does not feed back into `materiality_score` itself, kept
+separate from the tuned four-component weighting), `confidence`, `direction` (`SignalDirection`:
 `BULLISH`/`BEARISH`/`NEUTRAL` — a new enum, distinct from `Direction`'s LONG/SHORT/SPREAD
 trade posture), `time_horizon`, `data_quality` (reuses `DataClassification`), `citations`
 (reuses `Citation`), `affected_agents`, `affected_business_functions`, `status`
@@ -208,13 +213,29 @@ cycle and vs. market consensus), `WEATHER_CHANGE` (total demand delta), `PRODUCT
 `DEMAND_CHANGE`, `LNG_CHANGE`, `POWER_CHANGE`, `PIPELINE_CONSTRAINT`, and a simplified
 `AGENT_DISAGREEMENT` check (a deterministic directional-lean comparison across Storage/
 Weather/Supply/Demand — explicitly *not* a true multi-model consensus/weighting engine; that
-is AlphaConsensus, section 6). Every other `SignalType` value exists on the schema for
-forward-compatibility but is not yet produced by this detector.
+is AlphaConsensus, section 6). A later pass added `PORTFOLIO_CHANGE` (live paper-portfolio
+total exposure, cycle-over-cycle) and `RISK_LIMIT_APPROACH` (how close `AppState.
+current_daily_loss`/`current_drawdown` are to their configured `RiskLimits`, expressed as a
+usage fraction per limit) — the latter deliberately bypasses `MaterialityEngine.score()`
+entirely (its magnitude/rarity components are calibrated for market percent-changes and
+z-scores, not "fraction of a fixed limit consumed"; `materiality_score` is instead the usage
+fraction itself, scaled to 0-100, with a provisional documented threshold of 70% usage before
+a signal fires — `_RISK_LIMIT_APPROACH_THRESHOLD_FRACTION`). Still not produced, and why:
+`NEWS_EVENT`/`CUSTOMER_DATA_CHANGE` need a source that actually refreshes cycle-over-cycle
+(`AppState.news_events` is set once at boot and never re-fetched; enterprise records have no
+polling loop) — natural follow-ups once NEWS_INTELLIGENCE is wired into orchestration and
+per-organization enterprise detection exists, respectively; `POSITION_CHANGE` is the same
+per-organization-loop problem; `REGULATORY_EVENT` has no data source anywhere in this
+codebase; `MODEL_DISAGREEMENT` would require running multiple Quantitative Team models per
+cycle instead of the one `ForecastingAgent` runs today, judged too invasive to bolt on here.
 
 **Integration** (`apps/api/api_app/state.py`): `AppState._run_alpha_signal_detection()` owns
 all the I/O the pure detector doesn't — loads `SignalBaselineRow`s via
 `SqlAppRepository.get_signal_baselines()`, calls `SignalDetector.detect()`, saves updated
-baselines and any new `SignalRow`s, publishes `SIGNAL_DETECTED` (or `SIGNAL_ESCALATED` when
+baselines and any new `SignalRow`s (also computing `portfolio_exposure` from the live paper
+portfolio and `risk_limit_usage` from `current_daily_loss`/`current_drawdown` vs.
+`risk_limits` for the two signal types above), publishes `SIGNAL_DETECTED` (or
+`SIGNAL_ESCALATED` when
 `materiality_score >= 85`) `DomainEvent`s, and appends to a bounded in-memory
 `AppState.recent_signals` cache (last 50) so the (synchronous) chat-tool dispatch methods in
 `chat_agent.py` can read the latest signals the same way every other tool method reads
@@ -431,7 +452,7 @@ dimensions `risk_service.scenarios.Scenario` already supports: `PRICE_SHOCK_PCT`
 `DEMAND_SHOCK_BCF_D`, `SUPPLY_SHOCK_BCF_D`, `VOLATILITY_MULTIPLIER`); `ScenarioVariable` (one
 composable shock factor — `geography`/`asset_id`/`duration` are accepted on the schema for
 forward compatibility with the full spec but not yet used by the engine, always `None` until
-that data model exists, the same honesty pattern as AlphaSignal's `novelty_score`);
+that data model exists, honestly documented as a placeholder rather than silently ignored);
 `ScenarioDefinition` (zero or more `base_scenario_ids` from `risk_service.scenarios.SCENARIOS`
 stacked with zero or more custom `ScenarioVariable`s); `ScenarioRunResult` (wraps
 `risk_service.scenarios.ScenarioResult` with composition metadata and persistence identity);
@@ -979,14 +1000,22 @@ defensively. The pipeline map page (`apps/web/components/pipeline-map/PipelineMa
 a "Show my enterprise assets" toggle that fetches this endpoint and renders each asset as a
 marker pinned to its node.
 
-**Not yet built**: a scheduled/automatic opportunity-generation cadence (admin/user-triggered
-only, via `POST /alpha/enterprise/opportunities/generate`); opportunity types beyond the two
-documented above (no volatility/curve-shape/basis-specific opportunity detection); fine-grained
-per-dataset entitlement enforcement on the chat tools or the pipeline overlay (all scoped by
-organization only, per above); `FACILITY`-domain overlay fields beyond a single pinned point (no
-polygon/area assets, no per-asset detail panel); and real database-level Row Level Security,
-which remains the one piece of the original Milestone 9/10 scope not built anywhere in this
-codebase.
+**Implemented — scheduled opportunity generation cadence** (follow-up to Milestone 10):
+`AppState.generate_enterprise_opportunities_for_all_organizations()` closes the "admin/
+user-triggered only" gap `generate_enterprise_opportunities()` used to leave open. It
+enumerates every distinct `organization_id` with at least one registered enterprise dataset
+(platform-wide `list_enterprise_datasets()`, no filter) and runs opportunity generation for
+each; `worker.py`'s existing periodic loop (the same one that re-runs the Chief Trading
+Agent's research cycle) calls it every interval. `POST /alpha/enterprise/opportunities/
+generate` remains available for an on-demand run in between scheduled cycles -- the scheduled
+cadence is additive, not a replacement for it.
+
+**Not yet built**: opportunity types beyond the two documented above (no volatility/
+curve-shape/basis-specific opportunity detection); fine-grained per-dataset entitlement
+enforcement on the chat tools or the pipeline overlay (all scoped by organization only, per
+above); `FACILITY`-domain overlay fields beyond a single pinned point (no polygon/area assets,
+no per-asset detail panel); and real database-level Row Level Security, which remains the one
+piece of the original Milestone 9/10 scope not built anywhere in this codebase.
 
 ## 12. Transparency and explainability
 

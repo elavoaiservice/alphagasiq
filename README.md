@@ -582,6 +582,9 @@ committee deliberation. A new chat topic, `ChatAgent._enterprise_trade_idea` (ga
 `enterprise_trading.generate`, TRADER only), triggers it. **Honest about scope**: both the
 data-query chat tool and the pipeline overlay are scoped by organization only, not by
 fine-grained per-dataset `EnterpriseDataEntitlement` grants (a gap Milestone 8's own write-up
-already flagged and this doesn't solve); opportunity generation is admin/user-triggered only, no
-scheduled cadence. The only piece of the original Milestone 9/10 scope not built anywhere in
-this codebase is real database-level Row Level Security.
+already flagged and this doesn't solve). `AppState.generate_enterprise_opportunities_for_all_
+organizations()` gives opportunity generation a real scheduled cadence -- `worker.py`'s
+existing periodic loop calls it every interval alongside the Chief Trading Agent's own
+research cycle, on top of the still-available on-demand `POST /alpha/enterprise/opportunities/
+generate`. The only piece of the original Milestone 9/10 scope not built anywhere in this
+codebase is real database-level Row Level Security.

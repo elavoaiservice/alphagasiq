@@ -48,6 +48,24 @@ async def run_forever() -> None:
             logger.info("Research cycle complete: %d trade idea(s)", len(result.trade_ideas))
         except Exception:
             logger.exception("Worker research cycle failed")
+
+        try:
+            # Milestone 10 follow-up (docs/alpha-intelligence.md section 11.7): opportunity
+            # generation previously had no scheduled cadence at all -- admin/user-triggered
+            # only. Same interval as the research cycle above is a provisional, documented
+            # choice (not derived from real customer usage patterns yet); decoupling it onto
+            # its own interval is a small follow-up if that ever proves too frequent/coarse.
+            opportunities_by_org = await state.generate_enterprise_opportunities_for_all_organizations()
+            total_generated = sum(len(v) for v in opportunities_by_org.values())
+            if opportunities_by_org:
+                logger.info(
+                    "Enterprise opportunity generation complete: %d organization(s), %d opportunity(ies)",
+                    len(opportunities_by_org),
+                    total_generated,
+                )
+        except Exception:
+            logger.exception("Worker enterprise opportunity generation failed")
+
         await asyncio.sleep(interval)
 
 

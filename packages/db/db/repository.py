@@ -2268,7 +2268,12 @@ class SqlAppRepository:
         async with self.session_factory() as session:
             rows = (await session.execute(select(SignalBaselineRow))).scalars().all()
         return {
-            r.key: {"value": r.value, "rolling_window": r.rolling_window, "observed_at": r.observed_at}
+            r.key: {
+                "value": r.value,
+                "rolling_window": r.rolling_window,
+                "signal_emitted_history": r.signal_emitted_history,
+                "observed_at": r.observed_at,
+            }
             for r in rows
         }
 
@@ -2279,6 +2284,7 @@ class SqlAppRepository:
                     key=key,
                     value=snapshot["value"],
                     rolling_window=snapshot["rolling_window"],
+                    signal_emitted_history=snapshot.get("signal_emitted_history", []),
                     observed_at=_naive_utc(snapshot["observed_at"]),
                 )
                 await session.merge(row)

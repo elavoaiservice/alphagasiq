@@ -254,7 +254,9 @@ No column for chain-of-thought. `reasoning_summary` is a concise, human-auditabl
   metric key (e.g. `"STORAGE.forecast_bcf"`), natural-key PK `key`, so
   `alpha_service.signal_detector.SignalDetector` can diff cycle-over-cycle without holding
   that state in the process-wide `AppState` singleton itself: key, value, rolling_window
-  (jsonb), observed_at.
+  (jsonb), signal_emitted_history (jsonb — bounded recent history of whether this key
+  produced a materiality-passing signal each cycle, read by `_novelty_score()` to compute
+  `Signal.novelty_score`), observed_at.
 - **`alpha_impact_analyses`** — one row per `ImpactAnalysis` AlphaImpact(TM) produced for a
   `Signal` (`signal_id`, FK to `alpha_signals`). id, signal_id, organization_id (nullable FK
   to `organizations`), event_type, physical_impact, supply_impact_bcf_day,
