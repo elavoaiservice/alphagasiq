@@ -113,6 +113,12 @@ create a `User` or `Organization` — see `docs/access-model.md` "No Self-Regist
 | GET | `/system/freshness` | per-provider freshness + stale flags |
 | GET | `/system/providers` | registered providers, classification, health |
 
+## Live Events (WebSocket, gap-closure follow-up, `docs/alpha-intelligence.md` section 13)
+
+| Method | Path | Notes |
+|---|---|---|
+| WS | `/ws/events?token=<jwt>` | Pushes `SIGNAL_DETECTED`/`SIGNAL_ESCALATED`/`TRADE_IDEA_CREATED`/`TRADE_APPROVED`/`TRADE_REJECTED`/`RISK_LIMIT_BREACHED`/`OPPORTUNITY_PROPOSED`/`INTELLIGENCE_BRIEF_GENERATED`/`CONSENSUS_DIVERGENCE_DETECTED` events, filtered to the caller's own organization (same `resolve_organization_scope`/`record_is_visible` rule every REST get-by-id endpoint enforces). Auth via `?token=` (a browser handshake can't carry an `Authorization` header) — missing/invalid closes the connection immediately. Each frame: `{event_id, event_type, occurred_at, payload}`. |
+
 ## Market Data
 
 | Method | Path | Notes |

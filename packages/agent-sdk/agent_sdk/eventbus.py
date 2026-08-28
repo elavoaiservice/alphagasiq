@@ -28,6 +28,9 @@ class EventBus(ABC):
     @abstractmethod
     def subscribe(self, event_type: str, handler: Handler) -> None: ...
 
+    @abstractmethod
+    def unsubscribe(self, event_type: str, handler: Handler) -> None: ...
+
 
 class InMemoryEventBus(EventBus):
     def __init__(self) -> None:
@@ -44,6 +47,14 @@ class InMemoryEventBus(EventBus):
 
     def subscribe(self, event_type: str, handler: Handler) -> None:
         self._handlers[event_type].append(handler)
+
+    def unsubscribe(self, event_type: str, handler: Handler) -> None:
+        """Reverses `subscribe` -- needed by any subscriber with a lifetime shorter
+        than the process (e.g. a WebSocket connection), so its handler doesn't stay
+        registered (and keep the connection's queue alive) forever after it closes."""
+        handlers = self._handlers.get(event_type)
+        if handlers is not None and handler in handlers:
+            handlers.remove(handler)
 
 
 def build_event_bus(*, impl: str, kafka_bootstrap_servers: str) -> EventBus:

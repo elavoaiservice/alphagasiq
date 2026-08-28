@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { apiGet } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
+import { useLiveEvents } from "@/lib/live-events-context";
 
 interface Signal {
   id: string;
@@ -32,6 +33,7 @@ function materialityLabel(score: number): string {
 
 export function SignalsTable() {
   const { token } = useAuth();
+  const { subscribe } = useLiveEvents();
   const [signals, setSignals] = useState<Signal[] | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -45,6 +47,21 @@ export function SignalsTable() {
         )
       );
   }, [token]);
+
+  useEffect(() => {
+    // Live-push worked example (docs/alpha-intelligence.md section 11.8): a new
+    // signal detected while this page is open is prepended immediately, no manual
+    // refresh needed. The event is already server-side filtered to this caller's
+    // organization by `GET /ws/events`, same as the initial fetch above.
+    return subscribe((event) => {
+      if (event.event_type !== "SIGNAL_DETECTED" && event.event_type !== "SIGNAL_ESCALATED") return;
+      const signal = event.payload as unknown as Signal;
+      setSignals((prev) => {
+        if (!prev || prev.some((s) => s.id === signal.id)) return prev;
+        return [signal, ...prev];
+      });
+    });
+  }, [subscribe]);
 
   if (message) return <p className="text-xs text-terminal-bear">{message}</p>;
   if (!signals) return <p className="text-xs text-terminal-muted">Loading…</p>;

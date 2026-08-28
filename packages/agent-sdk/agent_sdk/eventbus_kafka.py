@@ -72,6 +72,15 @@ class RedpandaEventBus(EventBus):
         if topic not in self._consumer_tasks:
             self._consumer_tasks[topic] = asyncio.get_event_loop().create_task(self._consume(topic))
 
+    def unsubscribe(self, event_type: str, handler: Handler) -> None:
+        """Reverses `subscribe`; leaves the topic's background consumer task running
+        (cheap to keep, and another subscriber may still be attached to it) --
+        only the handler itself stops receiving events."""
+        topic = topic_for_event_type(event_type)
+        handlers = self._handlers.get(topic)
+        if handlers is not None and handler in handlers:
+            handlers.remove(handler)
+
     async def _consume(self, topic: str) -> None:
         consumer = AIOKafkaConsumer(
             topic,

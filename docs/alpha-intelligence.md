@@ -1146,3 +1146,41 @@ values unless the requester is authorized. This mirrors the existing
 that same discipline upstream of the trade idea, not a new philosophy. **Never exposed**:
 private chain-of-thought. **Always exposed**: evidence, decision rationale, structured causal
 chains, assumptions, uncertainty, sources, and agent contributions.
+
+## 13. Live push updates (implemented — gap-closure follow-up)
+
+**Implemented**: every dashboard page previously fetched once on mount and never updated again
+without a manual reload. `GET /ws/events` (`apps/api/api_app/routers/ws.py`) closes that gap
+with a single, reusable WebSocket endpoint rather than a bespoke live channel per page — it
+subscribes to the same `state.event_bus` every mutation already publishes to (no new event
+plumbing needed) and forwards a fixed, dashboard-relevant subset of `EventType`s
+(`SIGNAL_DETECTED`, `SIGNAL_ESCALATED`, `TRADE_IDEA_CREATED`, `TRADE_APPROVED`, `TRADE_REJECTED`,
+`RISK_LIMIT_BREACHED`, `OPPORTUNITY_PROPOSED`, `INTELLIGENCE_BRIEF_GENERATED`,
+`CONSENSUS_DIVERGENCE_DETECTED`) to every connected caller, filtered per-event to what that
+caller could also see via the REST API — reusing the exact same `resolve_organization_scope`/
+`record_is_visible` pair (section 11.1) every Alpha\* endpoint already enforces, so live push
+never leaks a row REST would have hidden.
+
+Authentication uses `?token=` (a browser WebSocket handshake can't carry an `Authorization`
+header), decoded with the same `decode_access_token` REST uses; a missing or invalid token is
+rejected before the socket is accepted. `EventBus.unsubscribe()` (new on both
+`InMemoryEventBus` and `RedpandaEventBus`, `packages/agent-sdk/agent_sdk/eventbus.py`) is called
+on disconnect so a closed connection's handler doesn't stay registered — and keep its queue
+alive — for the rest of the process's life.
+
+Frontend: `apps/web/lib/live-events-context.tsx` — `LiveEventsProvider` owns the single
+connection for the whole authenticated session (mounted once in
+`apps/web/app/platform/layout.tsx`, not per-page), auto-reconnects with exponential backoff on
+close/error, and renders a small connection-status indicator plus a toast on
+`SIGNAL_ESCALATED`/`TRADE_APPROVED`/`TRADE_REJECTED`/`RISK_LIMIT_BREACHED`. Every page consumes
+it via `useLiveEvents().subscribe(listener)`. `SignalsTable.tsx`
+(`apps/web/components/alpha-intelligence/SignalsTable.tsx`) is the concrete worked example: a
+live `SIGNAL_DETECTED`/`SIGNAL_ESCALATED` event is prepended to the table immediately, no
+refresh needed. Wiring the same pattern into the other dashboard tables (trades, opportunities,
+consensus, ...) is explicitly out of scope for this pass — `SignalsTable.tsx` establishes the
+template, not full dashboard-wide coverage.
+
+**Not yet built**: every other dashboard table beyond `SignalsTable.tsx` (see above); no offline
+message buffering — an event published while a client is disconnected/reconnecting is simply
+missed, since a page's own REST fetch on (re)mount is still the source of truth for state as of
+connection time, not the WebSocket feed.

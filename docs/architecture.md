@@ -123,6 +123,13 @@ on this side of that network boundary (topic derivation, JSON (de)serialization 
 serializer/deserializer callables passed to the real `aiokafka` classes, one-consumer-task-per-
 topic subscribe semantics) is mocked.
 
+**Live push to the browser** (gap-closure follow-up, `docs/alpha-intelligence.md` section 13):
+`GET /ws/events` (`apps/api/api_app/routers/ws.py`) is a WebSocket subscriber on this same
+`state.event_bus` -- no new event plumbing, only a forwarder -- that streams a fixed,
+dashboard-relevant subset of `EventType`s to authenticated browser connections, filtered per
+event to the caller's own organization. Previously every dashboard page only fetched once on
+mount; this is the first live channel out of the event bus to the frontend.
+
 ## 5. Technology Stack
 
 | Layer | Choice |

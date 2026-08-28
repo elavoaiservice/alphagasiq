@@ -156,6 +156,67 @@ async def test_subscribe_starts_exactly_one_consumer_task_per_topic():
     await bus.stop()
 
 
+async def test_in_memory_bus_unsubscribe_stops_further_delivery():
+    bus = InMemoryEventBus()
+    received: list[DomainEvent] = []
+
+    async def handler(event: DomainEvent) -> None:
+        received.append(event)
+
+    bus.subscribe(EventType.SIGNAL_DETECTED.value, handler)
+    await bus.publish(DomainEvent(event_type=EventType.SIGNAL_DETECTED, source_service="test"))
+    bus.unsubscribe(EventType.SIGNAL_DETECTED.value, handler)
+    await bus.publish(DomainEvent(event_type=EventType.SIGNAL_DETECTED, source_service="test"))
+
+    assert len(received) == 1
+
+
+def test_in_memory_bus_unsubscribe_of_unknown_handler_is_a_no_op():
+    bus = InMemoryEventBus()
+
+    async def handler(event: DomainEvent) -> None:
+        pass
+
+    bus.unsubscribe(EventType.SIGNAL_DETECTED.value, handler)  # never subscribed -- must not raise
+
+
+async def test_redpanda_bus_unsubscribe_stops_further_delivery():
+    bus = RedpandaEventBus("redpanda:9092")
+    received: list[DomainEvent] = []
+
+    async def handler(event: DomainEvent) -> None:
+        received.append(event)
+
+    bus.subscribe(EventType.TRADE_IDEA_CREATED.value, handler)
+    await asyncio.sleep(0)
+    consumer = _FakeConsumer.instances[0]
+
+    import json
+
+    consumer.queue_raw(
+        json.dumps(DomainEvent(event_type=EventType.TRADE_IDEA_CREATED, source_service="test").model_dump(mode="json")).encode(
+            "utf-8"
+        )
+    )
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert len(received) == 1
+
+    bus.unsubscribe(EventType.TRADE_IDEA_CREATED.value, handler)
+    consumer.queue_raw(
+        json.dumps(DomainEvent(event_type=EventType.TRADE_IDEA_CREATED, source_service="test").model_dump(mode="json")).encode(
+            "utf-8"
+        )
+    )
+    for _ in range(5):
+        await asyncio.sleep(0)
+    # Still 1 -- the consumer task keeps running (another subscriber could still be
+    # attached to the same topic), but this handler no longer receives events.
+    assert len(received) == 1
+
+    await bus.stop()
+
+
 async def test_subscribed_handler_receives_a_reconstructed_domain_event():
     bus = RedpandaEventBus("redpanda:9092")
     received: list[DomainEvent] = []

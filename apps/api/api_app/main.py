@@ -34,6 +34,7 @@ from .routers import (
     quant,
     risk,
     trading,
+    ws,
 )
 from .state import get_app_state
 
@@ -122,6 +123,7 @@ def create_app() -> FastAPI:
         enterprise_webhooks.router,
         alpha.router,
         alpha_enterprise.router,
+        ws.router,
     ):
         api.include_router(router)
 

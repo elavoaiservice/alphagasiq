@@ -633,3 +633,14 @@ place of the old bare `logging.basicConfig`. Exception tracking via Sentry
 every default dev/test environment, so `sentry-sdk` is imported and initialized only when a
 real DSN is configured. `SENTRY_TRACES_SAMPLE_RATE` (default `0.0`) and `LOG_LEVEL` (default
 `INFO`) are also configurable.
+
+**Live updates**: dashboard pages previously only fetched once on mount. `GET /ws/events`
+(`apps/api/api_app/routers/ws.py`) now streams dashboard-relevant events (new signals, trade
+approvals/rejections, risk breaches, opportunities, intelligence briefs, consensus divergence)
+to the browser over a WebSocket, filtered to the caller's own organization the same way every
+REST endpoint already is. `apps/web/lib/live-events-context.tsx`'s `LiveEventsProvider` owns one
+shared connection per session (mounted in `apps/web/app/platform/layout.tsx`), with
+auto-reconnect and a small status indicator; `SignalsTable.tsx` is wired as the worked
+example -- a new signal appears without a manual refresh. Other dashboard tables follow the same
+`useLiveEvents().subscribe(...)` pattern as a small follow-up, not applied everywhere in this
+pass.
