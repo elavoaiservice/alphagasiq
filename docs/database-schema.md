@@ -11,6 +11,20 @@ mirrored as async SQLAlchemy 2.0 models in `packages/db/db/models.py`, backing t
 the full production schema the migrations create; only the tables above currently have
 a live SQLAlchemy-backed read/write path.
 
+**Row Level Security** (docs/alpha-intelligence.md section 11.1): every table below with an
+`organization_id` column is listed in `db.ORG_SCOPED_TABLES` (`packages/db/db/rls.py`) and gets
+`FORCE ROW LEVEL SECURITY` plus a permissive-by-default `org_isolation` policy applied at boot
+(`Repository.apply_row_level_security()`) — a database-level backstop on top of, not instead
+of, the application-layer `organization_id`/`platform_only` filtering each repository method
+already does. Only `alpha_signals`/`alpha_impact_analyses`/`alpha_consensus_views`/
+`alpha_scenario_runs`/`alpha_memory_records`/`alpha_lesson_proposals`/
+`alpha_intelligence_briefs` actually set the enforcing session variable
+(`app.current_org_id`) today; every other org-scoped table keeps its RLS policy enabled but
+inert (no caller sets the GUC yet) until a future pass wires its own read path the same way.
+Postgres-only — SQLite (every default dev/test database) has no RLS equivalent, so
+`apply_row_level_security()` is a documented no-op there and application-layer enforcement
+remains the sole backstop in dev/test.
+
 ## 1. Canonical Time-Series Observation
 
 Every numeric fact used anywhere in a trading decision is stored as one row in

@@ -16,13 +16,14 @@ integration) are implemented. Milestone 8 (Enterprise Data Platform foundation �
 implemented as a foundation only — see section 11 for exactly what that does and does not
 include. Milestone 9 (tenant isolation retrofit — cross-org data-visibility fix on every
 Alpha* endpoint, `ModelRoutingPolicy`, `RetentionPolicy`, `organization_id` readiness on core
-trading tables) is implemented at the *application* layer only — no database-level Row Level
-Security backstop yet; see section 11.1/11.5/11.6 for the exact line. Milestone 10
-(Enterprise Opportunity Engine, Enterprise-specific Chief Trading Agent chat integration,
-Enterprise Digital Twin pipeline overlay) is implemented — see section 11.7 for exactly what
-that does and does not include; database-level RLS remains unbuilt. Do not assume any
-capability described here beyond the "Implemented" sections actually exists in the codebase
-yet.
+trading tables) is implemented at the application layer, now backed by real Postgres Row Level
+Security on the same seven call sites (plus schema-level RLS readiness on 14 more
+organization-scoped tables) — see section 11.1 for the exact line: which call sites the
+database-level backstop actually covers today versus which still rely on application-layer
+enforcement alone. Milestone 10 (Enterprise Opportunity Engine, Enterprise-specific Chief
+Trading Agent chat integration, Enterprise Digital Twin pipeline overlay) is implemented — see
+section 11.7 for exactly what that does and does not include. Do not assume any capability
+described here beyond the "Implemented" sections actually exists in the codebase yet.
 
 ## 1. Where this sits in the pipeline
 
@@ -147,7 +148,9 @@ summarize into a brief. Milestone 8 is marked "Implemented (foundation)" rather 
 `ModelRoutingPolicy`/`RetentionPolicy` were honestly still Milestone 9 scope at the time this
 paragraph was written (Milestone 9 has since closed that gap — see section 11.1/11.5/11.6).
 The remaining five connector types (`WEBHOOK`/`REST_API`/`DATABASE`/`S3`/`SFTP`) have since been
-implemented end-to-end too — see section 11.3. Database-level Row Level Security and most of
+implemented end-to-end too — see section 11.3. Database-level Row Level Security has since been
+added on the same seven call sites Milestone 9's application-layer fix covers, plus schema-level
+readiness on 14 more organization-scoped tables — see section 11.1. Most of
 the originally-envisioned admin tabs (Mappings/Lineage/Usage/Dependencies) remain Milestone 10+
 scope — see section 11 for the exact built-vs-not-built line.
 
@@ -777,14 +780,39 @@ Both are now closed:
   `tests/api/test_entitlements.py` unit-tests `resolve_organization_scope`/`record_is_visible`
   directly.
 
-**Honest about what this is not**: this is application-layer enforcement — every one of the
-call sites above is now correct, and there is no bypass path through the current codebase —
-but there is still no PostgreSQL Row Level Security (or equivalent) making it unbypassable at
-the database layer itself, and `AppState` remains a single process-wide singleton rather than
-a per-tenant-context service. A future direct-SQL script or a new endpoint that forgets to
-call `resolve_organization_scope` would not be caught by a database-level backstop today. RLS
-enforcement, and `DataEntitlement`/`ModelEntitlement`/`Portfolio` as originally sketched
-(subsumed or deferred), remain Milestone 10+ scope.
+**Real database-level Row Level Security now backs the same seven call sites** (`db.rls`,
+`packages/db/db/repository.py`'s `apply_row_level_security()`/`_set_org_guc()`) —
+`SqlAppRepository.list_signals`/`list_impact_analyses`/`list_consensus_views`/
+`list_scenario_runs`/`list_memory_records`/`list_lesson_proposals`/`list_intelligence_briefs`
+now set the Postgres session variable `app.current_org_id` (via `SELECT set_config(...,
+true)`, transaction-scoped so it can never leak across pooled connections) using the exact same
+`organization_id`/`platform_only` precedence their own SQLAlchemy `.where()` filtering already
+applies, and every organization-scoped table (`db.ORG_SCOPED_TABLES` — 21 tables: the seven
+above plus `trade_ideas`/`committee_decisions`/`risk_checks`/`approvals`/`users`/
+`organization_feature_entitlements`/`chat_conversations`/`workspaces`/`enterprise_data_sources`/
+`enterprise_datasets`/`model_routing_policies`/`retention_policies`/`enterprise_opportunities`)
+has `FORCE ROW LEVEL SECURITY` plus a permissive-by-default `org_isolation` policy: a row stays
+visible unless the session actually set the GUC, so a table gaining this policy changes nothing
+for any caller that doesn't (yet) resolve and set its own organization context — the same
+"backward-compatible, opt-in narrowing" pattern every other entitlement feature here follows.
+`tests/db/test_rls.py`'s live-Postgres suite proves this against a real local Postgres 16
+instance, including a raw hand-written query (no `.where()` filter at all) that RLS still
+correctly restricts once the GUC is set — the actual point of a database-level backstop.
+`.github/workflows/ci.yml` runs a real `postgres:16` service so this re-verifies on every push,
+not just once locally; against SQLite (every default dev/test database) both methods are
+documented no-ops, so application-layer enforcement remains the only backstop there.
+
+**Honest about what this is not**: only the seven Alpha\* `list_*` methods above actually set
+the session GUC today — the other 14 tables in `db.ORG_SCOPED_TABLES` have the RLS policy
+enabled (schema-level readiness, matching the `organization_id`-column posture Milestone 9
+already used for the core trading tables) but nothing sets their GUC yet, so they keep today's
+unrestricted behavior until a future pass wires their own call sites the same way. Get-by-id
+endpoints (`get_signal`, `get_impact_analysis`, etc.) still rely solely on the application-layer
+`record_is_visible()` check after the fetch, not on RLS — threading `organization_id`/
+`platform_only` into those single-row getters too is future work. `AppState` remains a single
+process-wide singleton rather than a per-tenant-context service. `DataEntitlement`/
+`ModelEntitlement`/`Portfolio` as originally sketched (subsumed or deferred) remain future
+scope.
 
 **Implemented (Milestone 9) — `organization_id` readiness on the core trading tables**:
 `trade_ideas`/`committee_decisions`/`risk_checks`/`approvals` each gained a nullable
@@ -1066,9 +1094,10 @@ curve-shape/basis-specific opportunity detection); fine-grained per-dataset enti
 enforcement inside `AppState._load_enterprise_positions()`'s org-wide aggregate read path (used
 by opportunity/trade generation) — that pipeline has no per-caller principal to check against
 (see section 11.2); `FACILITY`-domain overlay fields beyond a single pinned point (no
-polygon/area assets, no per-asset detail panel); and real database-level Row Level Security,
-which remains the one
-piece of the original Milestone 9/10 scope not built anywhere in this codebase.
+polygon/area assets, no per-asset detail panel). Real database-level Row Level Security is now
+built (section 11.1) on the seven Alpha* `list_*` call sites plus schema-level readiness on 14
+more tables — extending its GUC-setting to every other read path, including
+`enterprise_opportunities`' own list/get calls, remains future work.
 
 ## 12. Transparency and explainability
 

@@ -70,7 +70,11 @@ coverage bar in the repo — see `tests/risk/test_governor.py` — per the platf
 
 `.github/workflows/ci.yml` runs the same two checks on every push/PR: the full pytest suite
 (same editable-install sequence as above) and `next build` (which includes TypeScript
-type-checking) for `apps/web`.
+type-checking) for `apps/web`. The backend job also runs a `postgres:16` service container so
+`tests/db/test_rls.py`'s live Row Level Security suite (docs/alpha-intelligence.md section 11.1)
+actually exercises real Postgres RLS enforcement on every push, not just once locally; without a
+reachable Postgres (e.g. running `pytest` directly against the default SQLite dev database)
+those tests skip gracefully instead of failing.
 
 ## Repository layout
 
@@ -358,13 +362,12 @@ an Overview dashboard) are now implemented, plus the multi-tenant Enterprise Dat
 (Workspace, six real connector types, fine-grained per-dataset entitlement enforcement, admin
 onboarding UI), a tenant-isolation retrofit
 (cross-organization data-visibility fix on every Alpha* endpoint, `ModelRoutingPolicy`,
-`RetentionPolicy`, `organization_id` schema readiness on core trading tables) — application-
-layer only, no database-level Row Level Security yet — and the Enterprise Opportunity Engine
-+ Enterprise-specific Chief Trading Agent chat integration + Enterprise Digital Twin pipeline
-overlay.** All 10 milestones of the original roadmap are now implemented; see
-`docs/alpha-intelligence.md` for the full target architecture and the one piece still
-genuinely unbuilt (real database-level Row Level Security), sequenced across those 10
-milestones the same incremental way the access-model spec was.
+`RetentionPolicy`, `organization_id` schema readiness on core trading tables, now backed by real
+Postgres Row Level Security on the same seven call sites) — and the Enterprise Opportunity
+Engine + Enterprise-specific Chief Trading Agent chat integration + Enterprise Digital Twin
+pipeline overlay.** All 10 milestones of the original roadmap are now implemented; see
+`docs/alpha-intelligence.md` section 11.1 for the exact line on what the RLS backstop covers
+today versus what still relies on application-layer enforcement alone.
 AlphaSignal
 (new `services/alpha` package) is a deterministic materiality engine
 (`alpha_service.materiality.MaterialityEngine`, in the same pure-function/exhaustively-tested
@@ -522,8 +525,9 @@ ingress (new `admin.workspaces`/`admin.enterprise_data` permissions), and new "W
 "Enterprise Data" admin console tabs.
 
 **Tenant isolation retrofit (Milestone 9) closes the two cross-organization data-visibility
-gaps Milestone 8's own write-up flagged, and adds the governance layer it deferred — at the
-application layer only, no database-level Row Level Security yet.**
+gaps Milestone 8's own write-up flagged, and adds the governance layer it deferred — now backed
+by real Postgres Row Level Security (`packages/db/db/rls.py`) on the same seven call sites, not
+just the application layer.**
 `resolve_organization_scope(user, state) -> (organization_id, unrestricted)`
 (`apps/api/api_app/entitlements.py`) replaces `resolve_organization_id` at every `/alpha/*`
 read call site: previously a caller whose own organization couldn't be resolved got *every*
@@ -533,7 +537,14 @@ gained a `platform_only: bool` parameter (restricting a non-admin, no-resolvable
 `organization_id IS NULL` rows), and `record_is_visible(record_org, caller_org, unrestricted)`
 gates every get-by-id endpoint, 404ing on an invisible record rather than 403ing (never
 confirming a record's existence to an unauthorized caller).
-`tests/api/test_alpha_tenant_isolation.py` proves the fix end-to-end. New `ModelRoutingPolicy`/
+`tests/api/test_alpha_tenant_isolation.py` proves the fix end-to-end. Those same seven
+`list_*` methods now also set the Postgres session variable `app.current_org_id`
+(`Repository._set_org_guc`) with the exact same `organization_id`/`platform_only` precedence,
+and every organization-scoped table has `FORCE ROW LEVEL SECURITY` plus a permissive-by-default
+`org_isolation` policy (`packages/db/db/rls.py`) — a real database-level backstop, not a
+replacement for the application-layer filter. `tests/db/test_rls.py`'s live-Postgres suite
+proves RLS restricts even a raw query with no `.where()` filter at all; against SQLite (every
+default dev/test database) it's a documented no-op. New `ModelRoutingPolicy`/
 `RetentionPolicy` tables (`packages/schemas/schemas/enterprise.py`) govern, per
 `(organization_id, EnterpriseDataClassification)`, whether content may reach an external LLM
 provider and how long data may be retained — `ModelRoutingEngine`/`RetentionEngine`
@@ -599,5 +610,8 @@ against. `AppState.generate_enterprise_opportunities_for_all_
 organizations()` gives opportunity generation a real scheduled cadence -- `worker.py`'s
 existing periodic loop calls it every interval alongside the Chief Trading Agent's own
 research cycle, on top of the still-available on-demand `POST /alpha/enterprise/opportunities/
-generate`. The only piece of the original Milestone 9/10 scope not built anywhere in this
-codebase is real database-level Row Level Security.
+generate`. Real database-level Row Level Security (see the tenant-isolation section above) now
+covers the same seven Alpha* `list_*` call sites the application-layer fix does, plus
+schema-level readiness on 14 more organization-scoped tables including `enterprise_
+opportunities` itself -- extending the GUC-setting to this pipeline's own read/write paths
+remains future work, since (as just noted) it has no per-caller principal to scope it to yet.

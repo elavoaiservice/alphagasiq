@@ -10,6 +10,24 @@ jobs:
   backend-tests:
     name: Backend tests (pytest)
     runs-on: ubuntu-latest
+    services:
+      # Backs tests/db/test_rls.py's live-Postgres Row Level Security suite (docs/
+      # alpha-intelligence.md section 11.1) -- RLS has no SQLite equivalent, so without a
+      # real Postgres reachable those tests would silently skip instead of actually
+      # re-verifying the enforcement on every push.
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: alphagasiq_test
+          POSTGRES_PASSWORD: alphagasiq_test
+          POSTGRES_DB: alphagasiq_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
 

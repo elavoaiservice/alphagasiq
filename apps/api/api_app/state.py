@@ -233,6 +233,7 @@ class AppState:
             if self._seeded:
                 return
             await self.repo.init_schema()
+            await self.repo.apply_row_level_security()
             await self.repo.seed_rbac_defaults()
             await self.repo.seed_feature_defaults()
             await self.repo.seed_system_settings_defaults()

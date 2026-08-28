@@ -557,9 +557,10 @@ access-model track's) is also implemented at the application layer: every `/alph
 get-by-id endpoint now enforces cross-organization data-visibility correctly
 (`resolve_organization_scope`/`record_is_visible`, `apps/api/api_app/entitlements.py`), plus a
 `ModelRoutingPolicy`/`RetentionPolicy` governance layer and `organization_id` schema readiness
-on the core trading tables — but there is still no database-level Row Level Security backstop,
-and `AppState` remains a process-wide singleton (see that doc's section 11 for the exact
-built-vs-not-built line). Milestone 10 (the Enterprise Opportunity Engine, an
+on the core trading tables, now backed by real Postgres Row Level Security (`packages/db/db/
+rls.py`) on the same seven call sites — `AppState` still remains a process-wide singleton (see
+that doc's section 11.1 for the exact built-vs-not-built line: which tables/call sites the RLS
+backstop covers today). Milestone 10 (the Enterprise Opportunity Engine, an
 Enterprise-specific Chief Trading Agent chat integration, and an Enterprise Digital Twin
 pipeline overlay) is also implemented — see below.
 
@@ -772,9 +773,12 @@ permissions) — API-only, no admin UI yet. Finally, `trade_ideas`/`committee_de
 `TradeIdea.organization_id` now round-trips onto all four through
 `AppState.submit_trade_idea()` — schema readiness only, since every trade idea today still
 comes from the single process-wide `AppState`'s system-generated research cycle, never a
-per-organization submission path. See `docs/alpha-intelligence.md` section 11.1/11.5/11.6 for
-the full built-vs-not-built design, including what real database-level RLS enforcement would
-still add on top of this.
+per-organization submission path. Real Postgres Row Level Security (`packages/db/db/rls.py`)
+now backs the same seven Alpha* `list_*` call sites the application-layer fix covers, plus
+schema-level readiness on 14 more organization-scoped tables. See `docs/alpha-intelligence.md`
+section 11.1/11.5/11.6 for the full built-vs-not-built design, including exactly which call
+sites the RLS backstop reaches today versus which still rely on application-layer enforcement
+alone.
 
 ### Enterprise Opportunity Engine + Enterprise-specific Chief Trading Agent + Enterprise
 Digital Twin overlay (implemented — Milestone 10)

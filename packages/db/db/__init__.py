@@ -50,8 +50,12 @@ from .models import (
     WorkspaceRow,
 )
 from .repository import SqlAppRepository
+from .rls import ORG_SCOPED_TABLES, PLATFORM_ONLY_SENTINEL, build_row_level_security_statements
 
 __all__ = [
+    "ORG_SCOPED_TABLES",
+    "PLATFORM_ONLY_SENTINEL",
+    "build_row_level_security_statements",
     "AgentConfigRow",
     "AgentVersionRow",
     "AuditEventRow",

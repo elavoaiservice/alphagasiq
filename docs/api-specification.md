@@ -312,6 +312,7 @@ All six `connector_type` values now have a real connector implementation
 its required `connection_config`/environment-provisioned credential still returns its own
 honest `not_configured`/400 response rather than a fabricated success. Milestone 9
 closes the application-layer tenant-isolation gap and adds `ModelRoutingPolicy`/
-`RetentionPolicy` (above); real database-level Row Level Security and most of the
-originally-envisioned admin tabs (Mappings/Lineage/Usage/Dependencies) remain Milestone 10+ —
+`RetentionPolicy` (above), now backed by real Postgres Row Level Security
+(`packages/db/db/rls.py`) on the same seven Alpha* `list_*` call sites; most of the
+originally-envisioned admin tabs (Mappings/Lineage/Usage/Dependencies) remain future scope —
 see `docs/alpha-intelligence.md` section 11 for the exact built-vs-not-built line.

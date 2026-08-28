@@ -3,8 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from schemas import (
     AgentAlphaScore,
@@ -33,6 +33,7 @@ from schemas import (
 )
 
 from .engine import build_engine, build_sessionmaker
+from .rls import build_row_level_security_statements, resolve_org_guc_value
 from .models import (
     AgentAlphaScoreRow,
     AgentConfigRow,
@@ -1052,6 +1053,36 @@ class SqlAppRepository:
     async def init_schema(self) -> None:
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+
+    async def apply_row_level_security(self) -> None:
+        """Enables Postgres Row Level Security on every organization-scoped
+        table (`db.rls.ORG_SCOPED_TABLES`) -- a documented no-op against
+        SQLite (every default dev/test database), since RLS has no SQLite
+        equivalent. Safe to call on every boot: `db.rls.
+        build_row_level_security_statements()` `DROP POLICY IF EXISTS`s
+        before each `CREATE POLICY`, so re-running it just replaces the
+        policy with itself. See `db.rls`'s module docstring for exactly what
+        this does and does not cover today."""
+        if self.engine.dialect.name != "postgresql":
+            return
+        async with self.engine.begin() as conn:
+            for statement in build_row_level_security_statements():
+                await conn.execute(text(statement))
+
+    async def _set_org_guc(self, session: AsyncSession, *, organization_id: str | None, platform_only: bool) -> None:
+        """Sets the `app.current_org_id` session variable Postgres RLS
+        policies (`db.rls`) evaluate, transaction-scoped (`is_local=true`) so
+        it can never leak onto a later request that reuses a pooled
+        connection. A no-op against SQLite. Called at the top of the same
+        `async with self.session_factory() as session:` block that already
+        applies the equivalent `organization_id`/`platform_only` filtering in
+        the SQLAlchemy query itself (Milestone 9) -- this makes that
+        application-layer filter's intent enforceable at the database layer
+        too, rather than replacing it."""
+        if self.engine.dialect.name != "postgresql":
+            return
+        value = resolve_org_guc_value(organization_id=organization_id, platform_only=platform_only)
+        await session.execute(text("SELECT set_config('app.current_org_id', :value, true)"), {"value": value})
 
     async def dispose(self) -> None:
         await self.engine.dispose()
@@ -2254,6 +2285,7 @@ class SqlAppRepository:
         if min_materiality is not None:
             query = query.where(SignalRow.materiality_score >= min_materiality)
         async with self.session_factory() as session:
+            await self._set_org_guc(session, organization_id=organization_id, platform_only=platform_only)
             rows = (await session.execute(query)).scalars().all()
         return [_signal_row_to_dict(r) for r in rows]
 
@@ -2351,6 +2383,7 @@ class SqlAppRepository:
         if since is not None:
             query = query.where(ImpactAnalysisRow.created_at >= _naive_utc(since))
         async with self.session_factory() as session:
+            await self._set_org_guc(session, organization_id=organization_id, platform_only=platform_only)
             rows = (await session.execute(query)).scalars().all()
         return [_impact_analysis_row_to_dict(r) for r in rows]
 
@@ -2494,6 +2527,7 @@ class SqlAppRepository:
         if since is not None:
             query = query.where(ConsensusViewRow.created_at >= _naive_utc(since))
         async with self.session_factory() as session:
+            await self._set_org_guc(session, organization_id=organization_id, platform_only=platform_only)
             rows = (await session.execute(query)).scalars().all()
         return [_consensus_view_row_to_dict(r) for r in rows]
 
@@ -2560,6 +2594,7 @@ class SqlAppRepository:
         if since is not None:
             query = query.where(ScenarioRunRow.run_at >= _naive_utc(since))
         async with self.session_factory() as session:
+            await self._set_org_guc(session, organization_id=organization_id, platform_only=platform_only)
             rows = (await session.execute(query)).scalars().all()
         return [_scenario_run_row_to_dict(r) for r in rows]
 
@@ -2616,6 +2651,7 @@ class SqlAppRepository:
         if since is not None:
             query = query.where(MemoryRecordRow.created_at >= _naive_utc(since))
         async with self.session_factory() as session:
+            await self._set_org_guc(session, organization_id=organization_id, platform_only=platform_only)
             rows = (await session.execute(query)).scalars().all()
         return [_memory_record_row_to_dict(r) for r in rows]
 
@@ -2660,6 +2696,7 @@ class SqlAppRepository:
         elif platform_only:
             query = query.where(LessonProposalRow.organization_id.is_(None))
         async with self.session_factory() as session:
+            await self._set_org_guc(session, organization_id=organization_id, platform_only=platform_only)
             rows = (await session.execute(query)).scalars().all()
         return [_lesson_proposal_row_to_dict(r) for r in rows]
 
@@ -2810,6 +2847,7 @@ class SqlAppRepository:
         elif platform_only:
             query = query.where(IntelligenceBriefRow.organization_id.is_(None))
         async with self.session_factory() as session:
+            await self._set_org_guc(session, organization_id=organization_id, platform_only=platform_only)
             rows = (await session.execute(query)).scalars().all()
         return [_intelligence_brief_row_to_dict(r) for r in rows]
 
