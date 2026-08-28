@@ -124,13 +124,24 @@ rework). Approving a version (`POST .../transition {"status": "APPROVED", "evalu
 creates a new `AgentVersion` row; nothing ever mutates an existing one. "Promoting a version"
 (transitioning to `PRODUCTION`) automatically retires the agent_type's prior `PRODUCTION` row (at
 most one exists at a time) and stamps `deployment_timestamp` — it does **not** mean the agent's
-Python class is regenerated or replaced; wiring a per-agent runtime read of its `PRODUCTION` row
-into `services/agents` (so an agent's actual `_execute()` would use the stored
-`system_instructions`/`model_name`) is real follow-up work, honestly not yet done — see the note
-in `packages/db/db/models.py`'s `AgentVersionRow` docstring. No prompt change may automatically
-bypass evaluation — there is no "publish directly to production" affordance; every promotion must
-pass through `TESTING` and `APPROVED` first, and the API enforces this server-side, not just in
-a UI's button states.
+Python class is regenerated or replaced. No prompt change may automatically bypass evaluation —
+there is no "publish directly to production" affordance; every promotion must pass through
+`TESTING` and `APPROVED` first, and the API enforces this server-side, not just in a UI's button
+states.
+
+**Promoting a version now actually changes what the live agent does.**
+`AppState.apply_production_agent_version(agent_type)` resolves the agent_type's live `BaseAgent`
+instance via `agent_catalog.resolve_agent_instance` and applies its current `PRODUCTION`
+`AgentVersionRow`: `system_instructions` is copied onto `instance.system_instructions` (every
+agent's `_execute()` now forwards `system=self.system_instructions` on each `self.llm.complete(...)`
+call — 16 call sites across `services/agents/agents_service`), and a non-empty `model_name` rebuilds
+`instance.llm` via `agent_sdk.build_llm_provider(model_name)` so the agent talks to the newly
+approved model on its next call. This runs at boot (right after the initial seed below) and again
+from `POST .../versions/{version_id}/transition` every time a version reaches `PRODUCTION` or
+`ROLLED_BACK` — a rollback leaves the agent_type with no `PRODUCTION` row at all, so the live
+instance's `system_instructions` resets to `None` (no override) rather than keeping a stale prompt.
+An agent with no live instance (`RISK_GOVERNOR`, `NEWS_INTELLIGENCE`) is a documented no-op, not an
+error.
 
 At boot, every implemented, administrable agent is given a real `PRODUCTION` version snapshotted
 from its actual live configuration (`AppState._seed_initial_agent_versions()` — version string

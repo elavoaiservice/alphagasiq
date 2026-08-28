@@ -484,6 +484,11 @@ class AgentVersionRow(Base):
     may skip a step -- "no prompt change may automatically bypass evaluation" (spec
     §41). Promoting a new PRODUCTION version automatically retires the agent's prior
     PRODUCTION row, so at most one PRODUCTION version per agent_type exists at a time.
+    `AppState.apply_production_agent_version()` (`apps/api/api_app/state.py`) copies a
+    PRODUCTION row's `system_instructions`/`model_name` onto the live `BaseAgent`
+    instance on every PRODUCTION/ROLLED_BACK transition and at boot, so promoting a
+    version really does change what the agent sends to the LLM, not only what's
+    recorded for history.
     """
 
     __tablename__ = "agent_versions"

@@ -18,7 +18,9 @@ class BearAgent(BaseAgent):
             "Construct the strongest bearish case against this trade in 2-3 sentences, using only "
             "the risks and invalidation conditions already cited — do not invent new facts."
         )
-        response = await self.llm.complete([LLMMessage(role="user", content=prompt)])
+        response = await self.llm.complete(
+            [LLMMessage(role="user", content=prompt)], system=self.system_instructions
+        )
         case = response.content if "MOCK LLM" not in response.content else (
             f"Bear case: {', '.join(trade.risks) or 'unlisted downside risks'} could invalidate the "
             f"thesis; invalidation conditions ({', '.join(trade.invalidation_conditions) or 'the stop level'}) "

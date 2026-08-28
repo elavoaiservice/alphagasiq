@@ -44,7 +44,9 @@ class WeatherAgent(BaseAgent):
             f"{impact.cdd_delta:+.2f}, implying a {impact.total_demand_delta_bcf:+.2f} Bcf/day total "
             f"demand change ({impact.price_direction}). Summarize in two sentences for a trading desk."
         )
-        llm_response = await self.llm.complete([LLMMessage(role="user", content=prompt)])
+        llm_response = await self.llm.complete(
+            [LLMMessage(role="user", content=prompt)], system=self.system_instructions
+        )
 
         reasoning = (
             f"{model} {run} vs {comparison_run} implies a {impact.total_demand_delta_bcf:+.2f} Bcf/d "

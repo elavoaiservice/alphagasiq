@@ -35,7 +35,9 @@ class RegimeDetectionAgent(BaseAgent):
         )
 
         prompt = f"Current regime classification: {result.regime.value} ({', '.join(result.drivers)}). One sentence for a trading desk."
-        llm_response = await self.llm.complete([LLMMessage(role="user", content=prompt)])
+        llm_response = await self.llm.complete(
+            [LLMMessage(role="user", content=prompt)], system=self.system_instructions
+        )
         reasoning = f"Regime: {result.regime.value} — {'; '.join(result.drivers)}. {llm_response.content}"
 
         return AgentOutcome(

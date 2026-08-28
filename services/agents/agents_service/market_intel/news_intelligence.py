@@ -61,7 +61,9 @@ class NewsIntelligenceAgent(BaseAgent):
         prompt = "Summarize the most market-moving of these headlines in one sentence: " + "; ".join(
             e.headline for e in top
         )
-        llm_response = await self.llm.complete([LLMMessage(role="user", content=prompt)])
+        llm_response = await self.llm.complete(
+            [LLMMessage(role="user", content=prompt)], system=self.system_instructions
+        )
 
         return AgentOutcome(
             outputs={"events": [e.model_dump(mode="json") for e in events]},

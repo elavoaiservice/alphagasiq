@@ -69,7 +69,9 @@ class DirectionalStrategyAgent(BaseAgent):
             f"({weather_impact.price_direction}). Write a one-sentence trade thesis for a long "
             f"{instrument} position."
         )
-        llm_response = await self.llm.complete([LLMMessage(role="user", content=prompt)])
+        llm_response = await self.llm.complete(
+            [LLMMessage(role="user", content=prompt)], system=self.system_instructions
+        )
         thesis = llm_response.content if "MOCK LLM" not in llm_response.content else (
             f"Tighter-than-expected storage ({storage_forecast.forecast_bcf:+.0f} Bcf vs consensus) "
             f"combined with a {weather_impact.price_direction.lower()} weather-demand read "

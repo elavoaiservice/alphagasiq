@@ -45,7 +45,9 @@ class SupplyAgent(BaseAgent):
             f"last 7 days, a {trend_bcf_d:+.2f} Bcf/d change vs. the prior 7 days. Summarize the "
             "supply picture in two sentences for a trading desk."
         )
-        llm_response = await self.llm.complete([LLMMessage(role="user", content=prompt)])
+        llm_response = await self.llm.complete(
+            [LLMMessage(role="user", content=prompt)], system=self.system_instructions
+        )
 
         direction = "growing" if trend_bcf_d > 0.1 else "declining" if trend_bcf_d < -0.1 else "stable"
         reasoning = (

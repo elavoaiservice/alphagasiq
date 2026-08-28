@@ -683,3 +683,126 @@ async def test_enterprise_data_query_includes_data_allowed_by_org_override(monke
     assert result.access_granted is True
     assert "withheld" not in result.content
     assert result.freshness == {"dataset_count": 1, "withheld_count": 0}
+
+
+class _EnterpriseTradeIdeaState(_FakeState):
+    """Minimal stand-in for `ChatAgent._enterprise_trade_idea`'s dependency on
+    `AppState.generate_enterprise_trade_idea` -- returns whatever `Approval` (or
+    `None`, for the data-driven-SKIP case) a test configures, without running a
+    real research cycle."""
+
+    def __init__(self, *, approval=None, trade=None):
+        super().__init__()
+        self._approval = approval
+        self.generate_enterprise_trade_idea_calls: list[str] = []
+        if approval is not None and trade is not None:
+            self.trade_ideas[approval.trade_id] = trade
+
+    async def generate_enterprise_trade_idea(self, *, organization_id):
+        self.generate_enterprise_trade_idea_calls.append(organization_id)
+        return self._approval
+
+
+def _make_enterprise_trade() -> "TradeIdea":
+    from schemas import Direction, InstrumentType, TradeIdea
+
+    return TradeIdea(
+        strategy="TEST",
+        organization_id="org-a",
+        instrument="NG.FUT.M1",
+        instrument_type=InstrumentType.FUTURE,
+        direction=Direction.LONG,
+        entry=3.0,
+        target=3.5,
+        stop_or_invalidation=2.8,
+        time_horizon="1W",
+        expected_return=0.5,
+        expected_loss=0.2,
+        probability_success=0.6,
+        confidence=0.7,
+        thesis="test thesis",
+        catalysts=["cold snap"],
+        risks=["storage build"],
+    )
+
+
+async def test_enterprise_trade_idea_routes_and_requires_permission(monkeypatch, user):
+    async def fake_permissions(_user, _state):
+        return set()
+
+    monkeypatch.setattr(chat_agent_module, "get_effective_permissions", fake_permissions)
+    agent = ChatAgent(llm=MockLLMProvider())
+
+    # _FakeState has no `generate_enterprise_trade_idea` -- a wrongly-dispatched
+    # call would raise AttributeError instead of returning a declined result.
+    result = await agent.ask("Generate a trade idea for our organization", _FakeState(), user)
+
+    assert result.access_granted is False
+    assert result.tool_used == "enterprise_trade_idea"
+    assert "enterprise_trading.generate" in result.content
+
+
+async def test_enterprise_trade_idea_declines_when_org_unresolvable(monkeypatch, user):
+    async def fake_permissions(_user, _state):
+        return {"enterprise_trading.generate"}
+
+    async def fake_resolve(_user, _state):
+        return None
+
+    monkeypatch.setattr(chat_agent_module, "get_effective_permissions", fake_permissions)
+    monkeypatch.setattr(chat_agent_module, "resolve_organization_id", fake_resolve)
+    agent = ChatAgent(llm=MockLLMProvider())
+
+    result = await agent.ask(
+        "Generate a trade idea for our organization", _EnterpriseTradeIdeaState(), user
+    )
+
+    assert result.access_granted is True
+    assert result.tool_used == "enterprise_trade_idea"
+    assert "can't identify your organization" in result.content
+
+
+async def test_enterprise_trade_idea_reports_no_idea_on_data_driven_skip(monkeypatch, user):
+    async def fake_permissions(_user, _state):
+        return {"enterprise_trading.generate"}
+
+    async def fake_resolve(_user, _state):
+        return "org-a"
+
+    monkeypatch.setattr(chat_agent_module, "get_effective_permissions", fake_permissions)
+    monkeypatch.setattr(chat_agent_module, "resolve_organization_id", fake_resolve)
+    agent = ChatAgent(llm=MockLLMProvider())
+
+    state = _EnterpriseTradeIdeaState(approval=None)
+    result = await agent.ask("Generate a trade idea for our organization", state, user)
+
+    assert result.access_granted is True
+    assert state.generate_enterprise_trade_idea_calls == ["org-a"]
+    assert "No trade idea right now" in result.content
+
+
+async def test_enterprise_trade_idea_reports_the_generated_trade(monkeypatch, user):
+    from api_app.models import Approval
+
+    async def fake_permissions(_user, _state):
+        return {"enterprise_trading.generate"}
+
+    async def fake_resolve(_user, _state):
+        return "org-a"
+
+    monkeypatch.setattr(chat_agent_module, "get_effective_permissions", fake_permissions)
+    monkeypatch.setattr(chat_agent_module, "resolve_organization_id", fake_resolve)
+    agent = ChatAgent(llm=MockLLMProvider())
+
+    trade = _make_enterprise_trade()
+    approval = Approval(trade_id=trade.trade_id)
+    state = _EnterpriseTradeIdeaState(approval=approval, trade=trade)
+
+    result = await agent.ask("Generate a trade idea for our organization", state, user)
+
+    assert result.access_granted is True
+    assert "LONG" in result.content
+    assert "cold snap" in result.content
+    assert "storage build" in result.content
+    assert result.freshness["organization_id"] == "org-a"
+    assert result.freshness["trade_id"] == str(trade.trade_id)

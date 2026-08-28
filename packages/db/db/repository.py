@@ -157,6 +157,7 @@ _PERMISSION_KEYS = [
     "enterprise_opportunities.view",
     "enterprise_opportunities.generate",
     "enterprise_opportunities.review",
+    "enterprise_trading.generate",
 ]
 
 # Permissions reserved for SUPER_ADMIN: the system-level/risk/model/agent-optimization
@@ -199,6 +200,7 @@ _ROLE_PERMISSIONS: dict[str, list[str]] = {
         "enterprise_data.query",
         "enterprise_opportunities.view",
         "enterprise_opportunities.generate",
+        "enterprise_trading.generate",
         "trading_recommendations.challenge",
         "chief_agent.chat",
         "portfolio.view",

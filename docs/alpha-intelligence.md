@@ -938,6 +938,32 @@ flagged that non-admin, per-dataset entitlement enforcement isn't wired into any
 this reuses that same limitation rather than solving it here. A caller sees every dataset their
 organization has registered, not only ones they were specifically entitled to.
 
+**Implemented — Enterprise-specific Chief Trading Agent wired into trade generation itself**
+(follow-up to Milestone 10): `AppState.generate_enterprise_trade_idea(organization_id=...)` closes
+the gap the paragraph above used to leave open — `_enterprise_data_query` only ever *lists* an
+organization's registered datasets; this actually generates a trade idea that incorporates them.
+It runs the same fundamentals → strategy pipeline `run_chief_trading_cycle()` runs (factored into
+a shared `AppState._run_chief_trading_research()` helper so both paths log agent executions and
+run AlphaSignal detection identically), tags the resulting `TradeIdea` with `organization_id`, and
+submits it through the exact same `submit_trade_idea()` choke point every other trade idea goes
+through — no separate, weaker trade-generation path for enterprise customers. `submit_trade_idea()`
+now runs a second corroboration pass after the existing AlphaSignal/AlphaConsensus one (section
+10): `EnterpriseCorroborationEngine`
+(`services/enterprise_data/enterprise_data_service/trading_integration.py`, pure, mirrors
+`AlphaCorroborationEngine`'s design exactly) cross-checks the trade against the organization's own
+`EnterprisePosition` holdings (reusing `_load_enterprise_positions()`, factored out of the
+Opportunity Engine's read path above) — a same-market, same-direction position becomes
+`supporting_data`, an opposing one becomes a `risk`, both with an `enterprise_position:` citation
+— so the organization's own book, not just abstract market signals, is now part of what the
+Investment Committee (`BullAgent`/`SkepticAgent`) reasons about. Gated on
+`trade.organization_id is not None`, so every platform-wide trade this pass doesn't touch. A new
+chat topic, `ChatAgent._enterprise_trade_idea` (routed from phrasing like "generate a trade idea
+for our organization", gated by the new `enterprise_trading.generate` permission — TRADER only,
+mirroring `enterprise_opportunities.generate`), calls it and reports either the generated trade
+(direction, catalysts, supporting data, risks, approval status) or an honest "no trade idea right
+now" when the strategy agent's own data-driven SKIP fires that cycle (see section 10 and
+`strategy/directional.py`) — never a fabricated recommendation.
+
 **Implemented — Enterprise Digital Twin overlay**: `GET /alpha/enterprise/pipeline-overlay`
 (`enterprise_data.query`) returns the same public pipeline digital twin `GET
 /fundamentals/pipeline/graph` returns, plus `overlay.assets` — the caller's own organization's
@@ -955,14 +981,12 @@ marker pinned to its node.
 
 **Not yet built**: a scheduled/automatic opportunity-generation cadence (admin/user-triggered
 only, via `POST /alpha/enterprise/opportunities/generate`); opportunity types beyond the two
-documented above (no volatility/curve-shape/basis-specific opportunity detection); the
-Enterprise-specific Chief Trading Agent integrated into the Chief Trading Agent's own
-trade-generation reasoning itself (today it is a standalone chat topic, not wired into
-`ChiefTradingAgent`/`InvestmentCommittee`); fine-grained per-dataset entitlement enforcement on
-either the chat tool or the pipeline overlay (both scoped by organization only, per above);
-`FACILITY`-domain overlay fields beyond a single pinned point (no polygon/area assets, no
-per-asset detail panel); and real database-level Row Level Security, which remains the one
-piece of the original Milestone 9/10 scope not built anywhere in this codebase.
+documented above (no volatility/curve-shape/basis-specific opportunity detection); fine-grained
+per-dataset entitlement enforcement on the chat tools or the pipeline overlay (all scoped by
+organization only, per above); `FACILITY`-domain overlay fields beyond a single pinned point (no
+polygon/area assets, no per-asset detail panel); and real database-level Row Level Security,
+which remains the one piece of the original Milestone 9/10 scope not built anywhere in this
+codebase.
 
 ## 12. Transparency and explainability
 

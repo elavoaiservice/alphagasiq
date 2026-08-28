@@ -28,6 +28,14 @@ class BaseAgent(ABC):
 
     def __init__(self, llm: LLMProvider | None = None):
         self.llm = llm or MockLLMProvider()
+        self.system_instructions: str | None = None
+        """Agent-specific system prompt override, applied on top of whatever a
+        subclass's `_execute()` builds as its user-turn prompt. `None` (the default)
+        means "use the subclass's built-in behavior" -- most agents don't set a
+        `system=` at all today. Set by `AppState.apply_production_agent_version()`
+        (docs/agent-governance.md §4) when a `PRODUCTION` `AgentVersionRow` carries
+        non-empty `system_instructions`, so a promoted version actually changes what
+        the live agent sends to the LLM instead of only being recorded for history."""
 
     @abstractmethod
     async def _execute(self, **inputs: Any) -> "AgentOutcome": ...

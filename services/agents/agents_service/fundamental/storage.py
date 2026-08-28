@@ -53,7 +53,9 @@ class StorageAgent(BaseAgent):
             f"average of {five_year_average_bcf:.0f} Bcf and last year's {last_year_bcf:.0f} Bcf. "
             "Summarize the storage picture in two sentences."
         )
-        llm_response = await self.llm.complete([LLMMessage(role="user", content=prompt)])
+        llm_response = await self.llm.complete(
+            [LLMMessage(role="user", content=prompt)], system=self.system_instructions
+        )
 
         reasoning = (
             f"Forecasting a {forecast.forecast_bcf:+.0f} Bcf move for the week ending "

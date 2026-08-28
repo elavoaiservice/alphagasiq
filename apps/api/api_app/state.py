@@ -15,7 +15,7 @@ import logging
 from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
 
-from agent_sdk import build_event_bus, get_default_llm_provider
+from agent_sdk import build_event_bus, build_llm_provider, get_default_llm_provider
 from agents_service import (
     BacktestingAgent,
     ChiefInvestmentAgent,
@@ -27,6 +27,7 @@ from agents_service import (
     PowerMarketAgent,
     RegimeDetectionAgent,
     RelativeValueAgent,
+    ResearchCycleResult,
 )
 from alpha_service import (
     AgentAlphaScoreEngine,
@@ -49,7 +50,13 @@ from data_service.providers.mock_market_data import MockCMEProvider, MockICEProv
 from data_service.providers.mock_news import MockNewsProvider
 from data_service.registry import build_default_registry
 from db import SqlAppRepository
-from enterprise_data_service import EnterpriseOpportunityEngine, EnterprisePosition, ModelRoutingEngine, RetentionEngine
+from enterprise_data_service import (
+    EnterpriseCorroborationEngine,
+    EnterpriseOpportunityEngine,
+    EnterprisePosition,
+    ModelRoutingEngine,
+    RetentionEngine,
+)
 from fundamentals_service.lng import LNGTerminalState, compute_netback
 from fundamentals_service.pipeline_graph import PipelineGraph, build_default_pipeline_graph
 from fundamentals_service.pipeline_graph_neo4j import sync_pipeline_graph_via_neo4j
@@ -156,6 +163,7 @@ class AppState:
         self.model_routing_engine = ModelRoutingEngine()
         self.retention_engine = RetentionEngine()
         self.enterprise_opportunity_engine = EnterpriseOpportunityEngine()
+        self.enterprise_corroboration_engine = EnterpriseCorroborationEngine()
         # Bounded caches of the most recently detected signals/impact analyses/
         # consensus views, kept in-memory alongside the durable `alpha_signals`/
         # `alpha_impact_analyses`/`alpha_consensus_views` tables so the (synchronous)
@@ -240,6 +248,9 @@ class AppState:
                 ]
             )
             await self._seed_initial_agent_versions()
+            for agent_type in agent_catalog.IMPLEMENTED_AGENT_TYPES:
+                if agent_type != "RISK_GOVERNOR":
+                    await self.apply_production_agent_version(agent_type)
             await self._hydrate_from_repo()
             await self._seed_market_and_fundamentals()
             await self._run_initial_research_cycle()
@@ -271,6 +282,44 @@ class AppState:
             )
             for next_status in ("TESTING", "APPROVED", "PRODUCTION"):
                 draft = await self.repo.transition_agent_version_status(draft["id"], next_status, actor=None)
+
+    async def apply_production_agent_version(self, agent_type: str) -> bool:
+        """Closes the gap `AgentVersionRow`'s docstring calls out: makes a `PRODUCTION`
+        version actually change what the live agent does, instead of only being
+        recorded for history (docs/agent-governance.md §4). Reads the agent_type's
+        current `PRODUCTION` `AgentVersionRow` and applies it to the live `BaseAgent`
+        instance resolved via `agent_catalog.resolve_agent_instance`:
+
+        - `system_instructions` is copied onto `instance.system_instructions` verbatim
+          (every agent's `_execute()` now forwards it as `system=` on every LLM call).
+        - `model_name`, if set, rebuilds `instance.llm` via `build_llm_provider()` so the
+          agent talks to the newly-approved model on its next call. An empty
+          `model_name` leaves the existing provider in place (a version can change only
+          the prompt without also having to pin a model).
+
+        Also handles the "no PRODUCTION version exists" case honestly: resets
+        `instance.system_instructions` to `None` (no override) rather than leaving a
+        stale prompt in place, which matters when a rollback (`ROLLED_BACK` is a
+        terminal transition straight off a `PRODUCTION` row -- `_AGENT_VERSION_
+        TRANSITIONS` never auto-restores a prior version) leaves an agent_type with no
+        current PRODUCTION row at all.
+
+        Returns False when there's no live instance for this agent_type (e.g.
+        `NEWS_INTELLIGENCE`, `RISK_GOVERNOR`) or no `PRODUCTION` version currently
+        exists -- both real, expected states, not errors -- and True once the instance
+        is confirmed in sync with a real PRODUCTION row. Called at boot right after
+        `_seed_initial_agent_versions()` and from the admin transition endpoint every
+        time a version is promoted to `PRODUCTION` or rolled back, so the live agents
+        always match whatever is currently recorded as PRODUCTION."""
+        instance = agent_catalog.resolve_agent_instance(self, agent_type)
+        if instance is None:
+            return False
+        production = await self.repo.get_production_agent_version(agent_type)
+        instance.system_instructions = (production or {}).get("system_instructions") or None
+        model_name = (production or {}).get("model_name")
+        if model_name:
+            instance.llm = build_llm_provider(model_name)
+        return production is not None
 
     async def _hydrate_from_repo(self) -> None:
         """Reloads every durable trading object left over from a previous process
@@ -719,12 +768,14 @@ class AppState:
         )
         return results, comparison
 
-    async def run_chief_trading_cycle(self) -> dict:
-        """The Chief Trading Agent's on-demand research cycle -- the logic behind both
-        `POST /agents/chief-trading/run` and (Milestone 8) `POST /admin/agents/
-        CHIEF_TRADING_AGENT/run`. Deliberately lighter than boot's
-        `_run_initial_research_cycle` (no pipeline/quant re-run) since this is a manual,
-        on-demand trigger of just the fundamentals -> strategy -> committee pipeline."""
+    async def _run_chief_trading_research(self) -> ResearchCycleResult:
+        """The fundamentals -> strategy pipeline shared by `run_chief_trading_cycle()`
+        (platform-wide, on-demand) and `generate_enterprise_trade_idea()` (Milestone
+        10 follow-up, org-scoped): runs the Chief Trading Agent's research cycle,
+        appends every sub-agent's `AgentResult` to `agent_execution_log`, and runs
+        AlphaSignal detection over the result -- everything both callers need before
+        deciding what to do with `result.trade_ideas`. Factored out rather than
+        duplicated so both trade-generation paths log and detect signals identically."""
         current_price = self.market_curve[0].value if self.market_curve else 3.0
         week_balance = sum(b.balance_bcf for b in self.balances[-7:])
         result = await self.chief_trading_agent.run_research_cycle(
@@ -747,6 +798,15 @@ class AppState:
         await self._run_alpha_signal_detection(
             research_result=result, lng_result=None, power_result=None, pipeline_result=None
         )
+        return result
+
+    async def run_chief_trading_cycle(self) -> dict:
+        """The Chief Trading Agent's on-demand research cycle -- the logic behind both
+        `POST /agents/chief-trading/run` and (Milestone 8) `POST /admin/agents/
+        CHIEF_TRADING_AGENT/run`. Deliberately lighter than boot's
+        `_run_initial_research_cycle` (no pipeline/quant re-run) since this is a manual,
+        on-demand trigger of just the fundamentals -> strategy -> committee pipeline."""
+        result = await self._run_chief_trading_research()
 
         new_approvals = []
         for trade in result.trade_ideas:
@@ -758,6 +818,35 @@ class AppState:
             "new_approval_ids": [a.id for a in new_approvals],
             "chief_summary": result.chief.reasoning_summary if result.chief else None,
         }
+
+    async def generate_enterprise_trade_idea(self, *, organization_id: str) -> Approval | None:
+        """Milestone 10 follow-up (docs/alpha-intelligence.md section 11.7): the
+        "Enterprise-specific Chief Trading Agent" wired into the actual trade-
+        generation/committee reasoning loop -- `ChatAgent._enterprise_data_query`
+        already lets an enterprise customer *list* their registered datasets, but
+        nothing before this generated a trade idea that actually incorporates an
+        organization's own proprietary data. Runs the same research cycle
+        `run_chief_trading_cycle()` runs (via the shared `_run_chief_trading_
+        research()` helper), tags the resulting trade idea with `organization_id`
+        so `submit_trade_idea()`'s enterprise corroboration step (`_corroborate_
+        trade_with_enterprise_data`) cross-checks it against the organization's own
+        positions before the Investment Committee deliberates, and submits it
+        through the exact same `submit_trade_idea()` choke point every other trade
+        idea goes through -- no separate, weaker trade-generation path for
+        enterprise customers.
+
+        `DirectionalStrategyAgent` (the only strategy agent in the pipeline today)
+        produces at most one trade idea per research cycle, so only
+        `result.trade_ideas[0]` is ever used. Returns `None` -- a real, expected
+        outcome, not an error -- when this cycle produced no trade idea at all,
+        e.g. the strategy agent's own data-driven SKIP when storage/weather
+        signals disagree (see `strategy/directional.py`); the caller should say
+        "no trade idea right now" honestly rather than fabricating one."""
+        result = await self._run_chief_trading_research()
+        if not result.trade_ideas:
+            return None
+        trade = result.trade_ideas[0].model_copy(update={"organization_id": organization_id})
+        return await self.submit_trade_idea(trade)
 
     async def _disabled_agent_types(self) -> frozenset[str]:
         """The real enforcement behind an admin's agent enable/disable/pause action
@@ -870,6 +959,7 @@ class AppState:
 
     async def submit_trade_idea(self, trade: TradeIdea) -> Approval:
         trade = self._corroborate_trade_with_alpha_intelligence(trade)
+        trade = await self._corroborate_trade_with_enterprise_data(trade)
         self.trade_ideas[trade.trade_id] = trade
 
         # Attach the Quantitative Team's current forecast for this instrument, if any,
@@ -1298,18 +1388,16 @@ class AppState:
         )
         return result
 
-    async def generate_enterprise_opportunities(self, *, organization_id: str) -> list[EnterpriseOpportunity]:
-        """`EnterpriseOpportunityEngine`'s integration point (docs/alpha-intelligence.md
-        section 11.7, Milestone 10): cross-references `organization_id`'s own
-        `POSITION`/`PORTFOLIO`-domain enterprise records against recent Alpha
-        Intelligence signals/consensus, persists every candidate as a `PENDING`
-        `EnterpriseOpportunity`, and publishes `OPPORTUNITY_PROPOSED`. Always scoped
-        to one organization's own registered datasets -- there is no platform-wide
-        opportunity feed, and this does not yet check per-dataset
-        `EnterpriseDataEntitlement` grants (docs/alpha-intelligence.md section 11.2
-        already flags that non-admin, per-dataset entitlement enforcement isn't
-        wired into any read path yet; this reuses that same honest limitation
-        rather than pretending to solve it here)."""
+    async def _load_enterprise_positions(self, organization_id: str) -> list[EnterprisePosition]:
+        """Reads `organization_id`'s own `POSITION`/`PORTFOLIO`-domain enterprise
+        records and parses each into an `EnterprisePosition` (silently skipping any
+        record `EnterprisePosition.from_record` can't recognize a market/instrument
+        field on -- see that method's docstring). Factored out of
+        `generate_enterprise_opportunities()` so `_corroborate_trade_with_enterprise_
+        data()` (docs/alpha-intelligence.md section 11, Milestone 10 follow-up) can
+        reuse the exact same read path rather than duplicating it. Same honest
+        limitation both call sites share: this does not yet check per-dataset
+        `EnterpriseDataEntitlement` grants."""
         datasets = await self.repo.list_enterprise_datasets(organization_id=organization_id)
         position_datasets = [
             d for d in datasets if d["domain"] in (EnterpriseDataDomain.POSITION.value, EnterpriseDataDomain.PORTFOLIO.value)
@@ -1323,6 +1411,45 @@ class AppState:
                 )
                 if pos is not None:
                     positions.append(pos)
+        return positions
+
+    async def _corroborate_trade_with_enterprise_data(self, trade: TradeIdea) -> TradeIdea:
+        """Milestone 10 follow-up (docs/alpha-intelligence.md section 11): the
+        Enterprise Data Platform's own analog of `_corroborate_trade_with_alpha_
+        intelligence` -- cross-checks a trade against the trade's own organization's
+        proprietary `EnterprisePosition` holdings via `EnterpriseCorroborationEngine`
+        and merges the result onto `supporting_data`/`source_citations`/`risks`
+        before the Investment Committee ever sees it. A no-op (returns `trade`
+        unchanged) whenever `trade.organization_id is None` -- most trades are
+        platform-wide, not generated for a specific enterprise customer, and there is
+        no principled organization to load positions for in that case."""
+        if trade.organization_id is None:
+            return trade
+        positions = await self._load_enterprise_positions(trade.organization_id)
+        corroboration = self.enterprise_corroboration_engine.corroborate(trade=trade, positions=positions)
+        if corroboration.is_empty:
+            return trade
+        return trade.model_copy(
+            update={
+                "supporting_data": trade.supporting_data + corroboration.additional_supporting_data,
+                "source_citations": trade.source_citations + corroboration.additional_citations,
+                "risks": trade.risks + corroboration.additional_risks,
+            }
+        )
+
+    async def generate_enterprise_opportunities(self, *, organization_id: str) -> list[EnterpriseOpportunity]:
+        """`EnterpriseOpportunityEngine`'s integration point (docs/alpha-intelligence.md
+        section 11.7, Milestone 10): cross-references `organization_id`'s own
+        `POSITION`/`PORTFOLIO`-domain enterprise records against recent Alpha
+        Intelligence signals/consensus, persists every candidate as a `PENDING`
+        `EnterpriseOpportunity`, and publishes `OPPORTUNITY_PROPOSED`. Always scoped
+        to one organization's own registered datasets -- there is no platform-wide
+        opportunity feed, and this does not yet check per-dataset
+        `EnterpriseDataEntitlement` grants (docs/alpha-intelligence.md section 11.2
+        already flags that non-admin, per-dataset entitlement enforcement isn't
+        wired into any read path yet; this reuses that same honest limitation
+        rather than pretending to solve it here)."""
+        positions = await self._load_enterprise_positions(organization_id)
 
         since = datetime.now(timezone.utc) - timedelta(hours=24 * 30)
         signals_raw = await self.repo.list_signals(organization_id=organization_id, since=since, limit=200)

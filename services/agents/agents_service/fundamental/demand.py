@@ -45,7 +45,9 @@ class DemandAgent(BaseAgent):
             f"Total Lower-48 demand is averaging {avg_demand_7d:.2f} Bcf/d, a {trend_bcf_d:+.2f} "
             "Bcf/d change vs. the prior week. Summarize in two sentences for a trading desk."
         )
-        llm_response = await self.llm.complete([LLMMessage(role="user", content=prompt)])
+        llm_response = await self.llm.complete(
+            [LLMMessage(role="user", content=prompt)], system=self.system_instructions
+        )
 
         direction = "rising" if trend_bcf_d > 0.1 else "falling" if trend_bcf_d < -0.1 else "flat"
         reasoning = (

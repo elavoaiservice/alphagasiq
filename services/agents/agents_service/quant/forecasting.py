@@ -43,7 +43,9 @@ class ForecastingAgent(BaseAgent):
             f"({forecast.return_forecast:+.3f} return, {forecast.up_probability:.0%} up-probability). "
             "Summarize in one sentence for a trading desk, noting this is one model's view, not certainty."
         )
-        llm_response = await self.llm.complete([LLMMessage(role="user", content=prompt)])
+        llm_response = await self.llm.complete(
+            [LLMMessage(role="user", content=prompt)], system=self.system_instructions
+        )
         reasoning = (
             f"{model_type.value} projects {instrument} to {forecast.price_forecast:.3f} over {horizon.value} "
             f"(return {forecast.return_forecast:+.3f}, up-probability {forecast.up_probability:.0%}, "

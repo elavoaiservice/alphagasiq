@@ -565,11 +565,19 @@ or withheld, never silently included in the facts handed to the LLM. `GET
 /alpha/enterprise/pipeline-overlay` is the Enterprise Digital Twin overlay: the public
 pipeline graph plus the caller's own organization's `ASSET`/`FACILITY`-domain enterprise
 records pinned onto real nodes in it (`PipelineOverlayPoint.from_record`/`build_overlay`, pure)
-— the pipeline map page gained a "Show my enterprise assets" toggle. **Honest about scope**:
-both the chat tool and the pipeline overlay are scoped by organization only, not by
+— the pipeline map page gained a "Show my enterprise assets" toggle. A follow-up pass wired the
+Enterprise-specific Chief Trading Agent into actual trade generation:
+`AppState.generate_enterprise_trade_idea(organization_id=...)` runs the same
+fundamentals-\>strategy pipeline `run_chief_trading_cycle()` runs, tags the resulting trade with
+`organization_id`, and submits it through the normal `submit_trade_idea()` path, which now also
+runs `EnterpriseCorroborationEngine`
+(`services/enterprise_data/enterprise_data_service/trading_integration.py`, pure, mirrors
+`AlphaCorroborationEngine`) — a same-market position in the organization's own book becomes
+supporting data, an opposing one becomes a risk, both reaching `BullAgent`/`SkepticAgent` in
+committee deliberation. A new chat topic, `ChatAgent._enterprise_trade_idea` (gated by new
+`enterprise_trading.generate`, TRADER only), triggers it. **Honest about scope**: both the
+data-query chat tool and the pipeline overlay are scoped by organization only, not by
 fine-grained per-dataset `EnterpriseDataEntitlement` grants (a gap Milestone 8's own write-up
-already flagged and this doesn't solve); opportunity generation is admin/user-triggered only,
-no scheduled cadence; and the Enterprise-specific Chief Trading Agent is a standalone chat
-topic, not yet wired into `ChiefTradingAgent`/`InvestmentCommittee`'s own reasoning. The only
-piece of the original Milestone 9/10 scope not built anywhere in this codebase is real
-database-level Row Level Security.
+already flagged and this doesn't solve); opportunity generation is admin/user-triggered only, no
+scheduled cadence. The only piece of the original Milestone 9/10 scope not built anywhere in
+this codebase is real database-level Row Level Security.

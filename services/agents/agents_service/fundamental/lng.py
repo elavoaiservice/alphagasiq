@@ -60,7 +60,9 @@ class LNGAgent(BaseAgent):
             f"{total_capacity:.2f} Bcf/d nameplate capacity across {len(terminals)} terminals."
             f"{netback_sentence} Summarize the LNG demand picture in two sentences for a trading desk."
         )
-        llm_response = await self.llm.complete([LLMMessage(role="user", content=prompt)])
+        llm_response = await self.llm.complete(
+            [LLMMessage(role="user", content=prompt)], system=self.system_instructions
+        )
 
         classification = DataClassification.SIMULATED if is_simulated else DataClassification.PUBLIC
         reasoning = (

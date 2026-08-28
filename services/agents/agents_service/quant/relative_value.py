@@ -36,7 +36,9 @@ class RelativeValueAgent(BaseAgent):
             f"Calendar spread signal: {spread_signal.direction} ({spread_signal.rationale}). "
             "One sentence combining both for a trading desk."
         )
-        llm_response = await self.llm.complete([LLMMessage(role="user", content=prompt)])
+        llm_response = await self.llm.complete(
+            [LLMMessage(role="user", content=prompt)], system=self.system_instructions
+        )
         reasoning = (
             f"HH-TTF netback: {netback_signal.direction}. Calendar spread: {spread_signal.direction}. "
             f"{llm_response.content}"

@@ -57,7 +57,9 @@ class PipelineAgent(BaseAgent):
             f"corridors, with {len(constrained)} constrained and {len(maintenance_events)} under maintenance. "
             "Summarize the pipeline-network picture in two sentences for a trading desk."
         )
-        llm_response = await self.llm.complete([LLMMessage(role="user", content=prompt)])
+        llm_response = await self.llm.complete(
+            [LLMMessage(role="user", content=prompt)], system=self.system_instructions
+        )
 
         reasoning = (
             f"{len(constrained)} corridor(s) are constrained (>=90% utilized or flagged) out of "

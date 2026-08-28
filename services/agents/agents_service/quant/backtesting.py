@@ -65,7 +65,9 @@ class BacktestingAgent(BaseAgent):
             f"{best_model[0]} had the best directional accuracy ({best_model[1]['directional_accuracy']:.0%}). "
             "One sentence for a trading desk, noting sample size limits confidence."
         )
-        llm_response = await self.llm.complete([LLMMessage(role="user", content=prompt)])
+        llm_response = await self.llm.complete(
+            [LLMMessage(role="user", content=prompt)], system=self.system_instructions
+        )
         reasoning = (
             f"{best_model[0]} leads on directional accuracy ({best_model[1]['directional_accuracy']:.0%}) "
             f"across {best_model[1]['n_folds']} walk-forward folds. {llm_response.content}"

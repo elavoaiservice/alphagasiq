@@ -4,9 +4,12 @@
 **A production agent definition is never overwritten.** Every change to an agent's
 instructions, model, or thresholds creates a new `AgentVersionRow` (`packages/db`)
 rather than mutating an existing one. "Promoting a version" means the row's status
-becomes `PRODUCTION` -- it does not regenerate or replace the agent's Python class;
-wiring a per-agent runtime read of its `PRODUCTION` row into `services/agents` is real
-follow-up work, not assumed here (see `docs/agent-governance.md` §4).
+becomes `PRODUCTION` -- it does not regenerate or replace the agent's Python class.
+`transition_version` below calls `AppState.apply_production_agent_version()` on every
+`PRODUCTION`/`ROLLED_BACK` transition, which copies `system_instructions`/`model_name`
+onto the live `BaseAgent` instance resolved via `agent_catalog.resolve_agent_instance`
+(see `docs/agent-governance.md` §4) -- so promoting a version really does change what
+the agent sends to the LLM on its next run, not only what's recorded for history.
 
 **No step may be skipped.** The fixed lifecycle DRAFT -> TESTING -> APPROVED ->
 PRODUCTION -> (RETIRED | ROLLED_BACK) is enforced by `SqlAppRepository.
@@ -142,6 +145,7 @@ async def transition_version(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     if body.status in ("PRODUCTION", "ROLLED_BACK"):
+        await state.apply_production_agent_version(agent_type)
         await record_audit_event(
             state,
             actor=admin,

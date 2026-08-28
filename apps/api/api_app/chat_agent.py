@@ -96,6 +96,7 @@ _TOOL_PERMISSIONS: dict[str, str] = {
     "replay_snapshot": "alpha_replay.view",
     "overnight_brief": "alpha_brief.view",
     "enterprise_data_query": "enterprise_data.query",
+    "enterprise_trade_idea": "enterprise_trading.generate",
     "what_changed": "dashboard.view",
     "todays_move": "news.view",
     "general_status": "dashboard.view",
@@ -135,6 +136,10 @@ class ChatAgent:
             return "agent_consensus"
         elif "what have we learned" in q or "lesson" in q or "past decision" in q or "alphamemory" in q or "decision memory" in q:
             return "decision_memory"
+        elif "trade idea" in q and (
+            "enterprise" in q or "our organization" in q or "my organization" in q or "for us" in q or "for our" in q
+        ):
+            return "enterprise_trade_idea"
         elif "my data" in q or "our data" in q or "enterprise data" in q or "my position" in q or "our position" in q or "my proprietary data" in q:
             return "enterprise_data_query"
         elif "time machine" in q or "what did we know" in q or "as of" in q or "alphareplay" in q or "replay" in q:
@@ -181,6 +186,8 @@ class ChatAgent:
             return self._overnight_brief(state)
         elif topic == "enterprise_data_query":
             return await self._enterprise_data_query(state, user)
+        elif topic == "enterprise_trade_idea":
+            return await self._enterprise_trade_idea(state, user)
         elif topic == "what_changed":
             return self._what_changed(q, state)
         elif topic == "todays_move":
@@ -510,6 +517,51 @@ class ChatAgent:
             "\n".join(lines),
             citations,
             {"dataset_count": len(datasets), "withheld_count": withheld_count},
+        )
+
+    async def _enterprise_trade_idea(self, state: AppState, user: User) -> ToolResult:
+        """Milestone 10 follow-up (docs/alpha-intelligence.md section 11.7): unlike
+        `_enterprise_data_query` (which only *lists* the caller's registered
+        datasets), this actually generates a trade idea via `AppState.
+        generate_enterprise_trade_idea()` -- the same fundamentals -> strategy ->
+        committee pipeline every other trade idea goes through, with the
+        organization's own proprietary positions cross-checked in
+        (`EnterpriseCorroborationEngine`) before the Investment Committee ever sees
+        it. Honest about the data-driven SKIP case: when the strategy agent
+        produces no trade idea this cycle (see `strategy/directional.py`), this says
+        so plainly rather than fabricating one."""
+        organization_id = await resolve_organization_id(user, state)
+        if organization_id is None:
+            return ToolResult(
+                "I can't identify your organization, so I have no enterprise-scoped trade idea to generate.",
+                [],
+                {},
+            )
+        approval = await state.generate_enterprise_trade_idea(organization_id=organization_id)
+        if approval is None:
+            return ToolResult(
+                "No trade idea right now -- this cycle's strategy signals didn't clear the bar for a "
+                "recommendation. Ask again after the next research cycle.",
+                [],
+                {"organization_id": organization_id},
+            )
+        trade = state.trade_ideas[approval.trade_id]
+        content = (
+            f"Generated a {trade.direction.value} trade idea for {trade.instrument} (confidence "
+            f"{trade.confidence:.0%}), cross-checked against your organization's own proprietary "
+            f"positions. Catalysts: {', '.join(trade.catalysts) or 'none'}. Supporting data: "
+            f"{', '.join(trade.supporting_data) or 'none'}. Risks: {', '.join(trade.risks) or 'none'}. "
+            f"Current approval status: {approval.state.value}."
+        )
+        return ToolResult(
+            content,
+            [{"source": s, "reference": s} for s in trade.source_citations],
+            {
+                "organization_id": organization_id,
+                "trade_id": str(trade.trade_id),
+                "approval_id": str(approval.id),
+                "approval_state": approval.state.value,
+            },
         )
 
     def _show_evidence(self, q: str, state: AppState) -> ToolResult:

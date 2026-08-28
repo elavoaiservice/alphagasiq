@@ -28,7 +28,9 @@ class SkepticAgent(BaseAgent):
             f"Attempt to falsify this thesis: {trade.thesis}. What single piece of evidence, if it "
             "turned out to be wrong or stale, would break the trade? One or two sentences."
         )
-        response = await self.llm.complete([LLMMessage(role="user", content=prompt)])
+        response = await self.llm.complete(
+            [LLMMessage(role="user", content=prompt)], system=self.system_instructions
+        )
         case = response.content if "MOCK LLM" not in response.content else (
             "Skeptic case: "
             + (

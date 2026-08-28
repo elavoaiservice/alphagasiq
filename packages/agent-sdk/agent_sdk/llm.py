@@ -50,6 +50,10 @@ class MockLLMProvider(LLMProvider):
 
     model = "mock-llm-deterministic"
 
+    def __init__(self, model: str | None = None) -> None:
+        if model:
+            self.model = model
+
     async def complete(
         self,
         messages: list[LLMMessage],
@@ -124,3 +128,18 @@ def get_default_llm_provider() -> LLMProvider:
 
         return AnthropicLLMProvider()
     return MockLLMProvider()
+
+
+def build_llm_provider(model: str) -> LLMProvider:
+    """Like `get_default_llm_provider()` but pins a specific model, so a promoted
+    `AgentVersionRow.model_name` (docs/agent-governance.md §4) actually changes which
+    model the live agent talks to instead of only being recorded for history. Falls
+    back to the deterministic mock (pinned to `model` for visibility in tests/logs)
+    when no `ANTHROPIC_API_KEY` is configured, same as `get_default_llm_provider()`."""
+    import os
+
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        from .anthropic_provider import AnthropicLLMProvider
+
+        return AnthropicLLMProvider(model=model)
+    return MockLLMProvider(model=model)

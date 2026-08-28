@@ -19,7 +19,9 @@ class BullAgent(BaseAgent):
             "Construct the strongest bullish case for this trade in 2-3 sentences, using only the "
             "catalysts and supporting data already cited — do not invent new facts."
         )
-        response = await self.llm.complete([LLMMessage(role="user", content=prompt)])
+        response = await self.llm.complete(
+            [LLMMessage(role="user", content=prompt)], system=self.system_instructions
+        )
         case = response.content if "MOCK LLM" not in response.content else (
             f"Bull case: {trade.thesis} is reinforced by {', '.join(trade.catalysts) or 'the stated catalysts'}, "
             f"supporting a {trade.probability_success:.0%} probability of reaching the {trade.target} target."

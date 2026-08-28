@@ -189,6 +189,95 @@ def test_optimization_propose_requires_super_admin(client):
     assert r.status_code == 403  # dev-mode ADMIN lacks admin.agent_optimization
 
 
+def _promote_to_production(client, headers, agent_type: str, version_id: str) -> None:
+    for target in ("TESTING", "APPROVED", "PRODUCTION"):
+        r = client.post(
+            f"/api/v1/admin/agents/{agent_type}/versions/{version_id}/transition",
+            json={"status": target},
+            headers=headers,
+        )
+        assert r.status_code == 200, r.text
+
+
+def test_promoting_a_version_applies_system_instructions_to_the_live_agent(client):
+    """#1: agent versioning -> live execution. Promoting a PRODUCTION version with
+    `system_instructions` set must actually change what the live SupplyAgent sends as
+    `system=` on its next LLM call, not just be recorded for history
+    (docs/agent-governance.md §4)."""
+    from api_app import state as state_module
+
+    headers = _admin_headers(client)
+    created = client.post(
+        "/api/v1/admin/agents/SUPPLY/versions",
+        json={"version": "0.2.0-live-test", "system_instructions": "Cite EIA figures explicitly."},
+        headers=headers,
+    ).json()
+    _promote_to_production(client, headers, "SUPPLY", created["id"])
+
+    live_agent = state_module._state.chief_trading_agent.supply_agent
+    assert live_agent.system_instructions == "Cite EIA figures explicitly."
+
+
+def test_rolling_back_resets_live_agent_system_instructions(client):
+    """A ROLLED_BACK transition is terminal and never auto-restores a prior version
+    (`_AGENT_VERSION_TRANSITIONS`), so once it fires the agent_type has no PRODUCTION
+    row at all -- the live agent must fall back to no override rather than keeping a
+    stale prompt."""
+    from api_app import state as state_module
+
+    headers = _admin_headers(client)
+    created = client.post(
+        "/api/v1/admin/agents/SUPPLY/versions",
+        json={"version": "0.2.1-live-test", "system_instructions": "Temporary override."},
+        headers=headers,
+    ).json()
+    version_id = created["id"]
+    _promote_to_production(client, headers, "SUPPLY", version_id)
+
+    live_agent = state_module._state.chief_trading_agent.supply_agent
+    assert live_agent.system_instructions == "Temporary override."
+
+    r = client.post(
+        f"/api/v1/admin/agents/SUPPLY/versions/{version_id}/transition",
+        json={"status": "ROLLED_BACK"},
+        headers=headers,
+    )
+    assert r.status_code == 200
+    assert live_agent.system_instructions is None
+
+
+def test_promoting_a_version_with_approved_model_rebuilds_live_llm_provider(client):
+    """A PRODUCTION version's `model_name` must rebuild the live agent's `llm`
+    provider via `build_llm_provider()` so the agent actually talks to the newly
+    approved model on its next call."""
+    from api_app import state as state_module
+
+    admin_headers = _admin_headers(client)
+    super_headers = _super_admin_headers(client, "modeladmin@realcompany.com")
+
+    model = client.post(
+        "/api/v1/admin/models",
+        json={"provider": "AnthropicLLMProvider", "model_name": "claude-opus-5-test"},
+        headers=super_headers,
+    ).json()
+    approve = client.patch(
+        f"/api/v1/admin/models/{model['id']}/status",
+        json={"status": "APPROVED"},
+        headers=super_headers,
+    )
+    assert approve.status_code == 200
+
+    created = client.post(
+        "/api/v1/admin/agents/SUPPLY/versions",
+        json={"version": "0.2.2-live-test", "model_name": "claude-opus-5-test"},
+        headers=admin_headers,
+    ).json()
+    _promote_to_production(client, admin_headers, "SUPPLY", created["id"])
+
+    live_agent = state_module._state.chief_trading_agent.supply_agent
+    assert live_agent.llm.model == "claude-opus-5-test"
+
+
 def test_optimization_propose_creates_a_draft_with_performance_review(client):
     headers = _super_admin_headers(client, "optimizer@realcompany.com")
     r = client.post(
