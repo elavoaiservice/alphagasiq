@@ -988,6 +988,22 @@ class EnterpriseRecordRow(Base):
     ingested_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
 
 
+class EnterpriseWebhookStagedRowRow(Base):
+    """One row received via `POST /webhooks/enterprise-data/{source_id}`
+    (apps/api/api_app/routers/enterprise_webhooks.py) for a `WEBHOOK`-type
+    `EnterpriseDataSourceRow`, held here until an admin previews/ingests it
+    through the existing dataset flow -- the durable staging buffer
+    `enterprise_data_service.connector.WebhookConnector` reads from rather
+    than touching the network or a queue itself."""
+
+    __tablename__ = "enterprise_webhook_staged_rows"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    source_id: Mapped[str] = mapped_column(String(36), ForeignKey("enterprise_data_sources.id"), nullable=False)
+    row_data: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    received_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
 class EnterpriseDataEventRow(Base):
     """An ingestion-log entry for an `EnterpriseDataSourceRow` -- written by
     the admin "Test Connection" and "Sync Now" actions, the same pattern

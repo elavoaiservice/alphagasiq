@@ -146,9 +146,10 @@ summarize into a brief. Milestone 8 is marked "Implemented (foundation)" rather 
 (`MANUAL_UPLOAD`), while application-layer tenant-isolation enforcement and a
 `ModelRoutingPolicy`/`RetentionPolicy` were honestly still Milestone 9 scope at the time this
 paragraph was written (Milestone 9 has since closed that gap — see section 11.1/11.5/11.6).
-Database-level Row Level Security and most of the originally-envisioned admin tabs
-(Mappings/Lineage/Usage/Dependencies) remain Milestone 10+ scope — see section 11 for the
-exact built-vs-not-built line.
+The remaining five connector types (`WEBHOOK`/`REST_API`/`DATABASE`/`S3`/`SFTP`) have since been
+implemented end-to-end too — see section 11.3. Database-level Row Level Security and most of
+the originally-envisioned admin tabs (Mappings/Lineage/Usage/Dependencies) remain Milestone 10+
+scope — see section 11 for the exact built-vs-not-built line.
 
 ## 4. AlphaSignal™ (implemented)
 
@@ -826,16 +827,51 @@ enterprise_data_service/connector.py`) — `test_connection()`/`discover_schema(
 already established, trimmed from the original ten-method sketch
 (`connect`/`authenticate`/`incremental_sync`/`validate`/`normalize`/`disconnect` dropped) down
 to what's actually implementable without overengineering — `BaseDataProvider` itself only
-ships three methods, not its own doc's full list either. Exactly one connector type is
-implemented end-to-end: `ManualUploadConnector` (`MANUAL_UPLOAD`) — an admin supplies
-already-parsed tabular rows (the admin UI parses a pasted CSV client-side), no external network
-call, no credential, genuinely usable with zero paid subscriptions, the same discipline every
-`Mock*Provider` already establishes for public/licensed connectors. `REST_API`/`SFTP`/
-`DATABASE`/`S3`/`WEBHOOK` are declared on `EnterpriseConnectorType` for forward-compatibility
-only — a source of one of those types can be registered, but `build_connector()` returns a
-`NotImplementedConnector` for it, which reports `not_configured`/raises `NotImplementedError`
-honestly rather than silently behaving like `MANUAL_UPLOAD`. Real REST/SFTP/database/S3/webhook
-connector implementations remain future work.
+ships three methods, not its own doc's full list either. All six `EnterpriseConnectorType`
+values are implemented end-to-end, each following `EnterpriseDataSource`'s existing
+no-credential posture (`connection_config` carries only non-secret settings plus `*_env_var`
+fields naming an environment variable the operator provisions the actual secret into — the
+credential value itself never touches the object, the DB, or the admin API) and reporting
+`not_configured` honestly (mirroring `data_sdk.provider.NotImplementedProvider`) when its
+required configuration is missing, rather than silently behaving like another connector type
+or fabricating data:
+
+- `ManualUploadConnector` (`MANUAL_UPLOAD`) — an admin supplies already-parsed tabular rows
+  (the admin UI parses a pasted CSV client-side); no network call, no credential.
+- `WebhookConnector` (`WEBHOOK`) — an external system pushes rows to `POST /webhooks/
+  enterprise-data/{source_id}` (`apps/api/api_app/routers/enterprise_webhooks.py`), which
+  HMAC-SHA256-verifies the request against a secret named by `connection_config
+  ["signing_secret_env_var"]` and stages accepted rows durably (`EnterpriseWebhookStagedRowRow`)
+  — a source with no verifiable secret refuses all pushes rather than accepting unverified
+  data. The admin router's existing `test-connection`/dataset-schema-discovery/preview flow
+  non-destructively peeks at staged rows (`Repository.list_staged_enterprise_webhook_rows`);
+  `ingest` drains them (`drain_enterprise_webhook_rows`) so a row is ingested at most once.
+- `RestApiConnector` (`REST_API`) — a genuine outbound `httpx` pull against `connection_config
+  ["url"]`, the exact same "real call when configured, `not_configured` health otherwise"
+  posture `data_service.providers.eia.EIAProvider` already establishes for public market data.
+  `records_path` (dotted) extracts rows from a nested JSON envelope; without it, a top-level
+  list or a common wrapper key (`data`/`results`/`records`/`rows`/`items`) is tried.
+  `auth_header_env_var` names an environment variable whose value is sent as a header (default
+  `Authorization`).
+- `DatabaseConnector` (`DATABASE`) — a genuine `sqlalchemy` async connection to a
+  customer-provisioned database (`connection_config["connection_string_env_var"]` names the env
+  var holding the full URL), running a read-only `SELECT`/`WITH` statement from
+  `connection_config["query"]` — any other statement is refused before it ever reaches the
+  database.
+- `S3Connector` (`S3`) — a genuine `boto3` S3 (or any S3-compatible endpoint, via
+  `connection_config["endpoint_url"]` — e.g. a self-hosted MinIO, keeping this usable with zero
+  paid subscriptions) object listing + fetch under `connection_config["prefix"]`, parsing
+  `.json`/`.jsonl`/`.ndjson`/`.csv` objects into rows.
+- `SftpConnector` (`SFTP`) — a genuine `paramiko` SFTP session against a customer-provisioned
+  host (`connection_config["host"]`/`"username"`/`"remote_path"`, with
+  `password_env_var`/`private_key_env_var` naming the credential's environment variable),
+  fetching and parsing `connection_config["remote_path"]` the same way as an S3 object.
+
+Every real network/DB/SSH-touching connector accepts an injectable client (`http_client`/
+`client_factory`/`sftp_client_factory`) so `tests/enterprise_data/test_connector.py` exercises
+the actual fetch/parse logic without real credentials or internet access — `DatabaseConnector`
+is tested against a real ephemeral SQLite database via `aiosqlite` rather than a fake, since
+that's genuinely free to spin up in-process.
 
 ### 11.4 Admin onboarding, canonical model, and safeguards
 

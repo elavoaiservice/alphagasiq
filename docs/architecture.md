@@ -551,8 +551,8 @@ Six components plus a Chief Trading Agent integration layer, all documented in f
 customers combine their own data with this layer — sequenced deliberately *after* the six Alpha
 components and the Chief Trading Agent integration (Milestones 8-10), since they deliver real
 value against today's shared public/simulated dataset first. Milestone 8 (a `Workspace`/
-`EnterpriseDataSource`/`EnterpriseDataset`/`EnterpriseDataEntitlement` foundation plus one real
-connector) is implemented. Milestone 9 (the Alpha Intelligence Layer's own Milestone 9, not the
+`EnterpriseDataSource`/`EnterpriseDataset`/`EnterpriseDataEntitlement` foundation plus all six
+connector types) is implemented. Milestone 9 (the Alpha Intelligence Layer's own Milestone 9, not the
 access-model track's) is also implemented at the application layer: every `/alpha/*` list and
 get-by-id endpoint now enforces cross-organization data-visibility correctly
 (`resolve_organization_scope`/`record_is_visible`, `apps/api/api_app/entitlements.py`), plus a
@@ -725,13 +725,19 @@ customer's proprietary data, its registered datasets, dataset-level access grant
 one), ingested rows, and a test-connection/ingest event log. `services/
 enterprise_data/enterprise_data_service/connector.py`'s `BaseEnterpriseDataConnector` mirrors
 `data_sdk.provider.BaseDataProvider`'s shape (`test_connection`/`discover_schema`/`preview`/
-`ingest`/`health_check`); only `ManualUploadConnector` (`MANUAL_UPLOAD` — an admin supplies
-already-parsed rows, no external network call or credential) is implemented end-to-end, the
-same "must work with zero paid subscriptions" discipline every `Mock*Provider` already
-establishes. `EnterpriseDataSourceRow` deliberately carries no credential field, mirroring
-`DataFeedConfigRow`'s existing posture. Exposed via `/admin/workspaces(/{id}/members)` and
+`ingest`/`health_check`); all six `EnterpriseConnectorType` values are implemented end-to-end
+(`ManualUploadConnector`/`WebhookConnector` take rows from the request body / an HMAC-verified
+inbound-push staging buffer, `enterprise_webhook_staged_rows`; `RestApiConnector`/
+`DatabaseConnector`/`S3Connector`/`SftpConnector` pull live via `httpx`/`sqlalchemy`/`boto3`/
+`paramiko` from wherever the source's non-secret `connection_config` points, reporting
+`not_configured` when required config/credential is missing), the same "must work with zero
+paid subscriptions" discipline every `Mock*Provider` already establishes. `EnterpriseDataSourceRow`
+deliberately carries no credential field, mirroring `DataFeedConfigRow`'s existing posture —
+every connector resolves its actual secret from an environment variable named (never stored) in
+`connection_config`. Exposed via `/admin/workspaces(/{id}/members)` and
 `/admin/enterprise-data/sources(/{id}/test-connection|/datasets)`/`/admin/enterprise-data/
-datasets/{id}(/preview|/ingest|/records|/entitlements)` (new `admin.workspaces`/
+datasets/{id}(/preview|/ingest|/records|/entitlements)` plus the public, signature-verified
+`POST /webhooks/enterprise-data/{source_id}` ingress (new `admin.workspaces`/
 `admin.enterprise_data` permissions), plus new "Workspaces" and "Enterprise Data" admin console
 tabs. See `docs/alpha-intelligence.md` section 11 for the full built-vs-not-built design.
 

@@ -25,6 +25,7 @@ interface Source {
   classification: string;
   status: string;
   description: string;
+  connection_config: Record<string, unknown>;
   created_at: string;
 }
 
@@ -360,18 +361,27 @@ function SourceDetail({ source, token, onChanged }: { source: Source; token: str
       {message && <p className="text-xs text-terminal-warn">{message}</p>}
 
       {source.connector_type === "MANUAL_UPLOAD" ? (
-        <>
-          <CsvPasteBox value={testCsv} onChange={setTestCsv} label="Sample rows for test connection (optional)" />
-          <button onClick={testConnection} className="text-[10px] px-1.5 py-0.5 border border-terminal-border rounded hover:border-terminal-accent">
-            Test Connection
-          </button>
-        </>
+        <CsvPasteBox value={testCsv} onChange={setTestCsv} label="Sample rows for test connection (optional)" />
+      ) : source.connector_type === "WEBHOOK" ? (
+        <p className="text-[11px] text-terminal-muted">
+          External systems push rows to <code>POST /api/v1/webhooks/enterprise-data/{source.id}</code>,
+          signed with <code>X-AlphaGasIQ-Signature</code> (HMAC-SHA256 of the body, keyed by the
+          secret in the <code>signing_secret_env_var</code> environment variable named below).
+          Staged rows show up in "Sample rows for schema discovery" and dataset preview/ingest
+          below automatically.
+        </p>
       ) : (
         <p className="text-[11px] text-terminal-muted">
-          {source.connector_type} connectors are not implemented yet — declared for
-          forward-compatibility only (docs/alpha-intelligence.md section 11.3).
+          Pulls live from <code>connection_config</code> below (edit via the API — see
+          docs/alpha-intelligence.md section 11.3 for the fields each connector type reads).
         </p>
       )}
+      <div className="text-[10px] text-terminal-muted break-all">
+        connection_config: {JSON.stringify(source.connection_config) || "{}"}
+      </div>
+      <button onClick={testConnection} className="text-[10px] px-1.5 py-0.5 border border-terminal-border rounded hover:border-terminal-accent">
+        Test Connection
+      </button>
 
       <div>
         <div className="text-terminal-muted text-xs mb-1">Event Log</div>
@@ -501,6 +511,7 @@ export function EnterpriseDataConsole() {
     classification: "CUSTOMER_CONFIDENTIAL",
     description: "",
   });
+  const [connectionConfigText, setConnectionConfigText] = useState("{}");
 
   async function refresh() {
     if (!token) return;
@@ -517,13 +528,21 @@ export function EnterpriseDataConsole() {
   async function createSource() {
     if (!token || !draft.organization_id || !draft.name.trim()) return;
     setMessage(null);
+    let connection_config: Record<string, unknown> = {};
+    try {
+      connection_config = connectionConfigText.trim() ? JSON.parse(connectionConfigText) : {};
+    } catch {
+      setMessage("connection_config must be valid JSON.");
+      return;
+    }
     try {
       await apiPost(
         "/admin/enterprise-data/sources",
-        { ...draft, workspace_id: draft.workspace_id || null },
+        { ...draft, workspace_id: draft.workspace_id || null, connection_config },
         token
       );
       setDraft({ organization_id: "", workspace_id: "", name: "", connector_type: "MANUAL_UPLOAD", classification: "CUSTOMER_CONFIDENTIAL", description: "" });
+      setConnectionConfigText("{}");
       await refresh();
     } catch {
       setMessage("Could not create source.");
@@ -551,10 +570,12 @@ export function EnterpriseDataConsole() {
       <h1 className="panel-title">Enterprise Data</h1>
       <p className="text-[11px] text-terminal-muted">
         Combine an authorized customer&apos;s own proprietary data with the Alpha Intelligence
-        Layer (docs/alpha-intelligence.md section 11). Only MANUAL_UPLOAD connectors are
-        genuinely operable this milestone — REST/SFTP/database/S3/webhook connectors are
-        declared for forward-compatibility only, honestly reporting not_configured rather than
-        pretending to work.
+        Layer (docs/alpha-intelligence.md section 11). All six connector types
+        (MANUAL_UPLOAD/WEBHOOK/REST_API/DATABASE/S3/SFTP) genuinely pull or receive real data —
+        set the non-secret <code>connection_config</code> below (a URL, a bucket, a hostname —
+        never a credential value; each connector reads the actual secret from an environment
+        variable named there) and a connector missing its required configuration honestly
+        reports not_configured rather than pretending to work.
       </p>
       {message && <p className="text-xs text-terminal-bear">{message}</p>}
 
@@ -624,6 +645,15 @@ export function EnterpriseDataConsole() {
               </option>
             ))}
           </select>
+        </label>
+        <label className="flex flex-col gap-1 w-full">
+          connection_config (JSON — non-secret only, e.g. {"{"}"url": "https://...", "auth_header_env_var": "PARTNER_API_TOKEN"{"}"})
+          <textarea
+            className="bg-terminal-bg border border-terminal-border rounded px-2 py-1 font-mono text-[11px] w-full"
+            rows={2}
+            value={connectionConfigText}
+            onChange={(e) => setConnectionConfigText(e.target.value)}
+          />
         </label>
         <button onClick={createSource} className="px-2 py-1 border border-terminal-accent text-terminal-accent rounded hover:bg-terminal-accent/10">
           Create source

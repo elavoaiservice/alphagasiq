@@ -24,6 +24,7 @@ from .routers import (
     auth,
     chat,
     contact,
+    enterprise_webhooks,
     fundamentals,
     journal,
     market,
@@ -94,6 +95,7 @@ def create_app() -> FastAPI:
         admin_workspaces.router,
         admin_enterprise_data.router,
         admin_data_governance.router,
+        enterprise_webhooks.router,
         alpha.router,
         alpha_enterprise.router,
     ):

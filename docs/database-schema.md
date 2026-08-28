@@ -338,7 +338,7 @@ No column for chain-of-thought. `reasoning_summary` is a concise, human-auditabl
 - **`enterprise_data_sources`** — an admin-registered connection to a customer's proprietary
   data (docs/alpha-intelligence.md section 11.3/11.4). id, organization_id (FK), workspace_id
   (nullable FK), name, connector_type (`MANUAL_UPLOAD`/`REST_API`/`SFTP`/`DATABASE`/`S3`/
-  `WEBHOOK` — only `MANUAL_UPLOAD` has a real connector implementation), classification (an
+  `WEBHOOK` — all six have a real connector implementation), classification (an
   `EnterpriseDataClassification`, not the pre-existing `DataClassification`), status
   (`DRAFT`/`ACTIVE`/`PAUSED`/`ERROR`), description, connection_config (jsonb — non-secret
   config only, e.g. a bucket name; deliberately no credential/secret field, mirroring
@@ -359,8 +359,12 @@ No column for chain-of-thought. `reasoning_summary` is a concise, human-auditabl
 - **`enterprise_data_events`** — an ingestion-log entry for an enterprise data source, written
   by the admin "Test Connection" and "Ingest" actions, the same pattern `data_feed_events`
   already establishes for the built-in connectors. id, source_id (FK), event_type
-  (`test_connection`/`ingest`), status (`success`/`error`), detail, rows_ingested (nullable),
-  rows_rejected (nullable), latency_ms (nullable), occurred_at.
+  (`test_connection`/`ingest`/`webhook_received`), status (`success`/`error`), detail,
+  rows_ingested (nullable), rows_rejected (nullable), latency_ms (nullable), occurred_at.
+- **`enterprise_webhook_staged_rows`** — one row received via `POST /webhooks/enterprise-data/
+  {source_id}` for a `WEBHOOK`-type source, held here until an admin previews/ingests it through
+  the existing dataset flow (`WebhookConnector` reads from this buffer rather than touching the
+  network or a queue itself). id, source_id (FK), row_data (jsonb), received_at.
 - **`model_routing_policies`** — governs whether a given `EnterpriseDataClassification` may be
   sent to an external LLM provider for an organization (docs/alpha-intelligence.md section
   11.5, Milestone 9). id, organization_id (nullable FK — unlike every other enterprise table's

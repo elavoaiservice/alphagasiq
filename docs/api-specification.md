@@ -286,17 +286,18 @@ its own.
 | GET | `/admin/enterprise-data/sources/{source_id}` | requires `admin.enterprise_data`. 404 if unknown |
 | PATCH | `/admin/enterprise-data/sources/{source_id}` | requires `admin.enterprise_data`. Body: `{"name"?, "status"?, "description"?, "connection_config"?}`; 404 if unknown |
 | DELETE | `/admin/enterprise-data/sources/{source_id}` | requires `admin.enterprise_data`. 204; 404 if unknown |
-| POST | `/admin/enterprise-data/sources/{source_id}/test-connection` | requires `admin.enterprise_data`. Body: `{"sample_rows"?}` (only meaningful for `MANUAL_UPLOAD`). Runs the source's connector's `test_connection()` and records the result as an event |
-| GET | `/admin/enterprise-data/sources/{source_id}/events` | requires `admin.enterprise_data`. Test-connection/ingest event log, most recent first |
+| POST | `/admin/enterprise-data/sources/{source_id}/test-connection` | requires `admin.enterprise_data`. Body: `{"sample_rows"?}` (only meaningful for `MANUAL_UPLOAD`; ignored by every other connector type, which instead uses its `connection_config`/staged webhook rows). Runs the source's connector's `test_connection()` and records the result as an event |
+| GET | `/admin/enterprise-data/sources/{source_id}/events` | requires `admin.enterprise_data`. Test-connection/ingest/webhook_received event log, most recent first |
 | GET | `/admin/enterprise-data/sources/{source_id}/datasets` | requires `admin.enterprise_data`. 404 if the source is unknown |
-| POST | `/admin/enterprise-data/sources/{source_id}/datasets` | requires `admin.enterprise_data`. Body: `{"name", "domain", "classification", "sample_rows"?}`. Runs the connector's `discover_schema()` on `sample_rows` to populate `schema_summary`; an unimplemented connector type still creates the dataset, just without a discovered schema |
+| POST | `/admin/enterprise-data/sources/{source_id}/datasets` | requires `admin.enterprise_data`. Body: `{"name", "domain", "classification", "sample_rows"?}`. Runs the connector's `discover_schema()` to populate `schema_summary` (`sample_rows` only meaningful for `MANUAL_UPLOAD`); a connector missing its required configuration still creates the dataset, just without a discovered schema |
 | GET | `/admin/enterprise-data/datasets/{dataset_id}` | requires `admin.enterprise_data`. 404 if unknown |
-| POST | `/admin/enterprise-data/datasets/{dataset_id}/preview` | requires `admin.enterprise_data`. Body: `{"rows"}`. Returns `{"schema", "preview_rows"}`; 400 if the dataset's connector type has no implementation |
-| POST | `/admin/enterprise-data/datasets/{dataset_id}/ingest` | requires `admin.enterprise_data`. Body: `{"rows"}`. Persists accepted rows, updates `row_count`/`schema_summary`, records an event; 400 if the connector type has no implementation |
+| POST | `/admin/enterprise-data/datasets/{dataset_id}/preview` | requires `admin.enterprise_data`. Body: `{"rows"?}` (only meaningful for `MANUAL_UPLOAD`). Returns `{"schema", "preview_rows"}`; 400 if the connector reports it isn't usable (missing config/credential) |
+| POST | `/admin/enterprise-data/datasets/{dataset_id}/ingest` | requires `admin.enterprise_data`. Body: `{"rows"?}` (only meaningful for `MANUAL_UPLOAD`; a `WEBHOOK` dataset instead drains its staged inbound-push rows). Persists accepted rows, updates `row_count`/`schema_summary`, records an event; 400 if the connector reports it isn't usable |
 | GET | `/admin/enterprise-data/datasets/{dataset_id}/records` | requires `admin.enterprise_data`. Query params: `limit` (default 50) |
 | GET | `/admin/enterprise-data/datasets/{dataset_id}/entitlements` | requires `admin.enterprise_data`. 404 if the dataset is unknown |
 | POST | `/admin/enterprise-data/datasets/{dataset_id}/entitlements` | requires `admin.enterprise_data`. Body: `{"principal_type", "principal_id"}` |
 | DELETE | `/admin/enterprise-data/datasets/{dataset_id}/entitlements/{entitlement_id}` | requires `admin.enterprise_data`. 204; 404 if unknown |
+| POST | `/webhooks/enterprise-data/{source_id}` | No user session required — the caller is an external system. Header: `X-AlphaGasIQ-Signature` (HMAC-SHA256 hex digest of the raw body, keyed by the secret named in `connection_config.signing_secret_env_var`). Body: `{"rows": [...]}` or a bare JSON array. 400 if the source isn't a `WEBHOOK` connector or has no `signing_secret_env_var` configured; 401 if the signature is missing or invalid; 404 if the source is unknown; 202 + `{"staged": n}` on success |
 | GET | `/admin/model-routing-policies` | requires `admin.model_routing_policy`. Query params: `organization_id`. Milestone 9 (docs/alpha-intelligence.md section 11.5) |
 | POST | `/admin/model-routing-policies` | requires `admin.model_routing_policy`; a `null`/omitted `organization_id` (a platform-default policy) additionally requires `admin.organizations`. Body: `{"organization_id"?, "data_classification", "allow_external_llm_processing", "allowed_provider"?, "allowed_region"?, "logging_allowed"?}`; 400 if `organization_id` is set but unknown |
 | DELETE | `/admin/model-routing-policies/{policy_id}` | requires `admin.model_routing_policy` (+ `admin.organizations` if the policy is a platform default). 204; 404 if unknown |
@@ -305,9 +306,11 @@ its own.
 | DELETE | `/admin/retention-policies/{policy_id}` | requires `admin.retention_policy` (+ `admin.organizations` if the policy is a platform default). 204; 404 if unknown |
 | POST | `/admin/retention-policies/apply` | requires `admin.retention_policy` (+ `admin.organizations` for `organization_id: null`). Body: `{"organization_id"?, "data_classification"}`. Resolves the applicable retention policy and purges every `EnterpriseRecordRow` of that (organization, classification) pair's datasets older than the cutoff; returns `{"organization_id", "data_classification", "retention_days", "datasets_checked", "records_purged"}` — a no-op (zero purged) when no policy is configured |
 
-Milestone 8 is a foundation, honestly: only `MANUAL_UPLOAD` sources have a real connector
-implementation (`test-connection`/`preview`/`ingest` on any other `connector_type` return the
-connector's own honest `not_configured`/400 response, never a fabricated success). Milestone 9
+All six `connector_type` values now have a real connector implementation
+(`ManualUploadConnector`/`WebhookConnector`/`RestApiConnector`/`DatabaseConnector`/
+`S3Connector`/`SftpConnector` — docs/alpha-intelligence.md section 11.3); a connector missing
+its required `connection_config`/environment-provisioned credential still returns its own
+honest `not_configured`/400 response rather than a fabricated success. Milestone 9
 closes the application-layer tenant-isolation gap and adds `ModelRoutingPolicy`/
 `RetentionPolicy` (above); real database-level Row Level Security and most of the
 originally-envisioned admin tabs (Mappings/Lineage/Usage/Dependencies) remain Milestone 10+ —

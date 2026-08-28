@@ -55,6 +55,7 @@ from .models import (
     EnterpriseDataSourceRow,
     EnterpriseOpportunityRow,
     EnterpriseRecordRow,
+    EnterpriseWebhookStagedRowRow,
     FeatureRow,
     ImpactAnalysisRow,
     IntelligenceBriefRow,
@@ -3119,6 +3120,46 @@ class SqlAppRepository:
         async with self.session_factory() as session:
             rows = (await session.execute(query)).scalars().all()
         return [_enterprise_data_event_row_to_dict(r) for r in rows]
+
+    async def stage_enterprise_webhook_rows(self, source_id: str, rows: list[dict]) -> int:
+        """Durably buffers rows pushed to `POST /webhooks/enterprise-data/
+        {source_id}` for `enterprise_data_service.connector.WebhookConnector`
+        to read later -- see `EnterpriseWebhookStagedRowRow`."""
+        async with self.session_factory() as session:
+            for row_data in rows:
+                session.add(EnterpriseWebhookStagedRowRow(source_id=source_id, row_data=row_data))
+            await session.commit()
+        return len(rows)
+
+    async def list_staged_enterprise_webhook_rows(self, source_id: str, *, limit: int = 50) -> list[dict]:
+        """Non-destructive peek at staged webhook rows, for `test_connection`/
+        `discover_schema`/`preview`. Use `drain_enterprise_webhook_rows` to
+        actually consume them at ingest time."""
+        query = (
+            select(EnterpriseWebhookStagedRowRow)
+            .where(EnterpriseWebhookStagedRowRow.source_id == source_id)
+            .order_by(EnterpriseWebhookStagedRowRow.received_at.asc())
+            .limit(limit)
+        )
+        async with self.session_factory() as session:
+            rows = (await session.execute(query)).scalars().all()
+        return [r.row_data for r in rows]
+
+    async def drain_enterprise_webhook_rows(self, source_id: str) -> list[dict]:
+        """Pops every staged webhook row for `source_id`, deleting them so a
+        row is ingested at most once."""
+        query = (
+            select(EnterpriseWebhookStagedRowRow)
+            .where(EnterpriseWebhookStagedRowRow.source_id == source_id)
+            .order_by(EnterpriseWebhookStagedRowRow.received_at.asc())
+        )
+        async with self.session_factory() as session:
+            rows = (await session.execute(query)).scalars().all()
+            data = [r.row_data for r in rows]
+            for r in rows:
+                await session.delete(r)
+            await session.commit()
+        return data
 
     async def save_committee_decision(
         self, trade_id: UUID, decision: InvestmentCommitteeDecision, *, organization_id: str | None = None

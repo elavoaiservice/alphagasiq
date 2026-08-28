@@ -355,7 +355,8 @@ Agents — all six components (AlphaSignal™/AlphaImpact™/AlphaConsensus™/A
 AlphaMemory™/AlphaReplay™) plus their integration back into the Chief Trading Agent
 (AlphaSignal/AlphaConsensus feedback into trade generation, the Overnight Intelligence Brief,
 an Overview dashboard) are now implemented, plus the multi-tenant Enterprise Data Platform
-(Workspace, one real connector, admin onboarding UI), a tenant-isolation retrofit
+(Workspace, six real connector types, fine-grained per-dataset entitlement enforcement, admin
+onboarding UI), a tenant-isolation retrofit
 (cross-organization data-visibility fix on every Alpha* endpoint, `ModelRoutingPolicy`,
 `RetentionPolicy`, `organization_id` schema readiness on core trading tables) — application-
 layer only, no database-level Row Level Security yet — and the Enterprise Opportunity Engine
@@ -504,17 +505,21 @@ customer's proprietary data, its registered datasets, dataset-level access grant
 structurally-identical parallel one), ingested rows, and a test-connection/ingest event log.
 The new `services/enterprise_data` package's `BaseEnterpriseDataConnector`
 (`test_connection`/`discover_schema`/`preview`/`ingest`/`health_check`) mirrors `data_sdk.
-provider.BaseDataProvider`'s shape; only `ManualUploadConnector` (`MANUAL_UPLOAD` — an admin
-supplies already-parsed rows, no external network call or credential) is implemented
-end-to-end, the same "must work with zero paid subscriptions" discipline every `Mock*Provider`
-already establishes — `REST_API`/`SFTP`/`DATABASE`/`S3`/`WEBHOOK` sources can be registered but
-their connector honestly reports `not_configured` rather than pretending to work.
-`EnterpriseDataSourceRow` deliberately carries no credential field, mirroring
-`DataFeedConfigRow`'s existing posture. Exposed via `/admin/workspaces(/{id}/members)` and
-`/admin/enterprise-data/sources(/{id}/test-connection|/datasets)`/`/admin/enterprise-data/
-datasets/{id}(/preview|/ingest|/records|/entitlements)` (new `admin.workspaces`/
-`admin.enterprise_data` permissions), plus new "Workspaces" and "Enterprise Data" admin console
-tabs.
+provider.BaseDataProvider`'s shape; all six `EnterpriseConnectorType` values are implemented
+end-to-end (`ManualUploadConnector`/`WebhookConnector` take rows from the request body / an
+HMAC-verified inbound-push staging buffer; `RestApiConnector`/`DatabaseConnector`/`S3Connector`/
+`SftpConnector` pull live via `httpx`/`sqlalchemy`/`boto3`/`paramiko` from wherever the source's
+non-secret `connection_config` points), the same "must work with zero paid subscriptions"
+discipline every `Mock*Provider` already establishes — a connector missing its required
+configuration or environment-provisioned credential honestly reports `not_configured` rather
+than pretending to work. `EnterpriseDataSourceRow` deliberately carries no credential field,
+mirroring `DataFeedConfigRow`'s existing posture; every connector resolves its actual secret
+from an environment variable named (never stored) in `connection_config`. Exposed via
+`/admin/workspaces(/{id}/members)` and `/admin/enterprise-data/sources(/{id}/
+test-connection|/datasets)`/`/admin/enterprise-data/datasets/{id}(/preview|/ingest|/records|
+/entitlements)` plus the public, signature-verified `POST /webhooks/enterprise-data/{source_id}`
+ingress (new `admin.workspaces`/`admin.enterprise_data` permissions), and new "Workspaces" and
+"Enterprise Data" admin console tabs.
 
 **Tenant isolation retrofit (Milestone 9) closes the two cross-organization data-visibility
 gaps Milestone 8's own write-up flagged, and adds the governance layer it deferred — at the

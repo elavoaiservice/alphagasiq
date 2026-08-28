@@ -6,16 +6,18 @@ deliberately carries no credential/secret field -- exactly `DataFeedConfigRow`'s
 existing posture. Every endpoint here is gated by `admin.enterprise_data`
 (granted to ADMIN and SUPER_ADMIN).
 
-Only `MANUAL_UPLOAD` sources are genuinely operable this milestone: the admin
-(or a thin client-side CSV parser) supplies already-parsed rows in the request
-body for `test-connection`/`datasets` (schema discovery)/`preview`/`ingest`.
-Any other `connector_type` returns the connector's own honest
-`not_configured`/`NotImplementedError` response rather than silently behaving
-like `MANUAL_UPLOAD`.
+All six `EnterpriseConnectorType` values are genuinely operable
+(`enterprise_data_service.connector`): `MANUAL_UPLOAD` and `WEBHOOK` take rows
+from the request body / the webhook staging buffer respectively, while
+`REST_API`/`DATABASE`/`S3`/`SFTP` pull live from wherever the source's
+`connection_config` points -- a connector missing its required configuration
+(or its environment-provisioned credential) reports `not_configured` honestly
+rather than silently behaving like `MANUAL_UPLOAD` or fabricating data.
 """
 
 from __future__ import annotations
 
+import os
 import time
 from typing import Any
 
@@ -39,6 +41,35 @@ from ..entitlements import require_permission
 router = APIRouter(prefix="/admin/enterprise-data", tags=["admin"])
 
 _RequireEnterpriseData = Depends(require_permission("admin.enterprise_data"))
+
+
+def _has_signing_secret(source: dict) -> bool:
+    env_var = (source.get("connection_config") or {}).get("signing_secret_env_var")
+    return bool(env_var and os.environ.get(env_var))
+
+
+async def _rows_for_connector(state, source: dict, client_rows: list[dict[str, Any]], *, drain: bool) -> list[dict[str, Any]]:
+    """`WEBHOOK` sources ignore whatever rows the admin's own request body
+    carries -- their rows come from inbound pushes staged by
+    `POST /webhooks/enterprise-data/{source_id}` -- while every other
+    connector type uses the caller-supplied rows exactly as before
+    (ignored by the pull connectors, meaningful only for `MANUAL_UPLOAD`)."""
+    if source["connector_type"] != EnterpriseConnectorType.WEBHOOK.value:
+        return client_rows
+    if drain:
+        return await state.repo.drain_enterprise_webhook_rows(source["id"])
+    return await state.repo.list_staged_enterprise_webhook_rows(source["id"])
+
+
+def _build_source_connector(source: dict, *, rows: list[dict[str, Any]]):
+    return build_connector(
+        connector_type=EnterpriseConnectorType(source["connector_type"]),
+        source_id=source["id"],
+        classification=EnterpriseDataClassification(source["classification"]),
+        connection_config=source["connection_config"],
+        rows=rows,
+        has_signing_secret=_has_signing_secret(source),
+    )
 
 
 class SourceCreateRequest(BaseModel):
@@ -126,12 +157,8 @@ async def test_connection(
     source = await state.repo.get_enterprise_data_source(source_id)
     if source is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source not found")
-    connector = build_connector(
-        connector_type=EnterpriseConnectorType(source["connector_type"]),
-        source_id=source_id,
-        classification=EnterpriseDataClassification(source["classification"]),
-        rows=body.sample_rows,
-    )
+    rows = await _rows_for_connector(state, source, body.sample_rows, drain=False)
+    connector = _build_source_connector(source, rows=rows)
     started = time.monotonic()
     health = await connector.test_connection()
     latency_ms = (time.monotonic() - started) * 1000
@@ -172,12 +199,8 @@ async def create_dataset(
     source = await state.repo.get_enterprise_data_source(source_id)
     if source is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source not found")
-    connector = build_connector(
-        connector_type=EnterpriseConnectorType(source["connector_type"]),
-        source_id=source_id,
-        classification=EnterpriseDataClassification(source["classification"]),
-        rows=body.sample_rows,
-    )
+    rows = await _rows_for_connector(state, source, body.sample_rows, drain=False)
+    connector = _build_source_connector(source, rows=rows)
     try:
         schema_fields = await connector.discover_schema()
     except NotImplementedError:
@@ -206,7 +229,7 @@ async def get_dataset(dataset_id: str, state: AppStateDep, _admin: User = _Requi
 
 
 class DatasetRowsRequest(BaseModel):
-    rows: list[dict[str, Any]]
+    rows: list[dict[str, Any]] = []
 
 
 @router.post("/datasets/{dataset_id}/preview")
@@ -217,12 +240,8 @@ async def preview_dataset(
     if dataset is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dataset not found")
     source = await state.repo.get_enterprise_data_source(dataset["source_id"])
-    connector = build_connector(
-        connector_type=EnterpriseConnectorType(source["connector_type"]),
-        source_id=dataset["source_id"],
-        classification=EnterpriseDataClassification(source["classification"]),
-        rows=body.rows,
-    )
+    rows = await _rows_for_connector(state, source, body.rows, drain=False)
+    connector = _build_source_connector(source, rows=rows)
     try:
         schema_fields = await connector.discover_schema()
         preview_rows = await connector.preview()
@@ -242,12 +261,8 @@ async def ingest_dataset(
     if dataset is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dataset not found")
     source = await state.repo.get_enterprise_data_source(dataset["source_id"])
-    connector = build_connector(
-        connector_type=EnterpriseConnectorType(source["connector_type"]),
-        source_id=dataset["source_id"],
-        classification=EnterpriseDataClassification(source["classification"]),
-        rows=body.rows,
-    )
+    rows = await _rows_for_connector(state, source, body.rows, drain=True)
+    connector = _build_source_connector(source, rows=rows)
     started = time.monotonic()
     try:
         result, accepted_rows = await connector.ingest()

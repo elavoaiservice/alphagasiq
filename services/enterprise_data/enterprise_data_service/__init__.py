@@ -1,11 +1,17 @@
 from .connector import (
     BaseEnterpriseDataConnector,
     ConnectorHealth,
+    DatabaseConnector,
     IngestResult,
     ManualUploadConnector,
     NotImplementedConnector,
+    RestApiConnector,
+    S3Connector,
     SchemaField,
+    SftpConnector,
+    WebhookConnector,
     build_connector,
+    sign_webhook_payload,
 )
 from .dataset_entitlement import dataset_is_entitled
 from .model_routing import ModelRoutingEngine, RoutingDecision
@@ -21,7 +27,13 @@ __all__ = [
     "IngestResult",
     "NotImplementedConnector",
     "ManualUploadConnector",
+    "WebhookConnector",
+    "RestApiConnector",
+    "DatabaseConnector",
+    "S3Connector",
+    "SftpConnector",
     "build_connector",
+    "sign_webhook_payload",
     "dataset_is_entitled",
     "ModelRoutingEngine",
     "RoutingDecision",
