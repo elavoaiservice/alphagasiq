@@ -19,11 +19,15 @@ of, the application-layer `organization_id`/`platform_only` filtering each repos
 already does. Only `alpha_signals`/`alpha_impact_analyses`/`alpha_consensus_views`/
 `alpha_scenario_runs`/`alpha_memory_records`/`alpha_lesson_proposals`/
 `alpha_intelligence_briefs` actually set the enforcing session variable
-(`app.current_org_id`) today; every other org-scoped table keeps its RLS policy enabled but
-inert (no caller sets the GUC yet) until a future pass wires its own read path the same way.
-Postgres-only — SQLite (every default dev/test database) has no RLS equivalent, so
-`apply_row_level_security()` is a documented no-op there and application-layer enforcement
-remains the sole backstop in dev/test.
+(`app.current_org_id`) today — both their `list_*` and matching get-by-id repository methods
+(`get_signal`, `get_impact_analysis`, etc.); every other org-scoped table keeps its RLS policy
+enabled but inert (no caller sets the GUC yet), deliberately: `users`/`workspaces`/
+`enterprise_data_sources`/`enterprise_datasets`/`model_routing_policies`/
+`retention_policies`/`organization_feature_entitlements` are admin console surfaces where an
+ADMIN legitimately manages multiple organizations, so scoping them would break that access
+rather than add safety. Postgres-only — SQLite (every default dev/test database) has no RLS
+equivalent, so `apply_row_level_security()` is a documented no-op there and application-layer
+enforcement remains the sole backstop in dev/test.
 
 ## 1. Canonical Time-Series Observation
 

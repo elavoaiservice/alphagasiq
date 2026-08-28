@@ -51,10 +51,10 @@ async def list_signals(
 
 @router.get("/signals/{signal_id}")
 async def get_signal(signal_id: str, state: AppStateDep, user: User = _RequireAlphaSignals) -> dict:
-    signal = await state.repo.get_signal(signal_id)
+    organization_id, unrestricted = await resolve_organization_scope(user, state)
+    signal = await state.repo.get_signal(signal_id, organization_id=organization_id, platform_only=not unrestricted)
     if signal is None:
         raise HTTPException(status_code=404, detail="Signal not found")
-    organization_id, unrestricted = await resolve_organization_scope(user, state)
     if not record_is_visible(signal.get("organization_id"), organization_id, unrestricted):
         raise HTTPException(status_code=404, detail="Signal not found")
     return signal
@@ -85,10 +85,10 @@ async def list_impacts(
 
 @router.get("/impacts/{impact_id}")
 async def get_impact(impact_id: str, state: AppStateDep, user: User = _RequireAlphaImpacts) -> dict:
-    impact = await state.repo.get_impact_analysis(impact_id)
+    organization_id, unrestricted = await resolve_organization_scope(user, state)
+    impact = await state.repo.get_impact_analysis(impact_id, organization_id=organization_id, platform_only=not unrestricted)
     if impact is None:
         raise HTTPException(status_code=404, detail="Impact analysis not found")
-    organization_id, unrestricted = await resolve_organization_scope(user, state)
     if not record_is_visible(impact.get("organization_id"), organization_id, unrestricted):
         raise HTTPException(status_code=404, detail="Impact analysis not found")
     return impact
@@ -135,10 +135,12 @@ async def get_consensus_for_market(
 
 @router.get("/consensus/by-id/{consensus_id}")
 async def get_consensus(consensus_id: str, state: AppStateDep, user: User = _RequireAlphaConsensus) -> dict:
-    consensus = await state.repo.get_consensus_view(consensus_id)
+    organization_id, unrestricted = await resolve_organization_scope(user, state)
+    consensus = await state.repo.get_consensus_view(
+        consensus_id, organization_id=organization_id, platform_only=not unrestricted
+    )
     if consensus is None:
         raise HTTPException(status_code=404, detail="Consensus view not found")
-    organization_id, unrestricted = await resolve_organization_scope(user, state)
     if not record_is_visible(consensus.get("organization_id"), organization_id, unrestricted):
         raise HTTPException(status_code=404, detail="Consensus view not found")
     return consensus
@@ -168,10 +170,10 @@ async def list_scenario_runs(
 
 @router.get("/scenarios/runs/{run_id}")
 async def get_scenario_run(run_id: str, state: AppStateDep, user: User = _RequireAlphaScenariosView) -> dict:
-    run = await state.repo.get_scenario_run(run_id)
+    organization_id, unrestricted = await resolve_organization_scope(user, state)
+    run = await state.repo.get_scenario_run(run_id, organization_id=organization_id, platform_only=not unrestricted)
     if run is None:
         raise HTTPException(status_code=404, detail="Scenario run not found")
-    organization_id, unrestricted = await resolve_organization_scope(user, state)
     if not record_is_visible(run.get("organization_id"), organization_id, unrestricted):
         raise HTTPException(status_code=404, detail="Scenario run not found")
     return run
@@ -233,10 +235,10 @@ async def list_lesson_proposals(
 
 @router.get("/memory/lessons/{lesson_id}")
 async def get_lesson_proposal(lesson_id: str, state: AppStateDep, user: User = _RequireAlphaMemoryView) -> dict:
-    lesson = await state.repo.get_lesson_proposal(lesson_id)
+    organization_id, unrestricted = await resolve_organization_scope(user, state)
+    lesson = await state.repo.get_lesson_proposal(lesson_id, organization_id=organization_id, platform_only=not unrestricted)
     if lesson is None:
         raise HTTPException(status_code=404, detail="Lesson proposal not found")
-    organization_id, unrestricted = await resolve_organization_scope(user, state)
     if not record_is_visible(lesson.get("organization_id"), organization_id, unrestricted):
         raise HTTPException(status_code=404, detail="Lesson proposal not found")
     return lesson
@@ -282,10 +284,10 @@ async def list_memory_records(
 
 @router.get("/memory/{memory_id}")
 async def get_memory_record(memory_id: str, state: AppStateDep, user: User = _RequireAlphaMemoryView) -> dict:
-    memory = await state.repo.get_memory_record(memory_id)
+    organization_id, unrestricted = await resolve_organization_scope(user, state)
+    memory = await state.repo.get_memory_record(memory_id, organization_id=organization_id, platform_only=not unrestricted)
     if memory is None:
         raise HTTPException(status_code=404, detail="Memory record not found")
-    organization_id, unrestricted = await resolve_organization_scope(user, state)
     if not record_is_visible(memory.get("organization_id"), organization_id, unrestricted):
         raise HTTPException(status_code=404, detail="Memory record not found")
     return memory
@@ -347,10 +349,10 @@ async def list_intelligence_briefs(
 
 @router.get("/briefs/{brief_id}")
 async def get_intelligence_brief(brief_id: str, state: AppStateDep, user: User = _RequireAlphaBrief) -> dict:
-    brief = await state.repo.get_intelligence_brief(brief_id)
+    organization_id, unrestricted = await resolve_organization_scope(user, state)
+    brief = await state.repo.get_intelligence_brief(brief_id, organization_id=organization_id, platform_only=not unrestricted)
     if brief is None:
         raise HTTPException(status_code=404, detail="Intelligence brief not found")
-    organization_id, unrestricted = await resolve_organization_scope(user, state)
     if not record_is_visible(brief.get("organization_id"), organization_id, unrestricted):
         raise HTTPException(status_code=404, detail="Intelligence brief not found")
     return brief

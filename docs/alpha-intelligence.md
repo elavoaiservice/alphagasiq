@@ -802,17 +802,30 @@ correctly restricts once the GUC is set — the actual point of a database-level
 not just once locally; against SQLite (every default dev/test database) both methods are
 documented no-ops, so application-layer enforcement remains the only backstop there.
 
-**Honest about what this is not**: only the seven Alpha\* `list_*` methods above actually set
-the session GUC today — the other 14 tables in `db.ORG_SCOPED_TABLES` have the RLS policy
-enabled (schema-level readiness, matching the `organization_id`-column posture Milestone 9
-already used for the core trading tables) but nothing sets their GUC yet, so they keep today's
-unrestricted behavior until a future pass wires their own call sites the same way. Get-by-id
-endpoints (`get_signal`, `get_impact_analysis`, etc.) still rely solely on the application-layer
-`record_is_visible()` check after the fetch, not on RLS — threading `organization_id`/
-`platform_only` into those single-row getters too is future work. `AppState` remains a single
-process-wide singleton rather than a per-tenant-context service. `DataEntitlement`/
-`ModelEntitlement`/`Portfolio` as originally sketched (subsumed or deferred) remain future
-scope.
+**Implemented (gap-closure follow-up) — get-by-id endpoints now carry the same backstop**:
+the seven Alpha\* get-by-id repository methods (`get_signal`, `get_impact_analysis`,
+`get_consensus_view`, `get_scenario_run`, `get_memory_record`, `get_lesson_proposal`,
+`get_intelligence_brief`) accept the same `organization_id`/`platform_only` params their
+`list_*` siblings already did, and set the session GUC before the fetch. Each `alpha.py`
+handler now resolves `resolve_organization_scope` *before* the fetch (previously it fetched
+first, then checked) and passes the result straight through — a row RLS filters out now
+returns `None` from the repository call, which already 404s, so the existing `record_is_
+visible()` check stays in place as defense-in-depth underneath a real database-level backstop
+rather than being replaced by it. `tests/db/test_rls.py`'s live-Postgres suite proves a
+single-row fetch for another organization's signal genuinely returns `None` once the caller's
+GUC is set.
+
+**Honest about what this is not**: the other 14 tables in `db.ORG_SCOPED_TABLES` have the RLS
+policy enabled (schema-level readiness, matching the `organization_id`-column posture
+Milestone 9 already used for the core trading tables) but nothing sets their GUC yet, so they
+keep today's unrestricted behavior. This is deliberate, not an oversight: `users`,
+`workspaces`, `enterprise_data_sources`, `enterprise_datasets`, `model_routing_policies`,
+`retention_policies`, and `organization_feature_entitlements` are all admin console surfaces
+where an ADMIN legitimately manages multiple organizations, and `users` is queried during
+login before any organization is known — forcing GUC-scoping onto them would break legitimate
+cross-org admin access, not add safety. `AppState` remains a single process-wide singleton
+rather than a per-tenant-context service. `DataEntitlement`/`ModelEntitlement`/`Portfolio` as
+originally sketched (subsumed or deferred) remain future scope.
 
 **Implemented (Milestone 9) — `organization_id` readiness on the core trading tables**:
 `trade_ideas`/`committee_decisions`/`risk_checks`/`approvals` each gained a nullable

@@ -538,10 +538,12 @@ gained a `platform_only: bool` parameter (restricting a non-admin, no-resolvable
 gates every get-by-id endpoint, 404ing on an invisible record rather than 403ing (never
 confirming a record's existence to an unauthorized caller).
 `tests/api/test_alpha_tenant_isolation.py` proves the fix end-to-end. Those same seven
-`list_*` methods now also set the Postgres session variable `app.current_org_id`
-(`Repository._set_org_guc`) with the exact same `organization_id`/`platform_only` precedence,
-and every organization-scoped table has `FORCE ROW LEVEL SECURITY` plus a permissive-by-default
-`org_isolation` policy (`packages/db/db/rls.py`) — a real database-level backstop, not a
+`list_*` methods, and the matching seven get-by-id methods (`get_signal`,
+`get_impact_analysis`, etc. — a gap-closure follow-up), now also set the Postgres session
+variable `app.current_org_id` (`Repository._set_org_guc`) with the exact same
+`organization_id`/`platform_only` precedence, and every organization-scoped table has `FORCE
+ROW LEVEL SECURITY` plus a permissive-by-default `org_isolation` policy
+(`packages/db/db/rls.py`) — a real database-level backstop, not a
 replacement for the application-layer filter. `tests/db/test_rls.py`'s live-Postgres suite
 proves RLS restricts even a raw query with no `.where()` filter at all; against SQLite (every
 default dev/test database) it's a documented no-op. New `ModelRoutingPolicy`/

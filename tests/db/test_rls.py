@@ -140,6 +140,35 @@ class TestLivePostgresRowLevelSecurity:
         finally:
             await repo.dispose()
 
+    async def test_rls_backstops_get_by_id_when_the_guc_is_set(self):
+        """Gap-closure item #3: the 7 Alpha* get-by-id repository methods
+        (`get_signal` etc.) now accept the same `organization_id`/
+        `platform_only` params as their `list_*` siblings and set the GUC
+        before the fetch -- proves a signal genuinely belonging to another
+        organization is invisible (returns `None`) once the caller's GUC is
+        set to a different org, exactly mirroring the `list_*` backstop
+        above but for a single-row fetch."""
+        repo = await self._repo()
+        try:
+            token = uuid.uuid4().hex[:8]
+            org_a = (await repo.create_organization(name=f"RLS GetById Org A {token}"))["id"]
+            org_b = (await repo.create_organization(name=f"RLS GetById Org B {token}"))["id"]
+            saved = _signal(org_b, f"{token} org B only signal")
+            await repo.save_signal(saved)
+
+            visible_to_owner = await repo.get_signal(str(saved.id), organization_id=org_b, platform_only=False)
+            assert visible_to_owner is not None
+            assert visible_to_owner["headline"] == saved.headline
+
+            hidden_from_other_org = await repo.get_signal(str(saved.id), organization_id=org_a, platform_only=False)
+            assert hidden_from_other_org is None
+
+            # Unrestricted (today's default, GUC unset) still sees it -- no regression.
+            visible_unrestricted = await repo.get_signal(str(saved.id))
+            assert visible_unrestricted is not None
+        finally:
+            await repo.dispose()
+
     async def test_rls_blocks_a_raw_query_that_never_calls_the_application_filter(self):
         """The actual point of a database-level backstop: even a hand-written
         query that forgets `organization_id`/`platform_only` filtering

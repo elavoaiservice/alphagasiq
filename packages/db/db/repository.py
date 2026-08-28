@@ -2289,8 +2289,11 @@ class SqlAppRepository:
             rows = (await session.execute(query)).scalars().all()
         return [_signal_row_to_dict(r) for r in rows]
 
-    async def get_signal(self, signal_id: str) -> dict | None:
+    async def get_signal(
+        self, signal_id: str, *, organization_id: str | None = None, platform_only: bool = False
+    ) -> dict | None:
         async with self.session_factory() as session:
+            await self._set_org_guc(session, organization_id=organization_id, platform_only=platform_only)
             row = (await session.execute(select(SignalRow).where(SignalRow.id == signal_id))).scalar_one_or_none()
         return _signal_row_to_dict(row) if row is not None else None
 
@@ -2387,8 +2390,11 @@ class SqlAppRepository:
             rows = (await session.execute(query)).scalars().all()
         return [_impact_analysis_row_to_dict(r) for r in rows]
 
-    async def get_impact_analysis(self, impact_id: str) -> dict | None:
+    async def get_impact_analysis(
+        self, impact_id: str, *, organization_id: str | None = None, platform_only: bool = False
+    ) -> dict | None:
         async with self.session_factory() as session:
+            await self._set_org_guc(session, organization_id=organization_id, platform_only=platform_only)
             row = (
                 await session.execute(select(ImpactAnalysisRow).where(ImpactAnalysisRow.id == impact_id))
             ).scalar_one_or_none()
@@ -2531,8 +2537,11 @@ class SqlAppRepository:
             rows = (await session.execute(query)).scalars().all()
         return [_consensus_view_row_to_dict(r) for r in rows]
 
-    async def get_consensus_view(self, consensus_id: str) -> dict | None:
+    async def get_consensus_view(
+        self, consensus_id: str, *, organization_id: str | None = None, platform_only: bool = False
+    ) -> dict | None:
         async with self.session_factory() as session:
+            await self._set_org_guc(session, organization_id=organization_id, platform_only=platform_only)
             row = (
                 await session.execute(select(ConsensusViewRow).where(ConsensusViewRow.id == consensus_id))
             ).scalar_one_or_none()
@@ -2598,8 +2607,11 @@ class SqlAppRepository:
             rows = (await session.execute(query)).scalars().all()
         return [_scenario_run_row_to_dict(r) for r in rows]
 
-    async def get_scenario_run(self, run_id: str) -> dict | None:
+    async def get_scenario_run(
+        self, run_id: str, *, organization_id: str | None = None, platform_only: bool = False
+    ) -> dict | None:
         async with self.session_factory() as session:
+            await self._set_org_guc(session, organization_id=organization_id, platform_only=platform_only)
             row = (
                 await session.execute(select(ScenarioRunRow).where(ScenarioRunRow.id == run_id))
             ).scalar_one_or_none()
@@ -2655,8 +2667,11 @@ class SqlAppRepository:
             rows = (await session.execute(query)).scalars().all()
         return [_memory_record_row_to_dict(r) for r in rows]
 
-    async def get_memory_record(self, memory_id: str) -> dict | None:
+    async def get_memory_record(
+        self, memory_id: str, *, organization_id: str | None = None, platform_only: bool = False
+    ) -> dict | None:
         async with self.session_factory() as session:
+            await self._set_org_guc(session, organization_id=organization_id, platform_only=platform_only)
             row = (
                 await session.execute(select(MemoryRecordRow).where(MemoryRecordRow.id == memory_id))
             ).scalar_one_or_none()
@@ -2700,8 +2715,11 @@ class SqlAppRepository:
             rows = (await session.execute(query)).scalars().all()
         return [_lesson_proposal_row_to_dict(r) for r in rows]
 
-    async def get_lesson_proposal(self, lesson_id: str) -> dict | None:
+    async def get_lesson_proposal(
+        self, lesson_id: str, *, organization_id: str | None = None, platform_only: bool = False
+    ) -> dict | None:
         async with self.session_factory() as session:
+            await self._set_org_guc(session, organization_id=organization_id, platform_only=platform_only)
             row = (
                 await session.execute(select(LessonProposalRow).where(LessonProposalRow.id == lesson_id))
             ).scalar_one_or_none()
@@ -2851,8 +2869,11 @@ class SqlAppRepository:
             rows = (await session.execute(query)).scalars().all()
         return [_intelligence_brief_row_to_dict(r) for r in rows]
 
-    async def get_intelligence_brief(self, brief_id: str) -> dict | None:
+    async def get_intelligence_brief(
+        self, brief_id: str, *, organization_id: str | None = None, platform_only: bool = False
+    ) -> dict | None:
         async with self.session_factory() as session:
+            await self._set_org_guc(session, organization_id=organization_id, platform_only=platform_only)
             row = (
                 await session.execute(select(IntelligenceBriefRow).where(IntelligenceBriefRow.id == brief_id))
             ).scalar_one_or_none()
