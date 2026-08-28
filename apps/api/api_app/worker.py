@@ -66,6 +66,24 @@ async def run_forever() -> None:
         except Exception:
             logger.exception("Worker enterprise opportunity generation failed")
 
+        try:
+            # Gap-closure follow-up (docs/alpha-intelligence.md section 11.6): retention
+            # purging previously had no scheduled cadence at all -- admin/API-triggered
+            # only. Same interval as the two blocks above is a provisional, documented
+            # choice (not derived from real customer retention needs yet); decoupling it
+            # onto its own, likely coarser, interval is a small follow-up if this ever
+            # proves too frequent for how slowly retention windows actually expire.
+            purge_results = await state.apply_retention_policies_for_all_organizations()
+            total_purged = sum(r["records_purged"] for r in purge_results)
+            if purge_results:
+                logger.info(
+                    "Retention purge cycle complete: %d (organization, classification) pair(s) checked, %d record(s) purged",
+                    len(purge_results),
+                    total_purged,
+                )
+        except Exception:
+            logger.exception("Worker retention purge cycle failed")
+
         await asyncio.sleep(interval)
 
 

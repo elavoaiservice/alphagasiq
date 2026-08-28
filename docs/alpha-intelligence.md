@@ -973,11 +973,24 @@ every `EnterpriseRecordRow` ingested before the cutoff
 `admin.retention_policy`); `tests/api/test_admin_data_governance_router.py` proves the full
 register-source → register-dataset → ingest → set-policy → apply → purge round trip.
 
-**Honest about what this is not**: retention purging is admin-triggered only — there is no
-scheduled/automatic purge job (a cron-style trigger calling `POST
-/admin/retention-policies/apply` on a schedule is a small, deliberately deferred follow-up, not
-built here) — and it only covers `EnterpriseRecordRow`; no Alpha\* table (signals, impacts,
-consensus views, etc.) has a retention policy applied to it yet.
+**Implemented (gap-closure follow-up)**: retention purging now also has a real scheduled
+cadence, not just the admin-triggered endpoint above. `AppState.
+apply_retention_policies_for_all_organizations()` enumerates every distinct `(organization_id,
+classification)` pair that has at least one registered dataset (platform-wide
+`list_enterprise_datasets()`, no filter — the same enumeration
+`generate_enterprise_opportunities_for_all_organizations()` already established) and applies
+that pair's retention policy; `worker.py`'s existing periodic loop (the same one that re-runs
+the Chief Trading Agent's research cycle and enterprise opportunity generation) calls it every
+interval. A pair with no policy configured is a legitimate, logged no-op — `apply_retention_
+policy()` already returns a zero-purge summary rather than raising — so the result list is a
+complete audit trail of every pair checked, not just the ones with something to purge.
+`POST /admin/retention-policies/apply` remains available for an on-demand run in between
+scheduled cycles, the same additive relationship the opportunity-generation cadence has with
+its own on-demand endpoint.
+
+**Honest about what this is not**: retention purging only covers `EnterpriseRecordRow`; no
+Alpha\* table (signals, impacts, consensus views, etc.) has a retention policy applied to it
+yet.
 
 **Not yet built**: a Mappings tab (field/unit/timezone mapping UI — schema discovery exists,
 but there's no UI to remap a discovered field to a canonical name/unit); a dedicated Lineage

@@ -191,3 +191,64 @@ def test_apply_retention_purges_records_older_than_cutoff(client):
     assert body["retention_days"] == 0
     assert body["datasets_checked"] == 1
     assert body["records_purged"] == 1
+
+
+def test_apply_retention_policies_for_all_organizations_covers_every_registered_pair(client):
+    """Gap-closure item #4: scheduled retention purge cadence (docs/alpha-intelligence.md
+    section 11.6 follow-up) -- `apply_retention_policies_for_all_organizations()` is what
+    `worker.py`'s periodic loop calls instead of leaving purging admin/API-triggered only.
+    Mirrors `test_generate_opportunities_for_all_organizations_covers_every_registered_org`
+    (tests/api/test_alpha_enterprise_router.py)."""
+    import asyncio
+
+    from api_app import state as state_module
+
+    headers = _admin_headers(client)
+    org_id = _create_org(client, headers)
+
+    source = client.post(
+        "/api/v1/admin/enterprise-data/sources",
+        json={
+            "organization_id": org_id,
+            "name": "Well CSV",
+            "connector_type": "MANUAL_UPLOAD",
+            "classification": "CUSTOMER_CONFIDENTIAL",
+        },
+        headers=headers,
+    ).json()
+    dataset = client.post(
+        f"/api/v1/admin/enterprise-data/sources/{source['id']}/datasets",
+        json={"name": "Wells", "domain": "ASSET", "classification": "CUSTOMER_CONFIDENTIAL"},
+        headers=headers,
+    ).json()
+    ingested = client.post(
+        f"/api/v1/admin/enterprise-data/datasets/{dataset['id']}/ingest",
+        json={"rows": [{"well_id": "W-1"}]},
+        headers=headers,
+    )
+    assert ingested.status_code == 200
+
+    policy = client.post(
+        "/api/v1/admin/retention-policies",
+        json={"organization_id": org_id, "data_classification": "CUSTOMER_CONFIDENTIAL", "retention_days": 0},
+        headers=headers,
+    )
+    assert policy.status_code == 201
+
+    state = state_module._state
+    results = asyncio.run(state.apply_retention_policies_for_all_organizations())
+    assert len(results) == 1
+    assert results[0]["organization_id"] == org_id
+    assert results[0]["data_classification"] == "CUSTOMER_CONFIDENTIAL"
+    assert results[0]["retention_days"] == 0
+    assert results[0]["records_purged"] == 1
+
+
+def test_apply_retention_policies_for_all_organizations_is_empty_with_no_registered_datasets(client):
+    import asyncio
+
+    from api_app import state as state_module
+
+    state = state_module._state
+    results = asyncio.run(state.apply_retention_policies_for_all_organizations())
+    assert results == []

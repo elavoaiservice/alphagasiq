@@ -1543,6 +1543,29 @@ class AppState:
             results[organization_id] = await self.generate_enterprise_opportunities(organization_id=organization_id)
         return results
 
+    async def apply_retention_policies_for_all_organizations(self) -> list[dict]:
+        """Gap-closure follow-up (docs/alpha-intelligence.md section 11.6):
+        `apply_retention_policy()` itself had no scheduled cadence -- admin/API-
+        triggered only, via `POST /admin/retention-policies/apply`. Mirrors
+        `generate_enterprise_opportunities_for_all_organizations()` exactly: enumerates
+        every distinct `(organization_id, classification)` pair that actually has at
+        least one registered dataset (platform-wide `list_enterprise_datasets()`, no
+        filter) and applies that pair's retention policy -- a pair with no policy
+        configured is a legitimate no-op (`apply_retention_policy` already returns a
+        zero-purge summary rather than raising), not skipped outright, so the result
+        list stays a complete audit trail of every pair checked. Called periodically by
+        `worker.py`, the same home the opportunity-generation cadence already uses."""
+        all_datasets = await self.repo.list_enterprise_datasets()
+        pairs = sorted({(d["organization_id"], d["classification"]) for d in all_datasets})
+        results: list[dict] = []
+        for organization_id, classification in pairs:
+            results.append(
+                await self.apply_retention_policy(
+                    organization_id=organization_id, data_classification=EnterpriseDataClassification(classification)
+                )
+            )
+        return results
+
     async def review_enterprise_opportunity(self, opportunity_id: str, *, status: str, reviewed_by: str) -> dict | None:
         updated = await self.repo.update_enterprise_opportunity_status(
             opportunity_id, status=status, reviewed_by=reviewed_by, reviewed_at=datetime.now(timezone.utc)
