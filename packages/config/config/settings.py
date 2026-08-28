@@ -103,6 +103,17 @@ class Settings(BaseSettings):
 
     cors_origins: str = "http://localhost:3000"
 
+    # Observability (gap-closure follow-up): same config-gated pattern as
+    # smtp_host/oidc_issuer_url/neo4j_uri/kafka_bootstrap_servers above -- unset
+    # `sentry_dsn` (every default dev/test environment) means exception tracking is
+    # never initialized at all, honestly, rather than silently no-op-ing against an
+    # empty DSN. `log_level` governs the structured JSON request-logging middleware
+    # (`apps/api/api_app/logging_config.py`), which is always active regardless of
+    # Sentry configuration.
+    sentry_dsn: str | None = None
+    sentry_traces_sample_rate: float = 0.0
+    log_level: str = "INFO"
+
 
 @lru_cache
 def get_settings() -> Settings:

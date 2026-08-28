@@ -15,9 +15,12 @@ import logging
 import os
 from datetime import date
 
+from config import get_settings
+
+from .logging_config import configure_logging
 from .state import get_app_state
 
-logging.basicConfig(level=logging.INFO)
+configure_logging(log_level=get_settings().log_level)
 logger = logging.getLogger("alphagasiq.worker")
 
 

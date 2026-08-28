@@ -622,3 +622,14 @@ tenant-isolation section above) covers the same seven Alpha* `list_*` and get-by
 the application-layer fix does, plus schema-level readiness on 14 more organization-scoped
 tables including `enterprise_opportunities` itself -- extending the GUC-setting to this
 pipeline's own read/write paths remains future work.
+
+**Observability**: every request now emits a structured JSON log line (timestamp, level,
+logger, method, path, status code, latency, a generated request id echoed back as the
+`X-Request-ID` response header) via `RequestLoggingMiddleware`/`JsonFormatter`
+(`apps/api/api_app/logging_config.py`), shared by both the API process and `worker.py` in
+place of the old bare `logging.basicConfig`. Exception tracking via Sentry
+(`sentry_sdk.init(...)`, `FastApiIntegration`/`StarletteIntegration`) is config-gated by
+`SENTRY_DSN`, same honest-no-op pattern as `SMTP_HOST`/`OIDC_ISSUER_URL`/`NEO4J_URI` -- unset in
+every default dev/test environment, so `sentry-sdk` is imported and initialized only when a
+real DSN is configured. `SENTRY_TRACES_SAMPLE_RATE` (default `0.0`) and `LOG_LEVEL` (default
+`INFO`) are also configurable.

@@ -143,6 +143,15 @@ topic subscribe semantics) is mocked.
 Cloud dependencies are isolated behind small interfaces (`ObjectStore`, `SecretsProvider`,
 `EventBus`) so AWS-specific implementations can be swapped for local/dev equivalents.
 
+**Observability**: structured JSON logging (`apps/api/api_app/logging_config.py`) is always
+active for both the API and worker processes -- one JSON line per log record, plus one per
+request (method, path, status, latency, a generated `request_id` echoed back as the
+`X-Request-ID` response header). Exception tracking (Sentry, `FastApiIntegration` +
+`StarletteIntegration`) is config-gated by `sentry_dsn` (`SENTRY_DSN`), the same "unset = never
+initialized" posture as OIDC/SMTP/Neo4j elsewhere in this stack -- every default dev/test
+environment leaves it unset. No metrics/tracing backend (OpenTelemetry, Prometheus) is wired up
+yet; `sentry_traces_sample_rate` only controls Sentry's own APM sampling once a DSN is set.
+
 ## 6. Monorepo Layout
 
 ```

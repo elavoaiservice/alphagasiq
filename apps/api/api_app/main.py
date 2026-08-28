@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-from config import branding, get_settings
+from config import Settings, branding, get_settings
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from .logging_config import RequestLoggingMiddleware, configure_logging
 from .routers import (
     admin_agent_versions,
     admin_agents,
@@ -52,8 +53,30 @@ async def _lifespan(app: FastAPI):
         await state.neo4j_driver.close()
 
 
+def _init_sentry_if_configured(settings: Settings) -> None:
+    """Config-gated exactly like OIDC/SMTP/Neo4j elsewhere in this codebase:
+    unset `sentry_dsn` (every default dev/test environment) means Sentry is
+    never imported or initialized at all, not silently no-op'd against an
+    empty DSN. Lazy import so `sentry-sdk` need not be importable for any
+    code path that never configures it."""
+    if not settings.sentry_dsn:
+        return
+    import sentry_sdk
+    from sentry_sdk.integrations.fastapi import FastApiIntegration
+    from sentry_sdk.integrations.starlette import StarletteIntegration
+
+    sentry_sdk.init(
+        dsn=settings.sentry_dsn,
+        integrations=[StarletteIntegration(), FastApiIntegration()],
+        traces_sample_rate=settings.sentry_traces_sample_rate,
+    )
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
+    configure_logging(log_level=settings.log_level)
+    _init_sentry_if_configured(settings)
+
     app = FastAPI(
         title=branding.FULL_NAME,
         description="Institutional-grade agentic natural gas intelligence & paper-trading platform.",
@@ -61,6 +84,7 @@ def create_app() -> FastAPI:
         lifespan=_lifespan,
     )
 
+    app.add_middleware(RequestLoggingMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[o.strip() for o in settings.cors_origins.split(",") if o.strip()],
