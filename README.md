@@ -68,6 +68,10 @@ Risk Governor logic (`services/risk/risk_service/governor.py`) carries the highe
 coverage bar in the repo — see `tests/risk/test_governor.py` — per the platform's core rule:
 **no LLM may override a failed hard risk rule.**
 
+`.github/workflows/ci.yml` runs the same two checks on every push/PR: the full pytest suite
+(same editable-install sequence as above) and `next build` (which includes TypeScript
+type-checking) for `apps/web`.
+
 ## Repository layout
 
 See `docs/architecture.md` §6. Short version: `/apps` (web, api) · `/services` (data, agents,
