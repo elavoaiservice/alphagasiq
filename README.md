@@ -605,15 +605,20 @@ committee deliberation. A new chat topic, `ChatAgent._enterprise_trade_idea` (ga
 the pipeline overlay are now also narrowed by fine-grained per-dataset
 `EnterpriseDataEntitlement` grants (`filter_entitled_enterprise_datasets`,
 `apps/api/api_app/entitlements.py`) — a dataset with no entitlement rows stays visible to the
-whole organization, but once at least one grant exists only a matching principal sees it. The
-same enforcement doesn't yet reach `AppState._load_enterprise_positions()`'s org-wide
-aggregate read path (opportunity/trade generation), which has no per-caller principal to check
-against. `AppState.generate_enterprise_opportunities_for_all_
-organizations()` gives opportunity generation a real scheduled cadence -- `worker.py`'s
-existing periodic loop calls it every interval alongside the Chief Trading Agent's own
-research cycle, on top of the still-available on-demand `POST /alpha/enterprise/opportunities/
-generate`. Real database-level Row Level Security (see the tenant-isolation section above) now
-covers the same seven Alpha* `list_*` call sites the application-layer fix does, plus
-schema-level readiness on 14 more organization-scoped tables including `enterprise_
-opportunities` itself -- extending the GUC-setting to this pipeline's own read/write paths
-remains future work, since (as just noted) it has no per-caller principal to scope it to yet.
+whole organization, but once at least one grant exists only a matching principal sees it.
+`AppState._load_enterprise_positions()`'s org-wide aggregate read path (opportunity/trade
+generation) now also enforces entitlements, via new `agent_is_entitled()`
+(`enterprise_data_service.dataset_entitlement`) -- this pipeline has no per-caller *human*
+principal, so it presents a fixed `AppState.ENTERPRISE_POSITION_READER_AGENT_TYPE` identity
+against a dataset's `AGENT`-type grants (a dataset's USER/ROLE/WORKSPACE grants, for human
+dashboard/chat visibility, don't affect this separate check). `AppState.
+generate_enterprise_opportunities_for_all_organizations()` gives opportunity generation a real
+scheduled cadence -- `worker.py`'s existing periodic loop calls it every interval alongside the
+Chief Trading Agent's own research cycle, on top of the still-available on-demand
+`POST /alpha/enterprise/opportunities/generate`. `AppState.
+apply_retention_policies_for_all_organizations()` gives retention purging the same real
+scheduled cadence, in its own loop iteration. Real database-level Row Level Security (see the
+tenant-isolation section above) covers the same seven Alpha* `list_*` and get-by-id call sites
+the application-layer fix does, plus schema-level readiness on 14 more organization-scoped
+tables including `enterprise_opportunities` itself -- extending the GUC-setting to this
+pipeline's own read/write paths remains future work.

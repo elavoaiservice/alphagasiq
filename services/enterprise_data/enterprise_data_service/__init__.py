@@ -13,7 +13,7 @@ from .connector import (
     build_connector,
     sign_webhook_payload,
 )
-from .dataset_entitlement import dataset_is_entitled
+from .dataset_entitlement import agent_is_entitled, dataset_is_entitled
 from .model_routing import ModelRoutingEngine, RoutingDecision
 from .opportunity import EnterpriseOpportunityEngine, EnterprisePosition, OpportunityCandidate
 from .pipeline_overlay import PipelineOverlayPoint, build_overlay
@@ -35,6 +35,7 @@ __all__ = [
     "build_connector",
     "sign_webhook_payload",
     "dataset_is_entitled",
+    "agent_is_entitled",
     "ModelRoutingEngine",
     "RoutingDecision",
     "RetentionEngine",

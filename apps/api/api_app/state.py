@@ -57,6 +57,7 @@ from enterprise_data_service import (
     EnterprisePosition,
     ModelRoutingEngine,
     RetentionEngine,
+    agent_is_entitled,
 )
 from fundamentals_service.lng import LNGTerminalState, compute_netback
 from fundamentals_service.pipeline_graph import PipelineGraph, build_default_pipeline_graph
@@ -86,6 +87,7 @@ from schemas import (
     DomainEvent,
     EnterpriseDataClassification,
     EnterpriseDataDomain,
+    EnterpriseDataEntitlement,
     EnterpriseOpportunity,
     EnterpriseOpportunityType,
     EventType,
@@ -1427,6 +1429,11 @@ class AppState:
         )
         return result
 
+    # The `agent_type` `_load_enterprise_positions()` presents to `agent_is_entitled()`
+    # for AGENT-type EnterpriseDataEntitlement checks -- the principal_id an admin
+    # grants to restrict which datasets this read path may see.
+    ENTERPRISE_POSITION_READER_AGENT_TYPE = "ENTERPRISE_OPPORTUNITY_ENGINE"
+
     async def _load_enterprise_positions(self, organization_id: str) -> list[EnterprisePosition]:
         """Reads `organization_id`'s own `POSITION`/`PORTFOLIO`-domain enterprise
         records and parses each into an `EnterprisePosition` (silently skipping any
@@ -1434,13 +1441,27 @@ class AppState:
         field on -- see that method's docstring). Factored out of
         `generate_enterprise_opportunities()` so `_corroborate_trade_with_enterprise_
         data()` (docs/alpha-intelligence.md section 11, Milestone 10 follow-up) can
-        reuse the exact same read path rather than duplicating it. Same honest
-        limitation both call sites share: this does not yet check per-dataset
-        `EnterpriseDataEntitlement` grants."""
+        reuse the exact same read path rather than duplicating it.
+
+        Gap-closure follow-up: datasets are now also filtered through
+        `agent_is_entitled()`, checking `AGENT`-type `EnterpriseDataEntitlement`
+        grants against `ENTERPRISE_POSITION_READER_AGENT_TYPE` above -- this pipeline
+        has no per-caller human principal (it runs org-wide, not on behalf of one
+        user), so it was the one enterprise read path `dataset_is_entitled()`
+        genuinely couldn't reach; `AGENT` grants exist precisely for this shape of
+        caller. A dataset with no `AGENT`-type grants stays visible (backward-
+        compatible default, unchanged behavior)."""
         datasets = await self.repo.list_enterprise_datasets(organization_id=organization_id)
         position_datasets = [
             d for d in datasets if d["domain"] in (EnterpriseDataDomain.POSITION.value, EnterpriseDataDomain.PORTFOLIO.value)
         ]
+        entitled_position_datasets = []
+        for dataset in position_datasets:
+            raw_entitlements = await self.repo.list_enterprise_data_entitlements(dataset["id"])
+            entitlements = [EnterpriseDataEntitlement.model_validate(e) for e in raw_entitlements]
+            if agent_is_entitled(entitlements=entitlements, agent_type=self.ENTERPRISE_POSITION_READER_AGENT_TYPE):
+                entitled_position_datasets.append(dataset)
+        position_datasets = entitled_position_datasets
         positions: list[EnterprisePosition] = []
         for dataset in position_datasets:
             records = await self.repo.list_enterprise_records(dataset["id"], limit=200)

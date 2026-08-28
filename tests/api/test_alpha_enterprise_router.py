@@ -121,6 +121,62 @@ def test_entitlement_grant_restricts_chat_visibility_end_to_end(client):
     assert "aren't entitled" in content_b
 
 
+def test_agent_entitlement_excludes_position_dataset_from_load_enterprise_positions(client):
+    """Gap-closure item #5: `_load_enterprise_positions()` (feeding both trade
+    corroboration and opportunity generation) now checks AGENT-type
+    `EnterpriseDataEntitlement` grants via `agent_is_entitled()`. A POSITION
+    dataset granted to a different agent type is excluded; the same dataset
+    granted to `AppState.ENTERPRISE_POSITION_READER_AGENT_TYPE` (or with no
+    AGENT grant at all) stays included -- no regression for the common case."""
+    import asyncio
+
+    from api_app import state as state_module
+    from schemas import EnterpriseDataClassification, EnterpriseDataDomain, EnterpriseDataset
+
+    org = _activate_via_magic_link(client, "trader-agent-ent@company-agent-ent.com", "TRADER", "Company Agent Ent")
+    org_id = org["user"]["organization_id"]
+    state = state_module._state
+
+    ds = EnterpriseDataset(
+        source_id="00000000-0000-0000-0000-000000000000",
+        organization_id=org_id,
+        name="positions",
+        domain=EnterpriseDataDomain.POSITION,
+        classification=EnterpriseDataClassification.CUSTOMER_POSITION_DATA,
+    )
+    asyncio.run(state.repo.save_enterprise_dataset(ds))
+    asyncio.run(state.repo.save_enterprise_records(str(ds.id), [{"market": "WAHA", "direction": "LONG"}]))
+
+    # No AGENT grant yet -- backward-compatible default, dataset stays visible.
+    positions = asyncio.run(state._load_enterprise_positions(org_id))
+    assert len(positions) == 1
+    assert positions[0].dataset_id == str(ds.id)
+
+    admin_headers = _admin_headers(client)
+    other_agent_grant = client.post(
+        f"/api/v1/admin/enterprise-data/datasets/{ds.id}/entitlements",
+        json={"principal_type": "AGENT", "principal_id": "SOME_OTHER_AGENT"},
+        headers=admin_headers,
+    )
+    assert other_agent_grant.status_code == 201
+
+    # An AGENT grant for a different agent type excludes the dataset.
+    positions = asyncio.run(state._load_enterprise_positions(org_id))
+    assert positions == []
+
+    matching_agent_grant = client.post(
+        f"/api/v1/admin/enterprise-data/datasets/{ds.id}/entitlements",
+        json={"principal_type": "AGENT", "principal_id": state.ENTERPRISE_POSITION_READER_AGENT_TYPE},
+        headers=admin_headers,
+    )
+    assert matching_agent_grant.status_code == 201
+
+    # An AGENT grant matching ENTERPRISE_POSITION_READER_AGENT_TYPE restores visibility.
+    positions = asyncio.run(state._load_enterprise_positions(org_id))
+    assert len(positions) == 1
+    assert positions[0].dataset_id == str(ds.id)
+
+
 def test_dev_mode_caller_with_no_org_sees_empty_list_not_an_error(client):
     r = client.get("/api/v1/alpha/enterprise/opportunities", headers=_trader_headers(client))
     assert r.status_code == 200

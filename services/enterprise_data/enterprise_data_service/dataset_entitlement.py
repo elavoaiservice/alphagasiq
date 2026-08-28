@@ -16,10 +16,16 @@ behavior -- entitlements are an opt-in narrowing, not a default-deny gate flippe
 for every dataset the instant this shipped. Once at least one entitlement row exists
 for a dataset, it switches to allow-list mode: only a principal matching one of that
 dataset's grants (their own `user_id`, one of their roles, or one of their workspace
-memberships) can see it. `AGENT` principal-type entitlements are for a future
-agent-classification integration (see `model_routing.py`'s module docstring for the
-analogous, still-open agent-side gap) and are not evaluated against a human caller
-here."""
+memberships) can see it.
+
+`AGENT` principal-type entitlements (gap-closure follow-up: `agent_is_entitled` below)
+are evaluated independently of `dataset_is_entitled`'s USER/ROLE/WORKSPACE check, not
+folded into the same allow-list trigger -- a dataset an admin restricted to one
+specific human (a USER grant) should not silently also block the system's own
+aggregate read path (`AppState._load_enterprise_positions`), since nobody granting
+that USER entitlement was thinking about `ENTERPRISE_POSITION_READER_AGENT_TYPE` at
+all. Only the presence of an `AGENT`-type grant on a dataset switches that dataset
+into agent-allow-list mode."""
 
 from __future__ import annotations
 
@@ -48,3 +54,18 @@ def dataset_is_entitled(
         ):
             return True
     return False
+
+
+def agent_is_entitled(*, entitlements: list[EnterpriseDataEntitlement], agent_type: str) -> bool:
+    """Whether a system agent identified by `agent_type` (e.g. `AppState.
+    ENTERPRISE_POSITION_READER_AGENT_TYPE`) may read a dataset, given that dataset's
+    entitlement rows. Mirrors `dataset_is_entitled`'s backward-compatible-default
+    shape exactly, but scoped to `AGENT`-type grants only -- see this module's
+    docstring for why a dataset's USER/ROLE/WORKSPACE grants don't affect this check.
+    A dataset with zero `AGENT`-type grants is visible to every agent (today's
+    unchanged default); once at least one exists, only a matching `agent_type` sees
+    it."""
+    agent_grants = [g for g in entitlements if g.principal_type == EnterpriseEntitlementPrincipalType.AGENT]
+    if not agent_grants:
+        return True
+    return any(grant.principal_id == agent_type for grant in agent_grants)

@@ -852,13 +852,19 @@ control for a *non-admin* caller now also exists (Milestone 10 follow-up) --
 `filter_entitled_enterprise_datasets` (`apps/api/api_app/entitlements.py`) narrows an
 already-organization-scoped dataset list down to only the ones a caller's `EnterpriseDataEntitlement`
 grants actually cover, wired into `ChatAgent._enterprise_data_query` and the pipeline overlay
-endpoint (section 11.7). **Not yet built**: the full access-rule combination (organization +
-workspace + role + permission + this classification + feature entitlement + dataset
-entitlement + agent entitlement) described in the original plan, and per-dataset entitlement
-enforcement inside `AppState._load_enterprise_positions()`'s org-wide aggregate read path
-(used by opportunity/trade generation) -- that pipeline has no per-caller principal to check
-entitlements against, since it operates on the organization's data as a whole, not on behalf
-of one specific user.
+endpoint (section 11.7). **Implemented (gap-closure follow-up)**: `AppState.
+_load_enterprise_positions()`'s org-wide aggregate read path (used by opportunity/trade
+generation) now also enforces per-dataset entitlements, via a new
+`enterprise_data_service.dataset_entitlement.agent_is_entitled()` -- this pipeline has no
+per-caller *human* principal (it operates on the organization's data as a whole, not on
+behalf of one specific user), which is exactly what `AGENT`-type `EnterpriseDataEntitlement`
+grants exist for. `AppState.ENTERPRISE_POSITION_READER_AGENT_TYPE` is the fixed `agent_type`
+string this pipeline presents; a dataset with no `AGENT`-type grants stays visible
+(backward-compatible default), and a dataset's USER/ROLE/WORKSPACE grants (for human
+dashboard/chat visibility) don't affect this check -- only an `AGENT`-type grant does.
+**Not yet built**: the full access-rule combination (organization + workspace + role +
+permission + this classification + feature entitlement + dataset entitlement + agent
+entitlement) described in the original plan.
 
 ### 11.3 Enterprise data connectors
 
@@ -1115,15 +1121,18 @@ Agent's research cycle) calls it every interval. `POST /alpha/enterprise/opportu
 generate` remains available for an on-demand run in between scheduled cycles -- the scheduled
 cadence is additive, not a replacement for it.
 
+Per-dataset entitlement enforcement inside `AppState._load_enterprise_positions()`'s org-wide
+aggregate read path (used by opportunity/trade generation) is now also real — see section
+11.2 for `agent_is_entitled()`, the `AGENT`-type entitlement check this pipeline presents its
+fixed `ENTERPRISE_POSITION_READER_AGENT_TYPE` identity to, since it has no per-caller *human*
+principal to check against.
+
 **Not yet built**: opportunity types beyond the two documented above (no volatility/
-curve-shape/basis-specific opportunity detection); fine-grained per-dataset entitlement
-enforcement inside `AppState._load_enterprise_positions()`'s org-wide aggregate read path (used
-by opportunity/trade generation) — that pipeline has no per-caller principal to check against
-(see section 11.2); `FACILITY`-domain overlay fields beyond a single pinned point (no
-polygon/area assets, no per-asset detail panel). Real database-level Row Level Security is now
-built (section 11.1) on the seven Alpha* `list_*` call sites plus schema-level readiness on 14
-more tables — extending its GUC-setting to every other read path, including
-`enterprise_opportunities`' own list/get calls, remains future work.
+curve-shape/basis-specific opportunity detection); `FACILITY`-domain overlay fields beyond a
+single pinned point (no polygon/area assets, no per-asset detail panel). Real database-level
+Row Level Security (section 11.1) covers the seven Alpha* `list_*`/get-by-id call sites plus
+schema-level readiness on 14 more tables — extending its GUC-setting to
+`enterprise_opportunities`' own list/get calls remains future work.
 
 ## 12. Transparency and explainability
 
