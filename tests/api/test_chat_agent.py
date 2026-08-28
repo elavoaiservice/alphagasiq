@@ -644,6 +644,96 @@ async def test_enterprise_data_query_withholds_data_blocked_by_routing_policy(mo
     assert result.freshness == {"dataset_count": 2, "withheld_count": 1}
 
 
+class _TaggedLLMProvider(MockLLMProvider):
+    """Distinct `model` string from vanilla `MockLLMProvider`'s fixed
+    `"mock-llm-deterministic"`, so a test can tell whether `PolicyGatedLLMProvider`
+    routed to this instance (passed in as `self.llm`, i.e. `primary`) or to the
+    fresh vanilla `MockLLMProvider()` `_enterprise_data_query` constructs as
+    `fallback`."""
+
+    def __init__(self, tag: str) -> None:
+        self.model = tag
+
+
+async def test_enterprise_data_query_routes_synthesis_through_primary_when_allowed(monkeypatch, user):
+    """#6: `PolicyGatedLLMProvider` has a real live caller now -- when every involved
+    dataset's classification allows external LLM processing, the final prose-synthesis
+    call in `ask()` is routed to the primary (real) provider."""
+
+    async def fake_permissions(_user, _state):
+        return {"enterprise_data.query"}
+
+    async def fake_resolve(_user, _state):
+        return "org-a"
+
+    monkeypatch.setattr(chat_agent_module, "get_effective_permissions", fake_permissions)
+    monkeypatch.setattr(chat_agent_module, "resolve_organization_id", fake_resolve)
+    agent = ChatAgent(llm=_TaggedLLMProvider("primary-tag"))
+
+    state = _EnterpriseDataState(
+        datasets=[
+            {
+                "id": "ds-1",
+                "organization_id": "org-a",
+                "name": "wells",
+                "domain": "ASSET",
+                "classification": "PUBLIC",
+                "row_count": 3,
+            }
+        ],
+        policies=[],
+    )
+
+    result = await agent.ask("What is in my enterprise data?", state, user)
+
+    assert result.model == "primary-tag"
+
+
+async def test_enterprise_data_query_routes_synthesis_through_fallback_when_any_dataset_blocked(
+    monkeypatch, user
+):
+    """The mirror case: one blocked dataset among several is enough to keep the whole
+    synthesis call off the primary (real) provider -- most-restrictive-wins, same as the
+    per-dataset content withholding already does."""
+
+    async def fake_permissions(_user, _state):
+        return {"enterprise_data.query"}
+
+    async def fake_resolve(_user, _state):
+        return "org-a"
+
+    monkeypatch.setattr(chat_agent_module, "get_effective_permissions", fake_permissions)
+    monkeypatch.setattr(chat_agent_module, "resolve_organization_id", fake_resolve)
+    agent = ChatAgent(llm=_TaggedLLMProvider("primary-tag"))
+
+    state = _EnterpriseDataState(
+        datasets=[
+            {
+                "id": "ds-1",
+                "organization_id": "org-a",
+                "name": "positions",
+                "domain": "POSITION",
+                "classification": "CUSTOMER_RESTRICTED",
+                "row_count": 5,
+            },
+            {
+                "id": "ds-2",
+                "organization_id": "org-a",
+                "name": "wells",
+                "domain": "ASSET",
+                "classification": "PUBLIC",
+                "row_count": 3,
+            },
+        ],
+        policies=[],
+    )
+
+    result = await agent.ask("What is in my enterprise data?", state, user)
+
+    assert result.model != "primary-tag"
+    assert result.model == MockLLMProvider().model
+
+
 async def test_enterprise_data_query_includes_data_allowed_by_org_override(monkeypatch, user):
     async def fake_permissions(_user, _state):
         return {"enterprise_data.query"}

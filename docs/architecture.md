@@ -754,10 +754,11 @@ tables) — per-`(organization_id, EnterpriseDataClassification)` governance row
 `organization_id=None` as the platform default. `ModelRoutingEngine`/`RetentionEngine`
 (`services/enterprise_data/enterprise_data_service/`) are pure policy-resolution functions;
 `PolicyGatedLLMProvider` (`packages/agent-sdk/agent_sdk/llm.py`) is the provider-swapping
-enforcement primitive for `ModelRoutingPolicy` (still no live caller — Milestone 10's
-`ChatAgent._enterprise_data_query`, below, enforces the same policy a different way: by
-deciding what goes into the prompt rather than swapping which `LLMProvider` handles it);
-`AppState.apply_retention_policy()` is the I/O half of `RetentionPolicy`, purging expired
+enforcement primitive for `ModelRoutingPolicy` — `ChatAgent._enterprise_data_query`, below,
+is its live caller: it wraps the final prose-synthesis call in a `PolicyGatedLLMProvider`
+gated by the combined decision across every involved dataset, on top of also deciding what
+goes into the prompt in the first place (provider-swapping and content-withholding together,
+not either/or); `AppState.apply_retention_policy()` is the I/O half of `RetentionPolicy`, purging expired
 `EnterpriseRecordRow`s. Both exposed via `/admin/model-routing-policies`/
 `/admin/retention-policies(/apply)` (new `admin.model_routing_policy`/`admin.retention_policy`
 permissions) — API-only, no admin UI yet. Finally, `trade_ideas`/`committee_decisions`/

@@ -535,9 +535,13 @@ provider and how long data may be retained — `ModelRoutingEngine`/`RetentionEn
 (`services/enterprise_data/enterprise_data_service/`) resolve policy purely (organization
 override winning over a platform default), `PolicyGatedLLMProvider`
 (`packages/agent-sdk/agent_sdk/llm.py`) and `AppState.apply_retention_policy()` are the real
-enforcement primitives — `PolicyGatedLLMProvider` itself (provider-swapping) still has no live
-caller, but `ModelRoutingEngine` gained one in Milestone 10 (below: the Enterprise-specific
-Chief Trading Agent chat tool). Exposed via `/admin/model-routing-policies`/
+enforcement primitives — both `ModelRoutingEngine` and `PolicyGatedLLMProvider` now have a
+real live caller: `ChatAgent._enterprise_data_query` (below: the Enterprise-specific Chief
+Trading Agent chat tool) evaluates `ModelRoutingEngine` per dataset to decide what content
+reaches the facts handed to the LLM, and separately wraps the final prose-synthesis call in a
+`PolicyGatedLLMProvider` gated by the combined decision across every involved dataset, so a
+blocked classification also keeps that summarization step off an external LLM entirely.
+Exposed via `/admin/model-routing-policies`/
 `/admin/retention-policies(/apply)` (new `admin.model_routing_policy`/`admin.retention_policy`
 permissions) — API-only, no admin UI yet. Finally, `trade_ideas`/`committee_decisions`/
 `risk_checks`/`approvals` each gained a nullable `organization_id` column that now round-trips

@@ -870,12 +870,17 @@ gated by `admin.model_routing_policy`.
 
 **Update (Milestone 10)**: `ModelRoutingEngine` now has a real live caller —
 `ChatAgent._enterprise_data_query` (section 11.7 below) evaluates it per dataset before
-deciding whether that dataset's content may appear in the facts handed to
-`self.llm.complete()`, withholding (never silently including) anything a resolved
-`RoutingDecision` denies. `PolicyGatedLLMProvider` itself (the provider-swapping primitive)
-still has no live caller — the chat tool enforces the policy by deciding what goes *into* the
-prompt rather than by swapping which `LLMProvider` handles it, which is provider-agnostic and
-arguably the more robust enforcement point regardless of which LLM backend is configured. No
+deciding whether that dataset's content may appear in the facts handed to the LLM,
+withholding (never silently including) anything a resolved `RoutingDecision` denies.
+
+**Update (follow-up to Milestone 10)**: `PolicyGatedLLMProvider` itself now also has a real
+live caller, layered on top of the content-withholding above rather than replacing it:
+`_enterprise_data_query` combines every involved dataset's decision (blocked if any one is)
+into a single `RoutingDecision` and wraps `self.llm` in a `PolicyGatedLLMProvider` for the
+final prose-synthesis call `ChatAgent.ask()` makes, via a new `ToolResult.llm_override` field
+`ask()` prefers over `self.llm` when a tool method sets it. A blocked classification now keeps
+that summarization step off an external LLM entirely — provider-swapping enforcement on top
+of the already-provider-agnostic content withholding, not a replacement for it. No
 fundamental/quant agent or the Chief Trading Agent itself reads a classified
 `EnterpriseRecordRow` into its own reasoning yet — only the chat tool does.
 

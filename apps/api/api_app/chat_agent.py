@@ -23,8 +23,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
-from agent_sdk import LLMMessage, LLMProvider
+from agent_sdk import LLMMessage, LLMProvider, MockLLMProvider, PolicyGatedLLMProvider
 from alpha_service import ScenarioEngine
+from enterprise_data_service.model_routing import RoutingDecision
 from risk_service.metrics import PositionSnapshot
 from risk_service.scenarios import get_scenario, run_scenario
 from schemas import EnterpriseDataClassification, ModelRoutingPolicy, ScenarioDefinition, ScenarioFactorType, ScenarioVariable
@@ -69,6 +70,12 @@ class ToolResult:
         self.latency_ms: float | None = None
         self.permission_required: str | None = None
         self.access_granted: bool = True
+        # Set by a tool method (today only `_enterprise_data_query`) when the facts it
+        # gathered are subject to a real `ModelRoutingPolicy` decision -- `ask()` uses
+        # this instead of `self.llm` for the final prose-synthesis call when present, so
+        # `PolicyGatedLLMProvider` (agent_sdk.llm) has a genuine, tested call site rather
+        # than only existing as an untested enforcement primitive.
+        self.llm_override: LLMProvider | None = None
 
 
 # Each chat topic's required permission (spec §28 "Chat Authorization" — e.g. a
@@ -225,7 +232,8 @@ class ChatAgent:
                 "(never invent numbers), answer the trader's question concisely and professionally.\n\n"
                 f"Question: {question}\n\nFacts:\n{result.content}"
             )
-            llm_response = await self.llm.complete([LLMMessage(role="user", content=prompt)], max_tokens=400)
+            synthesis_llm = result.llm_override or self.llm
+            llm_response = await synthesis_llm.complete([LLMMessage(role="user", content=prompt)], max_tokens=400)
             content = result.content if "MOCK LLM RESPONSE" in llm_response.content else llm_response.content
             model_used = llm_response.model
             result = ToolResult(content=content, citations=result.citations, freshness=result.freshness)
@@ -470,16 +478,22 @@ class ChatAgent:
         plan: answers using the caller's own organization's registered enterprise
         datasets. This is the first real caller of `ModelRoutingEngine`
         (Milestone 9's `services/enterprise_data/enterprise_data_service/
-        model_routing.py`, built with no live caller at the time): a dataset
-        whose resolved `ModelRoutingPolicy` denies external LLM processing is
-        named in the response but its actual content is withheld -- never
-        silently included in the prompt this method's caller (`ask()`) hands to
-        `self.llm.complete()`, regardless of which provider that is. Scoped by
-        organization only, not by fine-grained per-dataset
-        `EnterpriseDataEntitlement` grants -- docs/alpha-intelligence.md section
-        11.2 already flags that non-admin, per-dataset entitlement enforcement
-        isn't wired into any read path yet; this reuses that same honest
-        limitation rather than pretending to solve it here."""
+        model_routing.py`): a dataset whose resolved `ModelRoutingPolicy` denies
+        external LLM processing is named in the response but its actual content
+        is withheld -- never silently included in the prompt this method's
+        caller (`ask()`) hands to the LLM. On top of that, the *combined* routing
+        decision across every dataset involved (blocked if any one of them is
+        blocked) also gates which `LLMProvider` `ask()` uses for the final
+        prose-synthesis call itself, via `result.llm_override` wrapping `self.llm`
+        in a `PolicyGatedLLMProvider` -- so a blocked classification keeps the
+        summarization step off an external LLM entirely, defense-in-depth on top
+        of the content already being withheld, rather than `PolicyGatedLLMProvider`
+        remaining a tested-but-uncalled primitive. Scoped by organization only, not
+        by fine-grained per-dataset `EnterpriseDataEntitlement` grants --
+        docs/alpha-intelligence.md section 11.2 already flags that non-admin,
+        per-dataset entitlement enforcement isn't wired into any read path yet;
+        this reuses that same honest limitation rather than pretending to solve
+        it here."""
         organization_id = await resolve_organization_id(user, state)
         if organization_id is None:
             return ToolResult(
@@ -495,6 +509,7 @@ class ChatAgent:
         lines: list[str] = []
         citations: list[dict[str, Any]] = []
         withheld_count = 0
+        any_blocked = False
         for dataset in datasets:
             classification = EnterpriseDataClassification(dataset["classification"])
             decision = state.model_routing_engine.evaluate(
@@ -503,6 +518,7 @@ class ChatAgent:
             citations.append({"source": "enterprise_data_service", "reference": dataset["id"]})
             if not decision.allowed:
                 withheld_count += 1
+                any_blocked = True
                 lines.append(
                     f"- {dataset['name']} ({dataset['domain']}, {classification.value}): withheld -- your "
                     f"organization's model routing policy does not allow this classification to reach an "
@@ -513,11 +529,24 @@ class ChatAgent:
                 f"- {dataset['name']} ({dataset['domain']}, {classification.value}, "
                 f"{dataset['row_count']} row(s) ingested)."
             )
-        return ToolResult(
+        result = ToolResult(
             "\n".join(lines),
             citations,
             {"dataset_count": len(datasets), "withheld_count": withheld_count},
         )
+        result.llm_override = PolicyGatedLLMProvider(
+            primary=self.llm,
+            fallback=MockLLMProvider(),
+            decision=RoutingDecision(
+                allowed=not any_blocked,
+                reason=(
+                    "at least one involved dataset's classification blocks external LLM processing"
+                    if any_blocked
+                    else "every involved dataset's classification allows external LLM processing"
+                ),
+            ),
+        )
+        return result
 
     async def _enterprise_trade_idea(self, state: AppState, user: User) -> ToolResult:
         """Milestone 10 follow-up (docs/alpha-intelligence.md section 11.7): unlike

@@ -5,6 +5,7 @@ from .llm import (
     LLMProvider,
     LLMResponse,
     MockLLMProvider,
+    PolicyGatedLLMProvider,
     build_llm_provider,
     get_default_llm_provider,
 )
@@ -21,4 +22,5 @@ __all__ = [
     "LLMProvider",
     "LLMResponse",
     "MockLLMProvider",
+    "PolicyGatedLLMProvider",
 ]

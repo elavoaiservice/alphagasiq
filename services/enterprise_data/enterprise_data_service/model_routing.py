@@ -6,13 +6,15 @@ I/O, exhaustively unit-testable -- the same design philosophy as
 `risk_service.governor.RiskGovernor` and every other Alpha* engine in this
 codebase.
 
-Honest about scope: no agent call site threads a `data_classification` through
-this engine yet, because no agent consumes classified enterprise data in its
-prompts today (`EnterpriseRecordRow` data is stored but never read into an
-agent prompt -- that integration is Milestone 10's job, per
-docs/alpha-intelligence.md's roadmap). This module and `PolicyGatedLLMProvider`
-in `agent_sdk.llm` are the real, fully-tested enforcement primitive that
-integration will call into; today they have no live caller.
+`ChatAgent._enterprise_data_query` (`apps/api/api_app/chat_agent.py`) is the live caller:
+it evaluates every dataset classification involved in a request, withholds any blocked
+dataset's content from the facts handed to the LLM, and also wraps the final
+prose-synthesis call itself in `agent_sdk.llm.PolicyGatedLLMProvider` -- gated by the
+combined decision across every involved dataset (blocked if any one is) -- so a blocked
+classification keeps that summarization step off an external LLM entirely, not just its
+raw content out of the prompt text. No agent (as opposed to chat tool) call site threads
+a `data_classification` through this engine yet, since no agent consumes classified
+enterprise data in its prompts today.
 """
 
 from __future__ import annotations

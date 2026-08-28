@@ -83,11 +83,13 @@ class PolicyGatedLLMProvider(LLMProvider):
     content can be kept off an external LLM provider entirely when an
     organization's `ModelRoutingPolicy` says so.
 
-    Honest about scope: nothing constructs this today with a real, non-trivial
-    `RoutingDecision` -- no agent call site classifies the content it's about
-    to send an LLM (see `model_routing.py`'s module docstring for why). This
-    class is the real, testable enforcement primitive that integration will
-    use; it has no live caller yet."""
+    `apps/api/api_app/chat_agent.py`'s `ChatAgent._enterprise_data_query` is the live
+    caller: it evaluates every enterprise dataset classification a chat request
+    touches and wraps the final prose-synthesis `complete()` call in an instance of
+    this class, gated by the combined decision across every involved dataset (blocked
+    if any one of them is). No *agent* call site classifies the content it's about to
+    send an LLM yet (see `model_routing.py`'s module docstring for why) -- that
+    remains real follow-up work, honestly not claimed as done here."""
 
     def __init__(self, *, primary: LLMProvider, fallback: LLMProvider, decision: Any) -> None:
         """`decision` is an `enterprise_data_service.model_routing.RoutingDecision`
