@@ -16,7 +16,13 @@ from schemas import EnterpriseOpportunityStatus
 
 from ..auth import User
 from ..deps import AppStateDep
-from ..entitlements import record_is_visible, require_permission, resolve_organization_id, resolve_organization_scope
+from ..entitlements import (
+    filter_entitled_enterprise_datasets,
+    record_is_visible,
+    require_permission,
+    resolve_organization_id,
+    resolve_organization_scope,
+)
 
 router = APIRouter(prefix="/alpha/enterprise", tags=["alpha"])
 
@@ -105,9 +111,11 @@ async def pipeline_overlay(state: AppStateDep, user: User = _RequireEnterpriseDa
     /fundamentals/pipeline/graph` returns, plus an `overlay.assets` layer of the
     caller's own organization's `ASSET`/`FACILITY`-domain enterprise records
     that name a real node in the graph -- tenant-isolated (only the caller's own
-    resolved organization's datasets), never merged into the public graph
-    itself. Returns `overlay.assets=[]` (not an error) when the caller's
-    organization can't be resolved or has registered no matching data."""
+    resolved organization's datasets, and further narrowed to only datasets `user`
+    is fine-grained-entitled to see via `filter_entitled_enterprise_datasets`),
+    never merged into the public graph itself. Returns `overlay.assets=[]` (not an
+    error) when the caller's organization can't be resolved or has registered no
+    matching (entitled) data."""
     if state.pipeline_graph is None:
         raise HTTPException(status_code=503, detail="Pipeline graph not yet seeded")
     graph = to_geojson_like(state.pipeline_graph)
@@ -117,6 +125,7 @@ async def pipeline_overlay(state: AppStateDep, user: User = _RequireEnterpriseDa
     overlay_points: list[dict] = []
     if organization_id is not None:
         datasets = await state.repo.list_enterprise_datasets(organization_id=organization_id)
+        datasets = await filter_entitled_enterprise_datasets(user, state, datasets)
         overlay_datasets = [d for d in datasets if d["domain"] in ("ASSET", "FACILITY")]
         records_by_dataset = {
             d["id"]: await state.repo.list_enterprise_records(d["id"], limit=200) for d in overlay_datasets

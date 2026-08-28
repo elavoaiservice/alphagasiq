@@ -66,6 +66,61 @@ def _activate_via_magic_link(client, email: str, role: str, company_name: str) -
     return {"headers": {"Authorization": f"Bearer {session_token}"}, "user": created}
 
 
+def test_entitlement_grant_restricts_chat_visibility_end_to_end(client):
+    """#3: fine-grained per-dataset `EnterpriseDataEntitlement` enforcement, exercised
+    through the real admin grant endpoint and the real chat endpoint (not fakes) --
+    a dataset with a USER-principal grant naming trader A becomes invisible to
+    trader B in the same organization via `ChatAgent._enterprise_data_query`, and
+    stays visible to trader A."""
+    import re
+
+    from schemas import EnterpriseDataClassification, EnterpriseDataDomain, EnterpriseDataset
+
+    trader_a = _activate_via_magic_link(client, "trader-entitlement-a@company-ent.com", "TRADER", "Company Ent")
+    trader_b = _activate_via_magic_link(client, "trader-entitlement-b@company-ent.com", "TRADER", "Company Ent")
+    org_id = trader_a["user"]["organization_id"]
+    assert org_id == trader_b["user"]["organization_id"]
+
+    from api_app import state as state_module
+
+    state = state_module._state
+    ds = EnterpriseDataset(
+        source_id="00000000-0000-0000-0000-000000000000",
+        organization_id=org_id,
+        name="restricted-wells",
+        domain=EnterpriseDataDomain.ASSET,
+        classification=EnterpriseDataClassification.PUBLIC,
+    )
+    import asyncio
+
+    asyncio.run(state.repo.save_enterprise_dataset(ds))
+
+    admin_headers = _admin_headers(client)
+    grant = client.post(
+        f"/api/v1/admin/enterprise-data/datasets/{ds.id}/entitlements",
+        json={"principal_type": "USER", "principal_id": trader_a["user"]["id"]},
+        headers=admin_headers,
+    )
+    assert grant.status_code == 201
+
+    def ask(headers: dict) -> str:
+        session = client.post("/api/v1/chat/sessions", headers=headers).json()
+        msg = client.post(
+            f"/api/v1/chat/sessions/{session['id']}/messages",
+            json={"content": "What is in my enterprise data?"},
+            headers=headers,
+        )
+        assert msg.status_code == 200
+        return msg.json()["content"]
+
+    content_a = ask(trader_a["headers"])
+    assert "restricted-wells" in content_a
+
+    content_b = ask(trader_b["headers"])
+    assert "restricted-wells" not in content_b
+    assert "aren't entitled" in content_b
+
+
 def test_dev_mode_caller_with_no_org_sees_empty_list_not_an_error(client):
     r = client.get("/api/v1/alpha/enterprise/opportunities", headers=_trader_headers(client))
     assert r.status_code == 200

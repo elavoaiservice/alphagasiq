@@ -583,10 +583,14 @@ runs `EnterpriseCorroborationEngine`
 `AlphaCorroborationEngine`) — a same-market position in the organization's own book becomes
 supporting data, an opposing one becomes a risk, both reaching `BullAgent`/`SkepticAgent` in
 committee deliberation. A new chat topic, `ChatAgent._enterprise_trade_idea` (gated by new
-`enterprise_trading.generate`, TRADER only), triggers it. **Honest about scope**: both the
-data-query chat tool and the pipeline overlay are scoped by organization only, not by
-fine-grained per-dataset `EnterpriseDataEntitlement` grants (a gap Milestone 8's own write-up
-already flagged and this doesn't solve). `AppState.generate_enterprise_opportunities_for_all_
+`enterprise_trading.generate`, TRADER only), triggers it. Both the data-query chat tool and
+the pipeline overlay are now also narrowed by fine-grained per-dataset
+`EnterpriseDataEntitlement` grants (`filter_entitled_enterprise_datasets`,
+`apps/api/api_app/entitlements.py`) — a dataset with no entitlement rows stays visible to the
+whole organization, but once at least one grant exists only a matching principal sees it. The
+same enforcement doesn't yet reach `AppState._load_enterprise_positions()`'s org-wide
+aggregate read path (opportunity/trade generation), which has no per-caller principal to check
+against. `AppState.generate_enterprise_opportunities_for_all_
 organizations()` gives opportunity generation a real scheduled cadence -- `worker.py`'s
 existing periodic loop calls it every interval alongside the Chief Trading Agent's own
 research cycle, on top of the still-available on-demand `POST /alpha/enterprise/opportunities/

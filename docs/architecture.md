@@ -793,9 +793,11 @@ tab (`OpportunitiesTable.tsx`) lists/generates/reviews.
 Chief Trading Agent chat integration: answers using the caller's own organization's registered
 enterprise datasets, and is the first real caller `ModelRoutingEngine` has had since Milestone
 9 — a dataset whose resolved `ModelRoutingPolicy` denies external LLM processing is named but
-its content withheld from the facts handed to `self.llm.complete()`. Scoped by organization
-only, not by fine-grained per-dataset `EnterpriseDataEntitlement` grants (that gap was already
-flagged in Milestone 8's write-up and isn't solved here).
+its content withheld from the facts handed to `self.llm.complete()`. Also narrowed by
+fine-grained per-dataset `EnterpriseDataEntitlement` grants via `filter_entitled_enterprise_
+datasets` (`apps/api/api_app/entitlements.py`) — a dataset with no entitlement rows stays
+visible to the whole organization, but once at least one grant exists only a matching
+principal sees it.
 
 `GET /alpha/enterprise/pipeline-overlay` (`enterprise_data.query`) is the Enterprise Digital
 Twin overlay: the same public pipeline graph `GET /fundamentals/pipeline/graph` returns, plus

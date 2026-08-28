@@ -2905,6 +2905,17 @@ class SqlAppRepository:
             for r in rows
         ]
 
+    async def list_workspace_ids_for_user(self, user_id: str) -> list[str]:
+        """The reverse direction of `list_workspace_members` -- every workspace a
+        given user belongs to, used by `enterprise_data_service.dataset_entitlement.
+        dataset_is_entitled` to resolve WORKSPACE-principal-type entitlement grants
+        for that user."""
+        async with self.session_factory() as session:
+            rows = (
+                await session.execute(select(WorkspaceMemberRow).where(WorkspaceMemberRow.user_id == user_id))
+            ).scalars().all()
+        return [r.workspace_id for r in rows]
+
     async def save_enterprise_data_source(self, source: EnterpriseDataSource) -> None:
         row = EnterpriseDataSourceRow(
             id=str(source.id),

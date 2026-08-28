@@ -31,7 +31,7 @@ from risk_service.scenarios import get_scenario, run_scenario
 from schemas import EnterpriseDataClassification, ModelRoutingPolicy, ScenarioDefinition, ScenarioFactorType, ScenarioVariable
 
 from .auth import User
-from .entitlements import get_effective_permissions, resolve_organization_id
+from .entitlements import filter_entitled_enterprise_datasets, get_effective_permissions, resolve_organization_id
 from .state import AppState
 
 
@@ -488,20 +488,28 @@ class ChatAgent:
         in a `PolicyGatedLLMProvider` -- so a blocked classification keeps the
         summarization step off an external LLM entirely, defense-in-depth on top
         of the content already being withheld, rather than `PolicyGatedLLMProvider`
-        remaining a tested-but-uncalled primitive. Scoped by organization only, not
-        by fine-grained per-dataset `EnterpriseDataEntitlement` grants --
-        docs/alpha-intelligence.md section 11.2 already flags that non-admin,
-        per-dataset entitlement enforcement isn't wired into any read path yet;
-        this reuses that same honest limitation rather than pretending to solve
-        it here."""
+        remaining a tested-but-uncalled primitive. Also narrows the organization's
+        datasets down to only the ones `user` is fine-grained-entitled to see, via
+        `filter_entitled_enterprise_datasets` (docs/alpha-intelligence.md section
+        11.2) -- a dataset with no entitlement rows at all stays visible to the
+        whole organization, so this is additive, not a behavior change for datasets
+        nobody has ever entitled."""
         organization_id = await resolve_organization_id(user, state)
         if organization_id is None:
             return ToolResult(
                 "I can't identify your organization, so I have no enterprise data to draw on.", [], {}
             )
-        datasets = await state.repo.list_enterprise_datasets(organization_id=organization_id)
-        if not datasets:
+        all_datasets = await state.repo.list_enterprise_datasets(organization_id=organization_id)
+        if not all_datasets:
             return ToolResult("Your organization hasn't registered any enterprise datasets yet.", [], {})
+        datasets = await filter_entitled_enterprise_datasets(user, state, all_datasets)
+        if not datasets:
+            return ToolResult(
+                "Your organization has registered enterprise datasets, but you aren't entitled to any of "
+                "them. Contact your administrator if you believe this is incorrect.",
+                [],
+                {},
+            )
 
         policies_raw = await state.repo.list_model_routing_policies(organization_id=organization_id)
         policies = [ModelRoutingPolicy.model_validate(p) for p in policies_raw]

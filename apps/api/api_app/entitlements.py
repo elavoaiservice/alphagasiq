@@ -76,6 +76,34 @@ def record_is_visible(record_organization_id: str | None, caller_organization_id
     return record_organization_id == caller_organization_id
 
 
+async def filter_entitled_enterprise_datasets(user: User, state, datasets: list[dict]) -> list[dict]:
+    """Fine-grained per-dataset `EnterpriseDataEntitlement` enforcement (docs/alpha-
+    intelligence.md section 11.2, Milestone 10 follow-up): narrows an
+    already-organization-scoped `datasets` list (e.g. from `state.repo.
+    list_enterprise_datasets(organization_id=...)`) down to only the ones `user` is
+    actually entitled to see, via `enterprise_data_service.dataset_entitlement.
+    dataset_is_entitled`. A dataset with no entitlement rows at all stays visible to
+    everyone (backward-compatible default -- see that function's docstring for why);
+    only datasets that have at least one entitlement grant start requiring a
+    matching one. Fetches the caller's workspace memberships once, not per dataset."""
+    from enterprise_data_service import dataset_is_entitled
+    from schemas import EnterpriseDataEntitlement
+
+    if not datasets:
+        return []
+    workspace_ids = await state.repo.list_workspace_ids_for_user(user.user_id)
+    roles = [r.value for r in user.roles]
+    entitled: list[dict] = []
+    for dataset in datasets:
+        raw_entitlements = await state.repo.list_enterprise_data_entitlements(dataset["id"])
+        entitlements = [EnterpriseDataEntitlement.model_validate(e) for e in raw_entitlements]
+        if dataset_is_entitled(
+            entitlements=entitlements, user_id=user.user_id, roles=roles, workspace_ids=workspace_ids
+        ):
+            entitled.append(dataset)
+    return entitled
+
+
 async def get_effective_permissions(user: User, state) -> set[str]:
     """The user's real DB role's permission grants if they have a `UserRow`;
     otherwise the union of every DB role's grants across `user.roles` (dev-mode/OIDC

@@ -539,12 +539,18 @@ async def test_overnight_brief_declined_without_permission(monkeypatch, user):
 
 class _FakeEnterpriseRepo:
     """Minimal stand-in for `Repository`'s enterprise-data read methods used by
-    `ChatAgent._enterprise_data_query` -- returns whatever dataset/policy dicts a
-    test sets up, without a real database."""
+    `ChatAgent._enterprise_data_query` -- returns whatever dataset/policy/entitlement
+    dicts a test sets up, without a real database. `entitlements`/`workspace_ids`
+    default to empty, matching the real repo's behavior for a dataset nobody has
+    ever entitled (visible to the whole organization -- see `dataset_is_entitled`'s
+    docstring) and a user in no workspace, so every existing test that doesn't set
+    these up keeps seeing every dataset exactly as before."""
 
-    def __init__(self, *, datasets=None, policies=None):
+    def __init__(self, *, datasets=None, policies=None, entitlements=None, workspace_ids=None):
         self.datasets = datasets or []
         self.policies = policies or []
+        self.entitlements = entitlements or {}
+        self.workspace_ids = workspace_ids or []
 
     async def list_enterprise_datasets(self, *, organization_id):
         return [d for d in self.datasets if d["organization_id"] == organization_id]
@@ -552,13 +558,21 @@ class _FakeEnterpriseRepo:
     async def list_model_routing_policies(self, *, organization_id):
         return [p for p in self.policies if p["organization_id"] in (organization_id, None)]
 
+    async def list_enterprise_data_entitlements(self, dataset_id):
+        return self.entitlements.get(dataset_id, [])
+
+    async def list_workspace_ids_for_user(self, user_id):
+        return self.workspace_ids
+
 
 class _EnterpriseDataState(_FakeState):
-    def __init__(self, *, datasets=None, policies=None):
+    def __init__(self, *, datasets=None, policies=None, entitlements=None, workspace_ids=None):
         super().__init__()
         from enterprise_data_service import ModelRoutingEngine
 
-        self.repo = _FakeEnterpriseRepo(datasets=datasets, policies=policies)
+        self.repo = _FakeEnterpriseRepo(
+            datasets=datasets, policies=policies, entitlements=entitlements, workspace_ids=workspace_ids
+        )
         self.model_routing_engine = ModelRoutingEngine()
 
 
@@ -642,6 +656,140 @@ async def test_enterprise_data_query_withholds_data_blocked_by_routing_policy(mo
     assert "positions" in result.content
     assert "wells" in result.content
     assert result.freshness == {"dataset_count": 2, "withheld_count": 1}
+
+
+async def test_enterprise_data_query_hides_dataset_with_non_matching_entitlement(monkeypatch, user):
+    """#3: fine-grained per-dataset `EnterpriseDataEntitlement` enforcement. A
+    dataset that has an entitlement grant at all switches to allow-list mode -- a
+    caller not matching any grant no longer sees it, even though it's their own
+    organization's dataset."""
+
+    async def fake_permissions(_user, _state):
+        return {"enterprise_data.query"}
+
+    async def fake_resolve(_user, _state):
+        return "org-a"
+
+    monkeypatch.setattr(chat_agent_module, "get_effective_permissions", fake_permissions)
+    monkeypatch.setattr(chat_agent_module, "resolve_organization_id", fake_resolve)
+    agent = ChatAgent(llm=MockLLMProvider())
+
+    state = _EnterpriseDataState(
+        datasets=[
+            {
+                "id": "ds-1",
+                "organization_id": "org-a",
+                "name": "wells",
+                "domain": "ASSET",
+                "classification": "PUBLIC",
+                "row_count": 3,
+            }
+        ],
+        policies=[],
+        entitlements={"ds-1": [{"dataset_id": "00000000-0000-0000-0000-000000000001", "principal_type": "USER", "principal_id": "someone-else"}]},
+    )
+
+    result = await agent.ask("What is in my enterprise data?", state, user)
+
+    assert result.access_granted is True
+    assert "aren't entitled to any" in result.content
+
+
+async def test_enterprise_data_query_shows_dataset_with_matching_user_entitlement(monkeypatch, user):
+    async def fake_permissions(_user, _state):
+        return {"enterprise_data.query"}
+
+    async def fake_resolve(_user, _state):
+        return "org-a"
+
+    monkeypatch.setattr(chat_agent_module, "get_effective_permissions", fake_permissions)
+    monkeypatch.setattr(chat_agent_module, "resolve_organization_id", fake_resolve)
+    agent = ChatAgent(llm=MockLLMProvider())
+
+    state = _EnterpriseDataState(
+        datasets=[
+            {
+                "id": "ds-1",
+                "organization_id": "org-a",
+                "name": "wells",
+                "domain": "ASSET",
+                "classification": "PUBLIC",
+                "row_count": 3,
+            }
+        ],
+        policies=[],
+        entitlements={"ds-1": [{"dataset_id": "00000000-0000-0000-0000-000000000001", "principal_type": "USER", "principal_id": user.user_id}]},
+    )
+
+    result = await agent.ask("What is in my enterprise data?", state, user)
+
+    assert result.access_granted is True
+    assert "wells" in result.content
+
+
+async def test_enterprise_data_query_shows_dataset_with_matching_role_entitlement(monkeypatch, user):
+    async def fake_permissions(_user, _state):
+        return {"enterprise_data.query"}
+
+    async def fake_resolve(_user, _state):
+        return "org-a"
+
+    monkeypatch.setattr(chat_agent_module, "get_effective_permissions", fake_permissions)
+    monkeypatch.setattr(chat_agent_module, "resolve_organization_id", fake_resolve)
+    agent = ChatAgent(llm=MockLLMProvider())
+
+    state = _EnterpriseDataState(
+        datasets=[
+            {
+                "id": "ds-1",
+                "organization_id": "org-a",
+                "name": "wells",
+                "domain": "ASSET",
+                "classification": "PUBLIC",
+                "row_count": 3,
+            }
+        ],
+        policies=[],
+        entitlements={"ds-1": [{"dataset_id": "00000000-0000-0000-0000-000000000001", "principal_type": "ROLE", "principal_id": user.roles[0].value}]},
+    )
+
+    result = await agent.ask("What is in my enterprise data?", state, user)
+
+    assert result.access_granted is True
+    assert "wells" in result.content
+
+
+async def test_enterprise_data_query_shows_dataset_with_matching_workspace_entitlement(monkeypatch, user):
+    async def fake_permissions(_user, _state):
+        return {"enterprise_data.query"}
+
+    async def fake_resolve(_user, _state):
+        return "org-a"
+
+    monkeypatch.setattr(chat_agent_module, "get_effective_permissions", fake_permissions)
+    monkeypatch.setattr(chat_agent_module, "resolve_organization_id", fake_resolve)
+    agent = ChatAgent(llm=MockLLMProvider())
+
+    state = _EnterpriseDataState(
+        datasets=[
+            {
+                "id": "ds-1",
+                "organization_id": "org-a",
+                "name": "wells",
+                "domain": "ASSET",
+                "classification": "PUBLIC",
+                "row_count": 3,
+            }
+        ],
+        policies=[],
+        entitlements={"ds-1": [{"dataset_id": "00000000-0000-0000-0000-000000000001", "principal_type": "WORKSPACE", "principal_id": "ws-1"}]},
+        workspace_ids=["ws-1"],
+    )
+
+    result = await agent.ask("What is in my enterprise data?", state, user)
+
+    assert result.access_granted is True
+    assert "wells" in result.content
 
 
 class _TaggedLLMProvider(MockLLMProvider):

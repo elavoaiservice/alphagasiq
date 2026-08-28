@@ -804,12 +804,19 @@ something this column alone provides.
 `ALPHAGASIQ_PROPRIETARY`/`CUSTOMER_CONFIDENTIAL`/`CUSTOMER_RESTRICTED`/
 `CUSTOMER_POSITION_DATA`/`CUSTOMER_RISK_DATA`/`SIMULATED`) — a new enum, deliberately distinct
 from the existing `DataClassification` (a data-provenance tag, not a security tier; see
-section 2). Every `EnterpriseDataSource`/`EnterpriseDataset` carries one. **Not yet built**:
-the full access-rule combination (organization + workspace + role + permission + this
-classification + feature entitlement + dataset entitlement + agent entitlement) described in
-the original plan — today only `admin.enterprise_data`/`admin.workspaces` gate the whole admin
-surface; per-dataset entitlement-based access control for a *non-admin* caller (e.g. a trader
-reading only datasets their workspace was granted) is not wired into any read path yet.
+section 2). Every `EnterpriseDataSource`/`EnterpriseDataset` carries one. `admin.enterprise_
+data`/`admin.workspaces` gate the whole admin surface; per-dataset entitlement-based access
+control for a *non-admin* caller now also exists (Milestone 10 follow-up) --
+`filter_entitled_enterprise_datasets` (`apps/api/api_app/entitlements.py`) narrows an
+already-organization-scoped dataset list down to only the ones a caller's `EnterpriseDataEntitlement`
+grants actually cover, wired into `ChatAgent._enterprise_data_query` and the pipeline overlay
+endpoint (section 11.7). **Not yet built**: the full access-rule combination (organization +
+workspace + role + permission + this classification + feature entitlement + dataset
+entitlement + agent entitlement) described in the original plan, and per-dataset entitlement
+enforcement inside `AppState._load_enterprise_positions()`'s org-wide aggregate read path
+(used by opportunity/trade generation) -- that pipeline has no per-caller principal to check
+entitlements against, since it operates on the organization's data as a whole, not on behalf
+of one specific user.
 
 ### 11.3 Enterprise data connectors
 
@@ -960,11 +967,11 @@ Chief Trading Agent" from the original plan, and the first real caller `ModelRou
 10)" note for exactly how). Each dataset's resolved `ModelRoutingPolicy` decision gates whether
 its content is described or withheld in the response — a `CUSTOMER_RESTRICTED` dataset with no
 organization override defaults to withheld and says why, never silently included in the facts
-handed to `self.llm.complete()`. **Honest about scope**: this is scoped by organization only,
-not by fine-grained per-dataset `EnterpriseDataEntitlement` grants — section 11.2 already
-flagged that non-admin, per-dataset entitlement enforcement isn't wired into any read path yet;
-this reuses that same limitation rather than solving it here. A caller sees every dataset their
-organization has registered, not only ones they were specifically entitled to.
+handed to `self.llm.complete()`. Also narrowed by fine-grained per-dataset
+`EnterpriseDataEntitlement` grants (section 11.2, Milestone 10 follow-up) via
+`filter_entitled_enterprise_datasets` — a dataset with no entitlement rows at all stays
+visible to the whole organization, but once at least one grant exists for a dataset only a
+matching principal sees it.
 
 **Implemented — Enterprise-specific Chief Trading Agent wired into trade generation itself**
 (follow-up to Milestone 10): `AppState.generate_enterprise_trade_idea(organization_id=...)` closes
@@ -996,9 +1003,10 @@ now" when the strategy agent's own data-driven SKIP fires that cycle (see sectio
 (`enterprise_data.query`) returns the same public pipeline digital twin `GET
 /fundamentals/pipeline/graph` returns, plus `overlay.assets` — the caller's own organization's
 `ASSET`/`FACILITY`-domain enterprise records that name a real node in the graph, pinned onto
-it. Tenant-isolated (only the caller's own resolved organization's datasets; an
-unresolvable-organization caller gets the public graph with an empty overlay, never an error)
-and never merged into the public graph object itself.
+it. Tenant-isolated (only the caller's own resolved organization's datasets, further narrowed
+by `filter_entitled_enterprise_datasets`; an unresolvable-organization caller gets the public
+graph with an empty overlay, never an error) and never merged into the public graph object
+itself.
 `PipelineOverlayPoint.from_record`/`build_overlay`
 (`services/enterprise_data/enterprise_data_service/pipeline_overlay.py`) are pure parsing —
 zero I/O — assuming a record's `row_data` carries `pipeline_node_id` (required) and optionally
@@ -1019,9 +1027,11 @@ cadence is additive, not a replacement for it.
 
 **Not yet built**: opportunity types beyond the two documented above (no volatility/
 curve-shape/basis-specific opportunity detection); fine-grained per-dataset entitlement
-enforcement on the chat tools or the pipeline overlay (all scoped by organization only, per
-above); `FACILITY`-domain overlay fields beyond a single pinned point (no polygon/area assets,
-no per-asset detail panel); and real database-level Row Level Security, which remains the one
+enforcement inside `AppState._load_enterprise_positions()`'s org-wide aggregate read path (used
+by opportunity/trade generation) — that pipeline has no per-caller principal to check against
+(see section 11.2); `FACILITY`-domain overlay fields beyond a single pinned point (no
+polygon/area assets, no per-asset detail panel); and real database-level Row Level Security,
+which remains the one
 piece of the original Milestone 9/10 scope not built anywhere in this codebase.
 
 ## 12. Transparency and explainability
