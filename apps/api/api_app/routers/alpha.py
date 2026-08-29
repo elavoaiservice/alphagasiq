@@ -133,6 +133,21 @@ async def get_consensus_for_market(
     return consensus
 
 
+@router.get("/market-bias")
+async def get_market_bias(state: AppStateDep, market: str | None = None) -> dict:
+    """Phase 1 free-data-feed integration, Round 2 (spec section 26): a transparent
+    Market Bias score built from weighted, cited components -- never an LLM's
+    judgment call. See `alpha_service.market_bias.compute_market_bias` for the
+    deterministic scoring; every point in `drivers` traces back to a real input
+    (weather, storage, balance trends, price momentum, agent consensus).
+    Deliberately ungated (no permission dependency), matching `fundamentals.py`'s
+    public-read posture for platform-wide computed indicators -- this is a
+    synthesis over already-platform-wide data, not organization-scoped Alpha
+    Intelligence content."""
+    result = await state.compute_market_bias(market=market)
+    return result.model_dump(mode="json")
+
+
 @router.get("/consensus/by-id/{consensus_id}")
 async def get_consensus(consensus_id: str, state: AppStateDep, user: User = _RequireAlphaConsensus) -> dict:
     organization_id, unrestricted = await resolve_organization_scope(user, state)

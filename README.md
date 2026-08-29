@@ -669,3 +669,18 @@ NYMEX Data Not Enabled" when the forward curve is simulated), `MarketIntelGrid.t
 `TimeSeriesObservation` also gained licensing metadata (`license_type`, `redistribution_allowed`,
 `ai_processing_allowed`), populated conservatively (EIA/NOAA are public-domain U.S. government
 data) rather than left to default permissive.
+
+**Phase 1 free data feed integration, round 2** (docs/data-sources.md §6-8): a new
+`TropicalWeatherConnector` (`providers/nhc.py`) covers NOAA's National Hurricane Center
+`CurrentStorms.json` feed, no API key required, flagging a coarse Gulf-of-Mexico proximity
+heuristic distinct from any confirmed-impact claim. The EIA connector gained an LNG imports
+series (9th, for symmetry with exports) and `ISORTOProvider` gained an actual electricity-demand
+route alongside its existing generation-by-fuel route. A new `compute_market_bias()`
+(`services/alpha/alpha_service/market_bias.py`) replaces the platform's ad-hoc, misleadingly-named
+`ai_market_bias` field (a raw LONG/SHORT trade-idea count on `/market/summary` that was never
+actually AI-decided) with a real, deterministic, weighted score built from up to eight
+independently-computed drivers (weather, storage, production, demand, LNG, power, price momentum,
+agent consensus) -- each driver returns `None`, never a fabricated contribution, when its inputs
+are missing, and the whole result is `INSUFFICIENT_DATA` if every driver is. Exposed at
+`GET /alpha/market-bias` (full breakdown) and summarized on `/market/summary` and a new
+`MarketBiasCard` dashboard panel.

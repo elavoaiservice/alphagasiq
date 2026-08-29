@@ -2,6 +2,7 @@ import { MarketIntelGrid } from "@/components/market-intel/MarketIntelGrid";
 import { ForwardCurveChart } from "@/components/curve/ForwardCurveChart";
 import { StoragePanel } from "@/components/storage/StoragePanel";
 import { WeatherPanel } from "@/components/weather/WeatherPanel";
+import { MarketBiasCard } from "@/components/market-bias/MarketBiasCard";
 import { RiskSummaryCard } from "@/components/risk/RiskSummaryCard";
 import { RecommendationsList } from "@/components/recommendations/RecommendationCard";
 import { ApprovalQueue } from "@/components/approvals/ApprovalQueue";
@@ -18,8 +19,9 @@ export default function DashboardPage() {
         </div>
         <StoragePanel />
       </div>
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <WeatherPanel />
+        <MarketBiasCard />
         <RiskSummaryCard />
       </div>
       <QuantPanel />

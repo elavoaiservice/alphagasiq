@@ -42,6 +42,13 @@ async def summary(state: AppStateDep):
     m2 = state.market_curve[1] if len(state.market_curve) > 1 else m1
     strip = [o.value for o in state.market_curve[:12]]
     portfolio = state.portfolio_risk_summary()
+    # Phase 1 free-data-feed integration, Round 2 (spec section 26): replaces the
+    # previous `ai_market_bias` field, which was never actually AI-decided -- just a
+    # raw count of LONG vs. SHORT trade ideas -- with the real, deterministic,
+    # weighted `MarketBiasResult` (`alpha_service.compute_market_bias`), the single
+    # Market Bias concept this platform now has (see `GET /alpha/market-bias` for
+    # the full driver breakdown this summary's `market_bias` label summarizes).
+    bias = await state.compute_market_bias()
     return {
         "hh_m1": m1.value,
         "hh_m1_symbol": m1.symbol,
@@ -51,22 +58,11 @@ async def summary(state: AppStateDep):
         "daily_pnl": portfolio.unrealized_pnl,
         "unrealized_pnl": portfolio.unrealized_pnl,
         "var_95": portfolio.var_95,
-        "ai_market_bias": _bias_from_trade_ideas(state),
+        "market_bias": bias.label.value,
+        "market_bias_score": bias.score,
         "classification": m1.source_type,
         "as_of": m1.observation_time,
     }
-
-
-def _bias_from_trade_ideas(state) -> str:
-    if not state.trade_ideas:
-        return "NEUTRAL"
-    longs = sum(1 for t in state.trade_ideas.values() if t.direction.value == "LONG")
-    shorts = sum(1 for t in state.trade_ideas.values() if t.direction.value == "SHORT")
-    if longs > shorts:
-        return "BULLISH"
-    if shorts > longs:
-        return "BEARISH"
-    return "NEUTRAL"
 
 
 @router.get("/ttf")

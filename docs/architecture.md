@@ -215,6 +215,13 @@ classification model always assumed existed: `ObservationDraft.quality_score` ha
 actually been populated by anything, and "the API call succeeded" was the only freshness signal
 `ProviderHealth` carried.
 
+**Phase 1 free-data-feed round 2** (`docs/data-sources.md` section 8) adds a `TropicalWeatherConnector`
+(NOAA/NHC), rounds out the EIA and ISO/RTO connectors (LNG imports; actual electricity demand),
+and replaces the platform's earlier, misleadingly-named `ai_market_bias` heuristic with
+`compute_market_bias()` (`services/alpha/alpha_service/market_bias.py`) — a pure, deterministic,
+multi-driver score that is this platform's one real Market Bias concept, exposed via
+`GET /alpha/market-bias` and summarized on `/market/summary`.
+
 ## 8. Milestone Sequencing
 
 Implementation proceeds in the 11 milestones defined in the product brief (repo/db/auth/shell →

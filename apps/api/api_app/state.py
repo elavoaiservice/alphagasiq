@@ -45,6 +45,7 @@ from alpha_service import (
     ReplayEngine,
     ScenarioEngine,
     SignalDetector,
+    compute_market_bias,
 )
 from config import get_settings
 from data_sdk import FetchRequest, ProviderRegistry
@@ -99,6 +100,7 @@ from schemas import (
     IntelligenceBrief,
     InvestmentCommitteeDecision,
     LessonProposal,
+    MarketBiasResult,
     MemoryRecord,
     ModelType,
     NewsEvent,
@@ -1501,6 +1503,30 @@ class AppState:
             consensus_views=[ConsensusView.model_validate(c) for c in consensus_raw],
             scenario_runs=[ScenarioRunResult.model_validate(r) for r in scenario_raw],
             memory_records=[MemoryRecord.model_validate(m) for m in memory_raw],
+        )
+
+    async def compute_market_bias(self, *, market: str | None = None) -> MarketBiasResult:
+        """Phase 1 free-data-feed integration, Round 2 (spec section 26): gathers
+        this platform's own real/synthetic inputs -- `weather_kwargs`,
+        `storage_baseline`, recent `GasBalanceDaily` history, the M1 price window,
+        and the market's latest platform-wide `ConsensusView` -- and hands them to
+        `alpha_service.compute_market_bias()`, the pure deterministic scorer. Never
+        asks the LLM to decide the bias; every point in the result traces back to
+        one of these already-real-or-honestly-synthetic inputs."""
+        market = market or self.primary_instrument()
+        consensus = await self.repo.get_latest_consensus_view_for_market(market)
+        # `self.price_history` is append-ordered oldest-first (see `generate_price_history`),
+        # so the last 14 entries are already oldest-to-newest within that window --
+        # exactly what `compute_market_bias`'s momentum driver expects.
+        recent_prices = [obs.value for obs in self.price_history[-14:]] if self.price_history else []
+        return compute_market_bias(
+            weather_kwargs=self.weather_kwargs,
+            storage_baseline=self.storage_baseline,
+            recent_balances=self.balances,
+            recent_prices=recent_prices,
+            consensus_bull_probability=consensus["bull_probability"] if consensus else None,
+            consensus_bear_probability=consensus["bear_probability"] if consensus else None,
+            consensus_confidence=consensus["confidence"] if consensus else None,
         )
 
     async def generate_intelligence_brief(

@@ -42,11 +42,12 @@ disabled (falling back to their mock) when credentials are absent.
 
 | Domain | Provider | Classification | MVP Status |
 |---|---|---|---|
-| Fundamentals | EIA API (weekly storage, monthly production/consumption by sector, Henry Hub futures front-month, LNG exports) | PUBLIC | **Implemented** (`services/data/data_service/providers/eia.py`, `EIA_SERIES_MAP`) — Phase 1 free-data-feed round expanded this from 2 series (storage, production) to 8; new routes are asserted from EIA's documented v2 API structure, not live-verified (this sandbox has no outbound network access to EIA), so treat each as "ship pending first live verification," failing loud (a non-2xx `raise_for_status()`, surfaced through the admin Data Feeds panel) rather than silently wrong if a route/facet turns out mismatched |
+| Fundamentals | EIA API (weekly storage, monthly production/consumption by sector, Henry Hub futures front-month, LNG exports **and imports**) | PUBLIC | **Implemented** (`services/data/data_service/providers/eia.py`, `EIA_SERIES_MAP`) — Phase 1 free-data-feed round 1 expanded this from 2 series (storage, production) to 8; round 2 added LNG imports (9th) for symmetry with exports. New routes are asserted from EIA's documented v2 API structure, not live-verified (this sandbox has no outbound network access to EIA), so treat each as "ship pending first live verification," failing loud (a non-2xx `raise_for_status()`, surfaced through the admin Data Feeds panel) rather than silently wrong if a route/facet turns out mismatched |
 | Weather | NOAA / National Weather Service API (forecast temperature, active severe-weather alerts, a national HDD/CDD approximation) | PUBLIC | **Implemented** (`services/data/data_service/providers/noaa.py`) — the national HDD/CDD figure is an unweighted average across tracked regions, explicitly *not* claimed to be population-weighted |
+| Tropical weather | NOAA National Hurricane Center `CurrentStorms.json` (active tropical cyclones) | PUBLIC | **Implemented** (round 2, `services/data/data_service/providers/nhc.py`, `TropicalWeatherConnector`) — no API key required; flags a coarse Gulf-of-Mexico proximity heuristic (`potential_gulf_exposure`) distinct from any confirmed-impact forecast, per spec §6 |
 | Regulatory | FERC public data (eLibrary/eTariff indices) | PUBLIC | Interface defined, connector stub — no single stable public JSON API to build a real connector against with confidence (eLibrary is a document-search portal, not a queryable API); see `providers/stubs.py` |
 | Pipeline ops | Public pipeline bulletin-board / operational feeds (where legally accessible) | PUBLIC | Interface defined, connector stub — no common schema across pipeline operators' bespoke EBB sites |
-| Power | ISO/RTO public feeds (EIA-930-derived hourly generation-by-fuel for PJM/CAISO/ERCOT/MISO/SPP) | PUBLIC | **Implemented** (`services/data/data_service/providers/iso_rto.py`, `ISORTOProvider`) — reuses the EIA v2 API's proven auth/request shape rather than each ISO's own bespoke market-data API |
+| Power | ISO/RTO public feeds (EIA-930-derived hourly generation-by-fuel **and actual electricity demand/load** for PJM/CAISO/ERCOT/MISO/SPP) | PUBLIC | **Implemented** (`services/data/data_service/providers/iso_rto.py`, `ISORTOProvider`) — reuses the EIA v2 API's proven auth/request shape rather than each ISO's own bespoke market-data API; round 2 added the sibling `electricity/rto/region-data` actual-demand route alongside the original generation-by-fuel route |
 | Corporate | SEC EDGAR company-filings API (recent 8-K/10-K/10-Q for tracked natural-gas-relevant companies) | PUBLIC | **Implemented** (`services/data/data_service/providers/sec_edgar.py`, `SECEdgarProvider`) — no API key required, only a descriptive `User-Agent`/contact per SEC's fair-access policy |
 | News | RSS/Atom feeds | PUBLIC | **Implemented** (`services/data/data_service/providers/rss_news.py`) + `MockNewsProvider` |
 | News | Licensed commercial news providers | LICENSED | Adapter interface + `MockLicensedNewsProvider` |
@@ -123,3 +124,37 @@ Called once at boot and on every `worker.py` cycle (a new fourth try/except bloc
 as the existing three), before the research cycle that consumes `storage_baseline`/
 `weather_kwargs` runs — so AlphaSignal detection and the Chief Trading Agent's research cycle
 work off real figures whenever they're configured.
+
+## 8. Market Bias Indicator (Phase 1 free-data-feed round 2, spec §26)
+
+`compute_market_bias()` (`services/alpha/alpha_service/market_bias.py`) is a pure, deterministic
+function — never an LLM's judgment call — that combines up to eight weighted, independently
+computed drivers into a single 0-100 score and label
+(`STRONGLY_BEARISH`/`BEARISH`/`NEUTRAL`/`BULLISH`/`STRONGLY_BULLISH`):
+
+| Driver | Source | Signal |
+|---|---|---|
+| Weather | `weather_kwargs` (NOAA HDD/CDD, current run vs. prior) | Colder or hotter than the prior run raises demand → bullish |
+| Storage | `storage_baseline` (EIA weekly) | Below the 5-year average → bullish; above → bearish |
+| Production | `GasBalanceDaily` week-over-week | Rising production → bearish (more supply) |
+| Demand | `GasBalanceDaily` week-over-week (res/comm + industrial) | Rising demand → bullish |
+| LNG | `GasBalanceDaily` week-over-week (feedgas) | Rising feedgas → bullish |
+| Power | `GasBalanceDaily` week-over-week (power burn) | Rising power burn → bullish |
+| Price/market | Trailing M1 price window | Positive momentum → bullish |
+| Agent consensus | AlphaConsensus net bull/bear probability × confidence | Bullish consensus → bullish |
+
+Each driver function returns `None` — never a fabricated zero — when its required inputs are
+missing; a driver absent from the result means "no data to judge this by." If every driver comes
+back `None` (e.g. a fresh boot with no `EIA_API_KEY` and no balance history yet), the whole result
+is `MarketBiasLabel.INSUFFICIENT_DATA` with `score=None`, rather than a guessed neutral score.
+
+Deliberately omits a "Pipeline constraints" driver the original spec lists alongside the above:
+this codebase has no real pipeline-constraint data source (FERC/EBB stay stubs, per §3/§5 above)
+— a placeholder driver that's always zero would imply coverage that doesn't exist.
+
+Exposed at `GET /alpha/market-bias` (full driver breakdown, deliberately ungated so the
+server-rendered `MarketBiasCard` dashboard component can call it without a browser auth token) and
+summarized as `market_bias`/`market_bias_score` on `GET /market/summary` — the platform's single
+Market Bias concept. This replaced an earlier, cruder `ai_market_bias` field on `/market/summary`
+that was just a raw count of LONG vs. SHORT trade ideas and was never actually AI-decided despite
+its name.

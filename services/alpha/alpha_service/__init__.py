@@ -3,6 +3,7 @@ from .brief_engine import BriefEngine
 from .consensus_engine import ConsensusEngine
 from .forecast_extractor import ForecastExtractor
 from .impact_engine import ImpactEngine
+from .market_bias import compute_market_bias
 from .materiality import DEFAULT_MATERIALITY_THRESHOLD, MaterialityEngine, MaterialityInput, MaterialityScore
 from .memory_builder import LessonEngine, MemoryBuilder
 from .replay_engine import ReplayEngine
@@ -28,4 +29,5 @@ __all__ = [
     "AlphaCorroborationEngine",
     "TradeCorroboration",
     "BriefEngine",
+    "compute_market_bias",
 ]

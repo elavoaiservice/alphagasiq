@@ -19,7 +19,7 @@ app/
 components/
 ├── header/
 │   └── HeaderBar.tsx                HH M1, daily %, M2, 12-mo strip, NAV, daily/unrealized P&L,
-│                                     VaR, AI market bias, <SystemStatusBadge/>
+│                                     VaR, Market Bias (deterministic, see market-bias/), <SystemStatusBadge/>
 ├── market-intel/
 │   ├── MarketIntelGrid.tsx
 │   └── MarketIntelCard.tsx          production / LNG feedgas / power burn / rescom demand /
@@ -33,6 +33,10 @@ components/
 │   ├── WeatherPanel.tsx             ECMWF / GFS / ensemble HDD-CDD summary
 │   ├── ModelRunDeltaTable.tsx       WeatherDemandImpact rows
 │   └── RegionalTempMap.tsx          Mapbox/deck.gl regional temperature overlay
+├── market-bias/
+│   └── MarketBiasCard.tsx           deterministic weighted score + driver breakdown from
+│                                     GET /alpha/market-bias (shipped, Phase 1 free-data-feed
+│                                     round 2)
 ├── pipeline-map/
 │   ├── PipelineMap.tsx              Shipped as a dependency-free inline-SVG network view
 │   │                                 (lat/lon-projected nodes/edges, click-to-inspect,

@@ -11,9 +11,20 @@ interface MarketSummary {
   daily_pnl: number;
   unrealized_pnl: number;
   var_95: number;
-  ai_market_bias: string;
+  market_bias: string;
+  market_bias_score: number | null;
   classification: string;
   as_of: string;
+}
+
+function marketBiasText(label: string): string {
+  return label.replace(/_/g, " ");
+}
+
+function marketBiasAccent(label: string): string {
+  if (label.includes("BULLISH")) return "text-terminal-bull";
+  if (label.includes("BEARISH")) return "text-terminal-bear";
+  return "text-terminal-text";
 }
 
 function stat(label: string, value: string, accent?: string) {
@@ -62,13 +73,9 @@ export async function HeaderBar() {
           {stat("Unrealized P&L", `$${summary.unrealized_pnl.toFixed(2)}`)}
           {stat("VaR (95%)", `$${summary.var_95.toFixed(2)}`)}
           {stat(
-            "AI Market Bias",
-            summary.ai_market_bias,
-            summary.ai_market_bias === "BULLISH"
-              ? "text-terminal-bull"
-              : summary.ai_market_bias === "BEARISH"
-              ? "text-terminal-bear"
-              : "text-terminal-text"
+            "Market Bias",
+            marketBiasText(summary.market_bias),
+            marketBiasAccent(summary.market_bias)
           )}
           {stat("System Status", "ONLINE", "text-terminal-bull")}
         </div>

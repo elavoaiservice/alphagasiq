@@ -264,6 +264,39 @@ class ConsensusView(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class MarketBiasLabel(str, Enum):
+    """Phase 1 free-data-feed integration, Round 2 (spec section 26)."""
+
+    STRONGLY_BULLISH = "STRONGLY_BULLISH"
+    BULLISH = "BULLISH"
+    NEUTRAL = "NEUTRAL"
+    BEARISH = "BEARISH"
+    STRONGLY_BEARISH = "STRONGLY_BEARISH"
+    INSUFFICIENT_DATA = "INSUFFICIENT_DATA"
+
+
+class MarketBiasDriver(BaseModel):
+    """One weighted component of a `MarketBiasResult` -- always a real, computed,
+    reproducible number, never an LLM's judgment call (spec section 26: 'Do NOT ask
+    an LLM to simply decide the bias')."""
+
+    name: str
+    points: float
+    rationale: str
+
+
+class MarketBiasResult(BaseModel):
+    """`market_bias.compute_market_bias()`'s output: a transparent, reproducible
+    0-100 score built from weighted, cited components -- never itself persisted as
+    a standalone entity (it's a point-in-time synthesis over already-real/already-
+    synthetic inputs, recomputed on every request, not a new fact to remember)."""
+
+    label: MarketBiasLabel
+    score: float | None = Field(default=None, ge=0, le=100)
+    drivers: list[MarketBiasDriver] = Field(default_factory=list)
+    computed_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class ScenarioFactorType(str, Enum):
     """The four shock dimensions `risk_service.scenarios.Scenario` already supports.
     AlphaScenario(TM) composes named scenarios and/or custom factors into one

@@ -105,6 +105,35 @@ async def test_eia_fetch_raises_on_http_error():
         await provider.fetch(FetchRequest(series_ids=["EIA.NG.STORAGE.LOWER48"]))
 
 
+@pytest.mark.asyncio
+async def test_eia_fetch_lng_imports_series():
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(200, json={"response": {"data": [{"period": "2026-06", "value": "3"}]}})
+    )
+    provider = EIAProvider(api_key="fake-key", client=httpx.AsyncClient(transport=transport))
+    drafts = await provider.fetch(FetchRequest(series_ids=["EIA.NG.LNG.IMPORTS"]))
+
+    assert len(drafts) == 1
+    assert drafts[0].category == "LNG"
+    assert drafts[0].sub_category == "LNG_IMPORTS"
+    assert drafts[0].value == 3.0
+    assert drafts[0].license_type == "PUBLIC_DOMAIN_GOVERNMENT_DATA"
+
+
+@pytest.mark.asyncio
+async def test_eia_fetch_lng_exports_series():
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(200, json={"response": {"data": [{"period": "2026-06", "value": "820"}]}})
+    )
+    provider = EIAProvider(api_key="fake-key", client=httpx.AsyncClient(transport=transport))
+    drafts = await provider.fetch(FetchRequest(series_ids=["EIA.NG.LNG.EXPORTS"]))
+
+    assert len(drafts) == 1
+    assert drafts[0].category == "LNG"
+    assert drafts[0].sub_category == "LNG_EXPORTS"
+    assert drafts[0].value == 820.0
+
+
 def test_degree_days_hot_day():
     hdd, cdd = degree_days(90.0)
     assert hdd == 0.0
@@ -233,6 +262,38 @@ def test_iso_rto_normalize_skips_missing_values():
     assert provider.normalize(raw) == []
 
 
+def test_iso_rto_normalize_demand_produces_public_demand_observations():
+    provider = ISORTOProvider(api_key="fake-key")
+    raw = {
+        "respondent": "ERCO",
+        "raw": {
+            "response": {
+                "data": [
+                    {
+                        "period": "2026-08-25T14",
+                        "respondent-name": "ERCOT",
+                        "value": "45210",
+                        "value-units": "megawatthours",
+                    }
+                ]
+            }
+        },
+    }
+    drafts = provider._normalize_demand(raw)
+    assert len(drafts) == 1
+    assert drafts[0].category == "POWER"
+    assert drafts[0].sub_category == "RTO_ELECTRICITY_DEMAND"
+    assert drafts[0].geography == "ERCO"
+    assert drafts[0].value == 45210.0
+    assert drafts[0].license_type == "PUBLIC_DOMAIN_GOVERNMENT_DATA"
+
+
+def test_iso_rto_normalize_demand_skips_missing_values():
+    provider = ISORTOProvider(api_key="fake-key")
+    raw = {"respondent": "MISO", "raw": {"response": {"data": [{"period": "2026-08-25T14"}]}}}
+    assert provider._normalize_demand(raw) == []
+
+
 @pytest.mark.asyncio
 async def test_iso_rto_fetch_returns_nothing_without_api_key():
     provider = ISORTOProvider(api_key=None)
@@ -240,6 +301,28 @@ async def test_iso_rto_fetch_returns_nothing_without_api_key():
     assert result == []
     health = await provider.health_check()
     assert health.status == "not_configured"
+
+
+@pytest.mark.asyncio
+async def test_iso_rto_fetch_calls_both_generation_and_demand_routes():
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        if "region-data" in request.url.path:
+            return httpx.Response(
+                200, json={"response": {"data": [{"period": "2026-08-25T14", "value": "1000"}]}}
+            )
+        return httpx.Response(200, json={"response": {"data": [{"period": "2026-08-25T14", "value": "500"}]}})
+
+    transport = httpx.MockTransport(handler)
+    provider = ISORTOProvider(api_key="fake-key", client=httpx.AsyncClient(transport=transport))
+    drafts = await provider.fetch(FetchRequest(extra={"respondents": ["PJM"]}))
+
+    assert any("fuel-type-data" in c for c in calls)
+    assert any("region-data" in c for c in calls)
+    assert any(d.sub_category == "RTO_NATURAL_GAS_GENERATION" for d in drafts)
+    assert any(d.sub_category == "RTO_ELECTRICITY_DEMAND" for d in drafts)
 
 
 def test_sec_edgar_normalize_produces_corporate_filing_observations():
@@ -347,3 +430,5 @@ async def test_registry_health_snapshot_reports_unconfigured_stubs():
     assert statuses["iso_rto_public"] == "not_configured"
     # sec_edgar needs no API key at all -- it's real and healthy without any config.
     assert statuses["sec_edgar"] == "healthy"
+    # nhc_tropical (NHC CurrentStorms.json) also needs no API key.
+    assert statuses["nhc_tropical"] == "healthy"

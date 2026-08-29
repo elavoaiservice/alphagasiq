@@ -7,6 +7,7 @@ from .providers.eia import EIAProvider
 from .providers.iso_rto import ISORTOProvider
 from .providers.mock_market_data import MockCMEProvider, MockICEProvider
 from .providers.mock_news import MockNewsProvider
+from .providers.nhc import TropicalWeatherConnector
 from .providers.noaa import NOAAProvider
 from .providers.rss_news import RSSNewsProvider
 from .providers.sec_edgar import SECEdgarProvider
@@ -26,6 +27,7 @@ def build_default_registry() -> ProviderRegistry:
     registry.register(EIAProvider(api_key=settings.eia_api_key))
     registry.register(NOAAProvider(contact_token=settings.noaa_api_token))
     registry.register(ISORTOProvider(api_key=settings.eia_api_key))
+    registry.register(TropicalWeatherConnector())
     registry.register(SECEdgarProvider(contact_email=settings.sec_edgar_contact_email))
     registry.register(RSSNewsProvider(feed_urls=[]))
 

@@ -113,6 +113,18 @@ EIA_SERIES_MAP: dict[str, dict[str, Any]] = {
         "geography": "US",
         "unit": "MMCF",
     },
+    "EIA.NG.LNG.IMPORTS": {
+        # US LNG imports have been near-zero for years (the US is a net LNG
+        # exporter) -- included for completeness/symmetry with exports and because
+        # a near-zero-but-real figure is still more honest than omitting the series
+        # entirely, per spec section 3's explicit "LNG imports" ask.
+        "route": "natural-gas/move/impc/data",
+        "frequency": "monthly",
+        "category": "LNG",
+        "sub_category": "LNG_IMPORTS",
+        "geography": "US",
+        "unit": "MMCF",
+    },
 }
 
 

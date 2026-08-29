@@ -44,6 +44,27 @@ def test_market_summary_labeled_simulated(client):
     assert r.json()["classification"] == "SIMULATED"
 
 
+def test_market_summary_reports_deterministic_market_bias(client):
+    r = client.get("/api/v1/market/summary")
+    assert r.status_code == 200
+    body = r.json()
+    assert "market_bias" in body
+    assert "market_bias_score" in body
+    assert "ai_market_bias" not in body
+
+
+def test_alpha_market_bias_endpoint_is_public_and_matches_summary(client):
+    r = client.get("/api/v1/alpha/market-bias")
+    assert r.status_code == 200
+    body = r.json()
+    assert "label" in body
+    assert "drivers" in body
+    assert "computed_at" in body
+
+    summary = client.get("/api/v1/market/summary").json()
+    assert summary["market_bias"] == body["label"]
+
+
 def test_market_curve_has_36_points(client):
     r = client.get("/api/v1/market/curve/NGZ26")
     assert r.status_code == 200
