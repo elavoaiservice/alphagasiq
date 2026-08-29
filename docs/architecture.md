@@ -205,6 +205,16 @@ Every observation and connector is tagged with exactly one of:
 See `docs/data-sources.md` for the full connector list and `docs/database-schema.md` for the
 canonical observation schema that carries this classification through the system.
 
+**Phase 1 free-data-feed round**: `AppState.refresh_fundamentals_from_public_data()`
+(`docs/data-sources.md` section 7) is the first code path that actually calls the EIA/NOAA
+connectors on a schedule rather than only via an admin-triggered manual refresh, wiring real
+public data into `storage_baseline`/`weather_kwargs` where the real source data's granularity
+supports it honestly. A new `DataQualityService` (0-100 deterministic score) and
+`compute_freshness_status()` state machine (`data_sdk`) close two gaps this section's
+classification model always assumed existed: `ObservationDraft.quality_score` had never
+actually been populated by anything, and "the API call succeeded" was the only freshness signal
+`ProviderHealth` carried.
+
 ## 8. Milestone Sequencing
 
 Implementation proceeds in the 11 milestones defined in the product brief (repo/db/auth/shell →

@@ -644,3 +644,28 @@ auto-reconnect and a small status indicator; `SignalsTable.tsx` is wired as the 
 example -- a new signal appears without a manual refresh. Other dashboard tables follow the same
 `useLiveEvents().subscribe(...)` pattern as a small follow-up, not applied everywhere in this
 pass.
+
+**Phase 1 free data feed integration** (docs/data-sources.md): every EIA/NOAA connector existed
+but was never actually called by the running application outside an admin-triggered manual
+refresh -- `AppState._seed_market_and_fundamentals()` populated the fundamentals engine entirely
+from synthetic seed generators, and `worker.py` hardcoded a fake `weather_kwargs` dict that
+falsely claimed "GFS"/"ECMWF" without ever calling either. `AppState.
+refresh_fundamentals_from_public_data()` (called at boot and on every worker cycle) closes this
+for the two fields whose real source data is granular enough to use honestly: `storage_baseline`
+from EIA's real weekly storage history (once `EIA_API_KEY` is configured) and `weather_kwargs`
+from NOAA's real national HDD/CDD (NOAA needs no key, so this always updates). `self.balances`
+(the daily natural-gas balance engine) deliberately stays synthetic -- EIA publishes fundamentals
+weekly/monthly, never daily, and interpolating a fake daily shape from monthly totals would be
+estimation presented as real precision it doesn't have. The EIA connector grew from 2 series to
+8 (Henry Hub futures front-month, consumption by sector, LNG exports), NOAA gained severe-weather
+alerts and a national HDD/CDD approximation, a new deterministic `DataQualityService`
+(0-100 score: missing/impossible values, timestamp sanity, a jump check) populates
+`ObservationDraft.quality_score` for the first time, and a `compute_freshness_status()` state
+machine (`LIVE`/`CURRENT`/`DELAYED`/`STALE`/`FAILED`/`UNKNOWN`) replaces "the API call succeeded"
+as proof of currency in the admin Data Feeds panel. `DataSourceBadge`/`FreshnessTag` (previously
+only wired into `StoragePanel.tsx`) now also label `ForwardCurveChart.tsx` (showing "Real-Time
+NYMEX Data Not Enabled" when the forward curve is simulated), `MarketIntelGrid.tsx`, and
+`WeatherPanel.tsx` -- real vs. simulated data is never shown unlabeled. `ObservationDraft`/
+`TimeSeriesObservation` also gained licensing metadata (`license_type`, `redistribution_allowed`,
+`ai_processing_allowed`), populated conservatively (EIA/NOAA are public-domain U.S. government
+data) rather than left to default permissive.

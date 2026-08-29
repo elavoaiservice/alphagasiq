@@ -527,6 +527,7 @@ def _data_feed_event_to_dict(row: DataFeedEventRow) -> dict:
         "detail": row.detail,
         "records_received": row.records_received,
         "latency_ms": row.latency_ms,
+        "avg_quality_score": row.avg_quality_score,
         "occurred_at": row.occurred_at,
     }
 
@@ -794,6 +795,10 @@ def _market_observation_row_to_dict(row: MarketObservationRow) -> dict:
         "valid_to": row.valid_to,
         "received_time": row.received_time,
         "created_at": row.created_at,
+        "license_type": row.license_type,
+        "public_or_commercial": row.public_or_commercial,
+        "redistribution_allowed": row.redistribution_allowed,
+        "ai_processing_allowed": row.ai_processing_allowed,
     }
 
 
@@ -1456,6 +1461,7 @@ class SqlAppRepository:
         detail: str = "",
         records_received: int | None = None,
         latency_ms: float | None = None,
+        avg_quality_score: float | None = None,
     ) -> dict:
         row = DataFeedEventRow(
             provider_id=provider_id,
@@ -1464,6 +1470,7 @@ class SqlAppRepository:
             detail=detail,
             records_received=records_received,
             latency_ms=latency_ms,
+            avg_quality_score=avg_quality_score,
         )
         async with self.session_factory() as session:
             session.add(row)
@@ -1486,6 +1493,28 @@ class SqlAppRepository:
                 .all()
             )
         return [_data_feed_event_to_dict(r) for r in rows]
+
+    async def get_last_successful_ingestion(self, provider_id: str) -> dict | None:
+        """Most recent successful `manual_refresh` event for `provider_id` (admin-
+        triggered or the scheduled `AppState.refresh_fundamentals_from_public_data()`
+        run) -- the freshness state machine's `last_observation_time` input, and the
+        source of the admin Data Feeds panel's `data_quality_score`. Deliberately
+        excludes `test_connection` events: those only prove connectivity, not that
+        data was actually ingested."""
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(
+                    select(DataFeedEventRow)
+                    .where(
+                        DataFeedEventRow.provider_id == provider_id,
+                        DataFeedEventRow.event_type == "manual_refresh",
+                        DataFeedEventRow.status == "success",
+                    )
+                    .order_by(DataFeedEventRow.occurred_at.desc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+        return _data_feed_event_to_dict(row) if row is not None else None
 
     # -- agent administration (spec §39) -------------------------------------------------
 
@@ -2791,6 +2820,10 @@ class SqlAppRepository:
                 valid_to=None,
                 received_time=_naive_utc(obs.received_time),
                 created_at=_naive_utc(obs.created_at),
+                license_type=obs.license_type,
+                public_or_commercial=obs.public_or_commercial,
+                redistribution_allowed=obs.redistribution_allowed,
+                ai_processing_allowed=obs.ai_processing_allowed,
             )
             session.add(row)
             await session.commit()

@@ -1,11 +1,54 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from datetime import datetime
-from typing import Any
+from datetime import datetime, timezone
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 from schemas import DataClassification, ObservationDraft
+
+FreshnessStatus = Literal["LIVE", "CURRENT", "DELAYED", "STALE", "FAILED", "UNKNOWN"]
+
+
+def compute_freshness_status(
+    *,
+    connection_status: str,
+    last_observation_time: datetime | None,
+    expected_update_frequency_seconds: int | None,
+    now: datetime | None = None,
+) -> FreshnessStatus:
+    """Derives a freshness state from how old the latest known observation is
+    relative to the provider's expected update cadence -- rather than treating a
+    successful API response as proof of currency. A weekly EIA series that hasn't
+    published on schedule is DELAYED/STALE even though the last call succeeded.
+
+    LIVE: age <= 10% of the expected cadence. CURRENT: within the cadence. DELAYED:
+    within 2x the cadence. STALE: beyond that. FAILED: the provider's last health
+    check reported it unavailable. UNKNOWN: not enough information to judge (never
+    configured, or no observation received yet) -- never asserted as a form of
+    "healthy" by default.
+    """
+    if connection_status == "unavailable":
+        return "FAILED"
+    if connection_status == "not_configured":
+        return "UNKNOWN"
+    if last_observation_time is None or not expected_update_frequency_seconds or expected_update_frequency_seconds <= 0:
+        return "UNKNOWN"
+
+    now = now or datetime.now(timezone.utc)
+    obs_time = last_observation_time
+    if obs_time.tzinfo is None:
+        obs_time = obs_time.replace(tzinfo=timezone.utc)
+    age_seconds = (now - obs_time).total_seconds()
+    if age_seconds < 0:
+        return "UNKNOWN"  # future-dated -- something is wrong upstream, don't assert freshness
+    if age_seconds <= expected_update_frequency_seconds * 0.1:
+        return "LIVE"
+    if age_seconds <= expected_update_frequency_seconds:
+        return "CURRENT"
+    if age_seconds <= expected_update_frequency_seconds * 2:
+        return "DELAYED"
+    return "STALE"
 
 
 class FetchRequest(BaseModel):

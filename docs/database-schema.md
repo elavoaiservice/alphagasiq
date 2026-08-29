@@ -337,9 +337,11 @@ No column for chain-of-thought. `reasoning_summary` is a concise, human-auditabl
   distinct from publication_time for the rare case those differ), valid_from (this revision's
   publication_time), valid_to (nullable — `NULL` only for the current/latest revision of a given
   `series_id`+`observation_time`; set to the *next* revision's publication_time when superseded),
-  received_time, created_at. `list_market_observations_as_of(series_id, as_of, limit)` is the
-  bitemporal "as known at `<as_of>`" query: `publication_time <= as_of AND (valid_to IS NULL OR
-  valid_to > as_of)`.
+  received_time, license_type/public_or_commercial/redistribution_allowed/ai_processing_allowed
+  (Phase 1 free-data-feed round, spec §31 — all nullable, populated conservatively per source at
+  connector normalize() time; `None` means unknown, never inferred), created_at.
+  `list_market_observations_as_of(series_id, as_of, limit)` is the bitemporal "as known at
+  `<as_of>`" query: `publication_time <= as_of AND (valid_to IS NULL OR valid_to > as_of)`.
 - **`alpha_intelligence_briefs`** — one row per generated `IntelligenceBrief`, the Overnight
   Intelligence Brief (docs/alpha-intelligence.md section 10). id, organization_id (nullable FK to
   `organizations`), market, period_start, period_end, headline, summary, top_signals (jsonb —

@@ -2,18 +2,22 @@
 
 import { useEffect, useRef, useState } from "react";
 import { API_BASE } from "@/lib/api-client";
+import { DataSourceBadge } from "@/components/common/DataSourceBadge";
+import { FreshnessTag } from "@/components/status/FreshnessTag";
 
 interface CurvePoint {
   symbol: string;
   curve_position: string;
   price: number;
   observation_time: string;
+  classification: string;
 }
 
 export function ForwardCurveChart() {
   const containerRef = useRef<HTMLDivElement>(null);
   const [points, setPoints] = useState<CurvePoint[] | null>(null);
   const [instrument, setInstrument] = useState<string>("M1");
+  const [asOf, setAsOf] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -26,6 +30,7 @@ export function ForwardCurveChart() {
         if (!cancelled) {
           setPoints(data.points);
           setInstrument(data.instrument);
+          setAsOf(data.as_of);
         }
       })
       .catch(() => !cancelled && setError("Unable to load forward curve"));
@@ -33,6 +38,8 @@ export function ForwardCurveChart() {
       cancelled = true;
     };
   }, []);
+
+  const classification = points?.[0]?.classification;
 
   useEffect(() => {
     if (!points || !containerRef.current) return;
@@ -65,7 +72,17 @@ export function ForwardCurveChart() {
 
   return (
     <div className="panel">
-      <div className="panel-title">Forward Curve — {instrument} (M1-M36)</div>
+      <div className="flex items-center justify-between">
+        <div className="panel-title">Forward Curve — {instrument} (M1-M36)</div>
+        {classification && <DataSourceBadge classification={classification} />}
+      </div>
+      {classification === "SIMULATED" && (
+        <div className="text-[10px] text-terminal-warn">
+          Real-Time NYMEX Data Not Enabled — showing a simulated curve for demonstration; no commercial CME/ICE
+          license is configured for this deployment.
+        </div>
+      )}
+      {classification && <FreshnessTag asOf={asOf} />}
       {error && <div className="text-xs text-terminal-warn">{error}</div>}
       <div ref={containerRef} className="w-full" style={{ height: 260 }} />
     </div>

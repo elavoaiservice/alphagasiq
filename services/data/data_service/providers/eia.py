@@ -9,10 +9,37 @@ from schemas import DataClassification, Lineage, ObservationDraft
 
 EIA_BASE_URL = "https://api.eia.gov/v2"
 
-# Maps our internal series_id -> (EIA route, EIA data column, category/sub_category, unit)
-EIA_SERIES_MAP: dict[str, dict[str, str]] = {
+# Licensing metadata (spec §31): EIA is public-domain U.S. government data (17 U.S.C.
+# §105) -- confidently marked freely redistributable and usable for AI processing,
+# unlike an unknown/unclassified source, which would leave these `None` rather than
+# default to permissive.
+_PUBLIC_GOV_DATA_LICENSE: dict[str, Any] = {
+    "license_type": "PUBLIC_DOMAIN_GOVERNMENT_DATA",
+    "public_or_commercial": "PUBLIC",
+    "redistribution_allowed": True,
+    "ai_processing_allowed": True,
+}
+
+# Maps our internal series_id -> EIA route/facets/category/unit. Configurable and
+# additive by design: a new EIA series is one more dict entry here, never a change to
+# fetch()/normalize() below (spec section 1's "do not hard-code individual series").
+#
+# Route/facet values below are asserted from EIA's documented v2 API category
+# structure (https://www.eia.gov/opendata/browser/natural-gas,
+# https://www.eia.gov/opendata/browser/electricity), the same basis the original two
+# series (storage, production) and `iso_rto.py`'s `electricity/rto/fuel-type-data`
+# route were built from -- this sandbox has no live network access to EIA to confirm
+# an exact route/facet-code shape (verified: outbound HTTPS to api.eia.gov is blocked
+# by the environment's proxy). A wrong route/facet fails loud and visibly (a non-2xx
+# `raise_for_status()`, surfaced through `/admin/data-feeds/{id}/test-connection` and
+# `/refresh`'s error-event logging) rather than silently producing wrong numbers --
+# never a fabricated value. Treat each new entry below as "ship pending first live
+# verification" until an operator with real network access confirms it against
+# EIA's API browser.
+EIA_SERIES_MAP: dict[str, dict[str, Any]] = {
     "EIA.NG.STORAGE.LOWER48": {
         "route": "natural-gas/stor/wkly/data",
+        "frequency": "weekly",
         "category": "STORAGE",
         "sub_category": "WORKING_GAS_IN_STORAGE",
         "geography": "LOWER_48",
@@ -20,10 +47,71 @@ EIA_SERIES_MAP: dict[str, dict[str, str]] = {
     },
     "EIA.NG.PRODUCTION.DRY": {
         "route": "natural-gas/prod/sum/data",
+        "frequency": "monthly",
         "category": "PRODUCTION",
         "sub_category": "DRY_GAS_PRODUCTION",
         "geography": "US",
         "unit": "BCF",
+    },
+    "EIA.NG.PRICE.HENRY_HUB_FUTURES_FRONT_MONTH": {
+        # NYMEX Henry Hub natural gas futures, contract 1 (front month), daily
+        # settlement -- EIA's own published futures-price series, NOT a live
+        # exchange/real-time feed and NOT independently confirmed by this codebase
+        # to be identical to any distinct "physical spot" index. Labeled
+        # FUTURES_FRONT_MONTH, deliberately not "spot", per spec section 9's "never
+        # silently mix spot/futures/derived" requirement -- this is the honest name
+        # for what EIA actually publishes here.
+        "route": "natural-gas/pri/fut/data",
+        "frequency": "daily",
+        "facets": {"series": "RNGC1"},
+        "category": "MARKET_PRICE",
+        "sub_category": "HENRY_HUB_FUTURES_FRONT_MONTH",
+        "geography": "US",
+        "unit": "USD_PER_MMBTU",
+    },
+    "EIA.NG.CONSUMPTION.RESIDENTIAL": {
+        "route": "natural-gas/cons/sum/data",
+        "frequency": "monthly",
+        "facets": {"process": "VRS", "duoarea": "NUS"},
+        "category": "DEMAND",
+        "sub_category": "RESIDENTIAL_CONSUMPTION",
+        "geography": "US",
+        "unit": "MMCF",
+    },
+    "EIA.NG.CONSUMPTION.COMMERCIAL": {
+        "route": "natural-gas/cons/sum/data",
+        "frequency": "monthly",
+        "facets": {"process": "VCS", "duoarea": "NUS"},
+        "category": "DEMAND",
+        "sub_category": "COMMERCIAL_CONSUMPTION",
+        "geography": "US",
+        "unit": "MMCF",
+    },
+    "EIA.NG.CONSUMPTION.INDUSTRIAL": {
+        "route": "natural-gas/cons/sum/data",
+        "frequency": "monthly",
+        "facets": {"process": "VIN", "duoarea": "NUS"},
+        "category": "DEMAND",
+        "sub_category": "INDUSTRIAL_CONSUMPTION",
+        "geography": "US",
+        "unit": "MMCF",
+    },
+    "EIA.NG.CONSUMPTION.ELECTRIC_POWER": {
+        "route": "natural-gas/cons/sum/data",
+        "frequency": "monthly",
+        "facets": {"process": "VEU", "duoarea": "NUS"},
+        "category": "DEMAND",
+        "sub_category": "ELECTRIC_POWER_CONSUMPTION",
+        "geography": "US",
+        "unit": "MMCF",
+    },
+    "EIA.NG.LNG.EXPORTS": {
+        "route": "natural-gas/move/expc/data",
+        "frequency": "monthly",
+        "category": "LNG",
+        "sub_category": "LNG_EXPORTS",
+        "geography": "US",
+        "unit": "MMCF",
     },
 }
 
@@ -65,13 +153,15 @@ class EIAProvider(BaseDataProvider):
                     continue
                 params: dict[str, Any] = {
                     "api_key": self.api_key,
-                    "frequency": "weekly" if "wkly" in spec["route"] else "monthly",
+                    "frequency": spec["frequency"],
                     "data[0]": "value",
                     "sort[0][column]": "period",
                     "sort[0][direction]": "desc",
                     "offset": 0,
-                    "length": 52,
+                    "length": request.extra.get("length", 52),
                 }
+                for facet, facet_value in spec.get("facets", {}).items():
+                    params[f"facets[{facet}][0]"] = facet_value
                 resp = await client.get(f"{EIA_BASE_URL}/{spec['route']}", params=params)
                 resp.raise_for_status()
                 drafts.extend(self.normalize({"series_id": series_id, "spec": spec, "raw": resp.json()}))
@@ -105,6 +195,7 @@ class EIAProvider(BaseDataProvider):
                     publication_time=now,
                     metadata={"eia_period": period, "eia_route": spec["route"]},
                     lineage=Lineage(source_url=f"{EIA_BASE_URL}/{spec['route']}"),
+                    **_PUBLIC_GOV_DATA_LICENSE,
                 )
             )
         return drafts

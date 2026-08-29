@@ -48,6 +48,17 @@ class ObservationDraft(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     lineage: Lineage = Field(default_factory=Lineage)
 
+    # Phase 1 free-data-feed integration (docs/data-sources.md): licensing metadata,
+    # populated conservatively per source at connector normalize() time -- `None`
+    # means "unknown," never inferred. Public-domain U.S. government data (EIA, NOAA)
+    # sets these `True`/`"PUBLIC"`; a future licensed connector (CME, ICE, ...) would
+    # set them per that provider's actual license terms, never left to default to
+    # permissive.
+    license_type: str | None = None
+    public_or_commercial: str | None = Field(default=None, description="PUBLIC | COMMERCIAL | None (unknown)")
+    redistribution_allowed: bool | None = None
+    ai_processing_allowed: bool | None = None
+
 
 class TimeSeriesObservation(ObservationDraft):
     """The canonical, persisted row. See docs/database-schema.md.

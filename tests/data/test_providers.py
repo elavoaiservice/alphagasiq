@@ -1,6 +1,7 @@
 import asyncio
 from datetime import datetime, timezone
 
+import httpx
 import pytest
 from data_service.providers.eia import EIAProvider
 from data_service.providers.iso_rto import ISORTOProvider
@@ -46,6 +47,64 @@ async def test_eia_fetch_returns_nothing_without_api_key():
     assert health.status == "not_configured"
 
 
+@pytest.mark.asyncio
+async def test_eia_fetch_henry_hub_series_sends_facet_and_daily_frequency():
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["params"] = dict(request.url.params)
+        return httpx.Response(
+            200, json={"response": {"data": [{"period": "2026-08-27", "value": "2.85"}]}}
+        )
+
+    transport = httpx.MockTransport(handler)
+    provider = EIAProvider(api_key="fake-key", client=httpx.AsyncClient(transport=transport))
+    drafts = await provider.fetch(FetchRequest(series_ids=["EIA.NG.PRICE.HENRY_HUB_FUTURES_FRONT_MONTH"]))
+
+    assert len(drafts) == 1
+    assert drafts[0].category == "MARKET_PRICE"
+    assert drafts[0].sub_category == "HENRY_HUB_FUTURES_FRONT_MONTH"
+    assert drafts[0].value == 2.85
+    assert drafts[0].license_type == "PUBLIC_DOMAIN_GOVERNMENT_DATA"
+    assert drafts[0].redistribution_allowed is True
+    assert captured["params"]["frequency"] == "daily"
+    assert captured["params"]["facets[series][0]"] == "RNGC1"
+
+
+@pytest.mark.asyncio
+async def test_eia_fetch_consumption_series_sends_process_facet():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert dict(request.url.params)["facets[process][0]"] == "VRS"
+        return httpx.Response(200, json={"response": {"data": [{"period": "2026-07", "value": "700"}]}})
+
+    transport = httpx.MockTransport(handler)
+    provider = EIAProvider(api_key="fake-key", client=httpx.AsyncClient(transport=transport))
+    drafts = await provider.fetch(FetchRequest(series_ids=["EIA.NG.CONSUMPTION.RESIDENTIAL"]))
+
+    assert len(drafts) == 1
+    assert drafts[0].category == "DEMAND"
+    assert drafts[0].sub_category == "RESIDENTIAL_CONSUMPTION"
+
+
+@pytest.mark.asyncio
+async def test_eia_fetch_storage_respects_length_override():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert dict(request.url.params)["length"] == "260"
+        return httpx.Response(200, json={"response": {"data": []}})
+
+    transport = httpx.MockTransport(handler)
+    provider = EIAProvider(api_key="fake-key", client=httpx.AsyncClient(transport=transport))
+    await provider.fetch(FetchRequest(series_ids=["EIA.NG.STORAGE.LOWER48"], extra={"length": 260}))
+
+
+@pytest.mark.asyncio
+async def test_eia_fetch_raises_on_http_error():
+    transport = httpx.MockTransport(lambda request: httpx.Response(500, json={"error": "boom"}))
+    provider = EIAProvider(api_key="fake-key", client=httpx.AsyncClient(transport=transport))
+    with pytest.raises(httpx.HTTPStatusError):
+        await provider.fetch(FetchRequest(series_ids=["EIA.NG.STORAGE.LOWER48"]))
+
+
 def test_degree_days_hot_day():
     hdd, cdd = degree_days(90.0)
     assert hdd == 0.0
@@ -74,6 +133,70 @@ def test_noaa_normalize_computes_degree_days():
     assert len(drafts) == 1
     assert drafts[0].metadata["hdd"] == 35.0
     assert drafts[0].source_type == DataClassification.PUBLIC
+
+
+def _noaa_response_for(request: httpx.Request) -> httpx.Response:
+    if "/alerts/active" in request.url.path:
+        return httpx.Response(
+            200,
+            json={
+                "features": [
+                    {
+                        "properties": {
+                            "id": "urn:test:alert1",
+                            "event": "Winter Storm Warning",
+                            "severity": "Severe",
+                            "certainty": "Likely",
+                            "urgency": "Expected",
+                            "areaDesc": "Northern Plains",
+                            "onset": "2026-01-14T00:00:00-05:00",
+                            "expires": "2026-01-16T00:00:00-05:00",
+                            "headline": "Winter Storm Warning issued",
+                        }
+                    }
+                ]
+            },
+        )
+    return httpx.Response(
+        200,
+        json={
+            "properties": {
+                "periods": [
+                    {"temperature": 20, "startTime": "2026-01-15T00:00:00-05:00", "name": "Tonight", "isDaytime": False}
+                ]
+            }
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_noaa_fetch_includes_alerts_and_national_hdd_cdd_average():
+    transport = httpx.MockTransport(_noaa_response_for)
+    provider = NOAAProvider(contact_token="test@example.com", client=httpx.AsyncClient(transport=transport))
+    drafts = await provider.fetch(FetchRequest(extra={"regions": ["NORTHEAST"]}))
+
+    alert_drafts = [d for d in drafts if d.sub_category == "SEVERE_WEATHER_ALERT"]
+    assert len(alert_drafts) == 1
+    assert alert_drafts[0].metadata["event"] == "Winter Storm Warning"
+    assert alert_drafts[0].license_type == "PUBLIC_DOMAIN_GOVERNMENT_DATA"
+
+    national_drafts = [d for d in drafts if d.sub_category == "NATIONAL_HDD_CDD_UNWEIGHTED_APPROXIMATION"]
+    assert len(national_drafts) == 1
+    assert national_drafts[0].metadata["hdd"] == 45.0  # degree_days(20.0) -> hdd=45
+    assert national_drafts[0].geography == "US_NATIONAL"
+
+
+@pytest.mark.asyncio
+async def test_noaa_fetch_skips_national_average_when_no_recognized_regions():
+    transport = httpx.MockTransport(_noaa_response_for)
+    provider = NOAAProvider(contact_token="test@example.com", client=httpx.AsyncClient(transport=transport))
+    # An unrecognized region key has no matching station, so no forecast is fetched
+    # for it -- unlike an empty/falsy `regions` list, which (like EIA's `series_ids`)
+    # falls back to the full default set rather than "fetch nothing."
+    drafts = await provider.fetch(FetchRequest(extra={"regions": ["NOT_A_REAL_REGION"]}))
+    assert not any(d.sub_category == "NATIONAL_HDD_CDD_UNWEIGHTED_APPROXIMATION" for d in drafts)
+    # Alerts are still fetched even with no forecast regions configured.
+    assert any(d.sub_category == "SEVERE_WEATHER_ALERT" for d in drafts)
 
 
 def test_iso_rto_normalize_produces_public_power_burn_observations():

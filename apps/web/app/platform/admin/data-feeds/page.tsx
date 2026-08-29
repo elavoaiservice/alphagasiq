@@ -11,8 +11,10 @@ interface DataFeed {
   connection_status: string;
   detail: string;
   last_checked_at: string | null;
+  last_successful_ingestion_at: string | null;
   freshness_seconds: number | null;
   freshness_sla_seconds: number | null;
+  freshness_status: "LIVE" | "CURRENT" | "DELAYED" | "STALE" | "FAILED" | "UNKNOWN";
   data_quality_score: number | null;
   enabled: boolean;
   paused: boolean;
@@ -44,6 +46,15 @@ const STATUS_COLOR: Record<string, string> = {
   unavailable: "text-terminal-bear",
   not_configured: "text-terminal-muted",
   unknown: "text-terminal-muted",
+};
+
+const FRESHNESS_COLOR: Record<string, string> = {
+  LIVE: "text-terminal-bull",
+  CURRENT: "text-terminal-bull",
+  DELAYED: "text-terminal-warn",
+  STALE: "text-terminal-warn",
+  FAILED: "text-terminal-bear",
+  UNKNOWN: "text-terminal-muted",
 };
 
 function EditForm({ feed, token, onSaved }: { feed: DataFeed; token: string; onSaved: () => void }) {
@@ -201,11 +212,17 @@ function FeedDetail({ feed, token, onChanged }: { feed: DataFeed; token: string;
         </div>
         <div>
           <div className="text-terminal-muted">Freshness</div>
-          <div>{feed.freshness_seconds != null ? `${feed.freshness_seconds}s` : "—"}</div>
+          <div className={FRESHNESS_COLOR[feed.freshness_status] ?? ""}>{feed.freshness_status}</div>
         </div>
         <div>
           <div className="text-terminal-muted">Data Quality Score</div>
-          <div>{feed.data_quality_score ?? "not yet available"}</div>
+          <div>{feed.data_quality_score != null ? feed.data_quality_score.toFixed(0) : "not yet available"}</div>
+        </div>
+        <div>
+          <div className="text-terminal-muted">Last Successful Ingestion</div>
+          <div>
+            {feed.last_successful_ingestion_at ? new Date(feed.last_successful_ingestion_at).toLocaleString() : "never"}
+          </div>
         </div>
       </div>
 

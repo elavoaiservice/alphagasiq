@@ -30,6 +30,17 @@ async def run_forever() -> None:
     logger.info("AlphaGasIQ worker started; research cycle every %ss", interval)
     while True:
         try:
+            # Phase 1 free-data-feed integration (docs/data-sources.md): refreshes
+            # `state.storage_baseline`/`state.weather_kwargs` from real EIA/NOAA data
+            # before the research cycle below reads them, so the research cycle
+            # (and AlphaSignal detection inside it) works off the freshest real
+            # figures available, not a stale boot-time snapshot.
+            refresh_summary = await state.refresh_fundamentals_from_public_data()
+            logger.info("Fundamentals refresh: %s", refresh_summary)
+        except Exception:
+            logger.exception("Worker fundamentals refresh failed")
+
+        try:
             current_price = state.market_curve[0].value if state.market_curve else 3.0
             week_balance = sum(b.balance_bcf for b in state.balances[-7:])
             result = await state.chief_trading_agent.run_research_cycle(
@@ -39,10 +50,7 @@ async def run_forever() -> None:
                 five_year_average_bcf=state.storage_baseline["five_year_average_bcf"],
                 last_year_bcf=state.storage_baseline["year_ago_inventory_bcf"],
                 as_of=date.today(),
-                weather_kwargs=dict(
-                    model="GFS", run="latest", comparison_run="previous",
-                    hdd_run=2.8, hdd_comparison=2.2, cdd_run=4.0, cdd_comparison=4.5,
-                ),
+                weather_kwargs=state.weather_kwargs,
                 market_consensus_bcf=round(week_balance) + 3,
                 disabled_agent_types=await state._disabled_agent_types(),
             )

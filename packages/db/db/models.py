@@ -446,6 +446,7 @@ class DataFeedEventRow(Base):
     detail: Mapped[str] = mapped_column(String, nullable=False, default="")
     records_received: Mapped[int | None] = mapped_column(nullable=True)
     latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    avg_quality_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     occurred_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
 
 
@@ -858,6 +859,10 @@ class MarketObservationRow(Base):
     valid_from: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     valid_to: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     received_time: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    license_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    public_or_commercial: Mapped[str | None] = mapped_column(String, nullable=True)
+    redistribution_allowed: Mapped[bool | None] = mapped_column(nullable=True)
+    ai_processing_allowed: Mapped[bool | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
 
 

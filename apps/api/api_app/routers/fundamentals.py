@@ -30,7 +30,7 @@ async def balance_daily(state: AppStateDep, days: int = 30):
 
 @router.get("/storage/current")
 async def storage_current(state: AppStateDep):
-    return {**state.storage_baseline, "classification": "SIMULATED", "as_of": date.today()}
+    return {**state.storage_baseline, "classification": state.storage_baseline_classification, "as_of": date.today()}
 
 
 @router.get("/storage/forecast")
@@ -38,12 +38,22 @@ async def storage_forecast(state: AppStateDep):
     today = date.today()
     week_ending = week_ending_for(today)
     week = [b for b in state.balances if b.flow_date <= week_ending][-7:]
+    # The forecast Bcf figure itself is always computed from `state.balances`
+    # (SIMULATED -- no free daily-granularity fundamentals source exists), but the
+    # comparison baselines it's judged against can be real EIA history
+    # (`state.storage_baseline_classification`) -- the driver citation says which,
+    # honestly, rather than a blanket label that would either overclaim or hide it.
+    baseline_driver = (
+        "EIA weekly storage history (real, PUBLIC)"
+        if state.storage_baseline_classification == "PUBLIC"
+        else "Storage baseline (SIMULATED seed data)"
+    )
     forecast = forecast_storage_week(
         week_ending=week_ending,
         daily_balances=week,
         five_year_average_bcf=state.storage_baseline["five_year_average_bcf"],
         last_year_bcf=state.storage_baseline["year_ago_inventory_bcf"],
-        drivers=["Lower-48 balance engine (SIMULATED seed data)"],
+        drivers=["Lower-48 balance engine (SIMULATED seed data)", baseline_driver],
     )
     payload = forecast.model_dump(mode="json")
     payload["classification"] = "SIMULATED"

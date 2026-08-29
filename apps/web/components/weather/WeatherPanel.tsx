@@ -1,4 +1,5 @@
 import { apiGet } from "@/lib/api-client";
+import { DataSourceBadge } from "@/components/common/DataSourceBadge";
 
 interface AgentExecution {
   outputs: {
@@ -20,9 +21,14 @@ export async function WeatherPanel() {
   const executions = await apiGet<AgentExecution[]>("/agents/WEATHER/executions?limit=1").catch(() => []);
   const latest = executions[executions.length - 1];
 
+  const isSimulated = latest?.outputs.model === "SIMULATED_FALLBACK";
+
   return (
     <div className="panel">
-      <div className="panel-title">Weather — Model Run Delta</div>
+      <div className="flex items-center justify-between">
+        <div className="panel-title">Weather — Model Run Delta</div>
+        {latest && <DataSourceBadge classification={isSimulated ? "SIMULATED" : "PUBLIC"} />}
+      </div>
       {latest ? (
         <>
           <div className="text-xs text-terminal-muted mb-1">

@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import date, datetime, timedelta, timezone
+from typing import Any
 from uuid import UUID
 
 from agent_sdk import build_event_bus, build_llm_provider, get_default_llm_provider
@@ -47,8 +48,10 @@ from alpha_service import (
 )
 from config import get_settings
 from data_sdk import FetchRequest, ProviderRegistry
+from data_service.providers.eia import EIA_SERIES_MAP
 from data_service.providers.mock_market_data import MockCMEProvider, MockICEProvider
 from data_service.providers.mock_news import MockNewsProvider
+from data_service.quality import DataQualityService
 from data_service.registry import build_default_registry
 from db import SqlAppRepository
 from enterprise_data_service import (
@@ -121,6 +124,55 @@ from .models import Approval, ApprovalActionRecord, ApprovalState, ChatSession
 
 DEFAULT_INSTRUMENT_FALLBACK = "NG-M1"
 logger = logging.getLogger(__name__)
+
+
+def _derive_storage_baseline(storage_drafts: list[ObservationDraft]) -> dict[str, float] | None:
+    """Computes every `storage_baseline` field directly from EIA's real weekly
+    storage history -- no interpolation, no synthetic blending. `None` when there
+    isn't enough real history to compute a meaningful baseline (fewer than 2 weekly
+    observations), so the caller leaves the existing baseline untouched rather than
+    overwrite it with a partial, misleading figure."""
+    if len(storage_drafts) < 2:
+        return None
+    ordered = sorted(storage_drafts, key=lambda d: d.observation_time)
+    current = ordered[-1]
+    values = [d.value for d in ordered]
+    year_ago_target = current.observation_time - timedelta(weeks=52)
+    year_ago = min(ordered, key=lambda d: abs((d.observation_time - year_ago_target).total_seconds()))
+    return {
+        "current_inventory_bcf": current.value,
+        "year_ago_inventory_bcf": year_ago.value,
+        "five_year_average_bcf": sum(values) / len(values),
+        "five_year_low_bcf": min(values),
+        "five_year_high_bcf": max(values),
+    }
+
+
+def _derive_weather_kwargs(weather_drafts: list[ObservationDraft], *, previous: dict) -> dict | None:
+    """Builds `ChiefTradingAgent.run_research_cycle()`'s `weather_kwargs` from
+    NOAA's real national HDD/CDD approximation (`noaa.py::_national_degree_day_average`),
+    diffed against the previous call's snapshot for the delta `WeatherAgent`/
+    AlphaSignal expect. `None` when this fetch produced no national HDD/CDD draft
+    (e.g. every per-region forecast fetch failed) -- the caller leaves
+    `weather_kwargs` untouched rather than overwrite real data with a partial
+    result."""
+    national = next(
+        (d for d in weather_drafts if d.series_id == "NOAA.HDD_CDD.NATIONAL_APPROXIMATION"), None
+    )
+    if national is None:
+        return None
+    hdd_run = national.metadata["hdd"]
+    cdd_run = national.metadata["cdd"]
+    has_real_previous = previous.get("model") != "SIMULATED_FALLBACK"
+    return dict(
+        model="NOAA_NWS_FORECAST",
+        run=national.observation_time.isoformat(),
+        comparison_run=previous.get("run", "not_yet_refreshed"),
+        hdd_run=hdd_run,
+        hdd_comparison=previous.get("hdd_run", hdd_run) if has_real_previous else hdd_run,
+        cdd_run=cdd_run,
+        cdd_comparison=previous.get("cdd_run", cdd_run) if has_real_previous else cdd_run,
+    )
 
 
 class AppState:
@@ -199,6 +251,27 @@ class AppState:
 
         self.balances = []
         self.storage_baseline: dict[str, float] = {}
+        # "SIMULATED" until `refresh_fundamentals_from_public_data()`'s first
+        # successful EIA storage fetch flips this to "PUBLIC" -- read by
+        # `GET /fundamentals/storage/*` so the dashboard's classification badge
+        # reflects what's actually behind `storage_baseline`, not a hardcoded guess.
+        self.storage_baseline_classification: str = "SIMULATED"
+        # Phase 1 free-data-feed integration (docs/data-sources.md): the fallback
+        # used until `refresh_fundamentals_from_public_data()`'s first successful
+        # NOAA fetch -- explicitly `SIMULATED_FALLBACK`, never a fake model name
+        # (this replaces three previously-hardcoded dicts that falsely claimed
+        # "GFS"/"ECMWF" while never actually calling either).
+        self.weather_kwargs: dict = dict(
+            model="SIMULATED_FALLBACK",
+            run="not_yet_refreshed",
+            comparison_run="not_yet_refreshed",
+            hdd_run=2.8,
+            hdd_comparison=2.2,
+            cdd_run=4.0,
+            cdd_comparison=4.5,
+        )
+        self._quality_service = DataQualityService()
+        self._last_weather_snapshot: dict | None = None
         self.market_curve: list[ObservationDraft] = []
         self.ttf_price: list[ObservationDraft] = []
         self.news_events: list[NewsEvent] = []
@@ -430,6 +503,119 @@ class AppState:
         news_observations = await news_provider.fetch(FetchRequest(end=as_of))
         await self._run_news_intelligence(news_observations)
 
+        try:
+            await self.refresh_fundamentals_from_public_data()
+        except Exception:
+            logger.exception("Boot-time fundamentals refresh from public data failed; continuing on seeded/synthetic data")
+
+    async def refresh_fundamentals_from_public_data(self) -> dict:
+        """Phase 1 free-data-feed integration (docs/data-sources.md): fetches EIA
+        (storage, production, consumption by sector, LNG exports, Henry Hub futures
+        front-month) and NOAA (forecast temperature, national HDD/CDD approximation,
+        severe weather alerts), quality-scores and persists every observation via
+        `_persist_market_observations()`, and updates the two live-engine inputs
+        whose real source data is granular enough to use honestly:
+
+        - `self.storage_baseline`: EIA's real weekly storage history (current
+          inventory, year-ago, 5-year average/low/high computed from real
+          historical prints) -- only when `EIA_API_KEY` is configured; otherwise
+          left untouched rather than blended with synthetic data.
+        - `self.weather_kwargs`: NOAA's real national HDD/CDD approximation
+          (`noaa.py`), diffed against the previous call's snapshot -- NOAA needs no
+          API key, so this updates on every call.
+
+        Deliberately does NOT touch `self.balances` (`GasBalanceDaily`, one row per
+        day): EIA publishes natural gas fundamentals weekly/monthly, never daily --
+        interpolating a fake daily shape from monthly totals would be estimation
+        dressed up as real precision it doesn't have. `self.balances` stays the
+        existing, honestly-SIMULATED daily balance engine until a real
+        daily-granularity free source exists.
+
+        Returns a summary dict for the caller (`worker.py`'s scheduled loop, boot)
+        to log -- never raises; a fetch failure is caught, logged, and reported as
+        an `error` `DataFeedEvent` per docs/data-sources.md's "prefer 'data
+        unavailable' over displaying incorrect information."
+        """
+        summary: dict[str, Any] = {
+            "eia_configured": False,
+            "storage_updated": False,
+            "weather_updated": False,
+            "observations_persisted": 0,
+        }
+
+        eia = self.providers.get("eia")
+        eia_health = await eia.health_check()
+        summary["eia_configured"] = eia_health.status != "not_configured"
+        if summary["eia_configured"]:
+            try:
+                # `length=260` (~5 years of weekly prints) is needed every cycle to
+                # compute the year-ago/5-year comparisons in `_derive_storage_baseline`
+                # -- `save_market_observation`'s revision-number check already makes
+                # re-persisting already-known weeks a cheap no-op, so this re-fetch is
+                # simpler than caching the history across cycles, at the cost of some
+                # redundant EIA API calls each cycle (a documented Phase-1 simplification,
+                # not a correctness concern -- EIA's public API has no rate limit this
+                # cadence would meaningfully strain).
+                storage_drafts = await eia.fetch(
+                    FetchRequest(series_ids=["EIA.NG.STORAGE.LOWER48"], extra={"length": 260})
+                )
+                other_series_ids = [sid for sid in EIA_SERIES_MAP if sid != "EIA.NG.STORAGE.LOWER48"]
+                other_drafts = await eia.fetch(FetchRequest(series_ids=other_series_ids))
+                eia_drafts = storage_drafts + other_drafts
+                scores = self._quality_service.score_batch(eia_drafts)
+                for draft, score in zip(eia_drafts, scores):
+                    draft.quality_score = score / 100.0  # ObservationDraft.quality_score is a 0-1 fraction
+                await self._persist_market_observations(eia_drafts)
+                summary["observations_persisted"] += len(eia_drafts)
+                await self.repo.record_data_feed_event(
+                    provider_id="eia",
+                    event_type="manual_refresh",
+                    status="success",
+                    detail=f"Scheduled refresh fetched {len(eia_drafts)} observation(s).",
+                    records_received=len(eia_drafts),
+                    avg_quality_score=sum(scores) / len(scores) if scores else None,
+                )
+
+                new_baseline = _derive_storage_baseline(storage_drafts)
+                if new_baseline is not None:
+                    self.storage_baseline = new_baseline
+                    self.storage_baseline_classification = "PUBLIC"
+                    summary["storage_updated"] = True
+            except Exception as exc:
+                logger.exception("Scheduled EIA fundamentals refresh failed")
+                await self.repo.record_data_feed_event(
+                    provider_id="eia", event_type="manual_refresh", status="error", detail=str(exc)
+                )
+
+        noaa = self.providers.get("noaa_nws")
+        try:
+            weather_drafts = await noaa.fetch(FetchRequest())
+            scores = self._quality_service.score_batch(weather_drafts)
+            for draft, score in zip(weather_drafts, scores):
+                draft.quality_score = score / 100.0  # ObservationDraft.quality_score is a 0-1 fraction
+            await self._persist_market_observations(weather_drafts)
+            summary["observations_persisted"] += len(weather_drafts)
+            await self.repo.record_data_feed_event(
+                provider_id="noaa_nws",
+                event_type="manual_refresh",
+                status="success",
+                detail=f"Scheduled refresh fetched {len(weather_drafts)} observation(s).",
+                records_received=len(weather_drafts),
+                avg_quality_score=sum(scores) / len(scores) if scores else None,
+            )
+
+            new_weather_kwargs = _derive_weather_kwargs(weather_drafts, previous=self.weather_kwargs)
+            if new_weather_kwargs is not None:
+                self.weather_kwargs = new_weather_kwargs
+                summary["weather_updated"] = True
+        except Exception as exc:
+            logger.exception("Scheduled NOAA weather refresh failed")
+            await self.repo.record_data_feed_event(
+                provider_id="noaa_nws", event_type="manual_refresh", status="error", detail=str(exc)
+            )
+
+        return summary
+
     async def _run_news_intelligence(self, raw_items: list[ObservationDraft]) -> None:
         """Milestone 1 follow-up (docs/agents.md §4): `NewsIntelligenceAgent` existed and
         was tested but had no live call site -- `agent_catalog.resolve_agent_instance`
@@ -467,15 +653,7 @@ class AppState:
             five_year_average_bcf=self.storage_baseline["five_year_average_bcf"],
             last_year_bcf=self.storage_baseline["year_ago_inventory_bcf"],
             as_of=today,
-            weather_kwargs=dict(
-                model="ECMWF",
-                run=(datetime.now(timezone.utc)).strftime("%Y-%m-%dT00Z"),
-                comparison_run=(datetime.now(timezone.utc) - timedelta(hours=12)).strftime("%Y-%m-%dT12Z"),
-                hdd_run=3.2,
-                hdd_comparison=1.4,
-                cdd_run=5.0,
-                cdd_comparison=6.5,
-            ),
+            weather_kwargs=self.weather_kwargs,
             market_consensus_bcf=market_consensus_bcf,
             disabled_agent_types=disabled,
         )
@@ -801,9 +979,7 @@ class AppState:
             five_year_average_bcf=self.storage_baseline["five_year_average_bcf"],
             last_year_bcf=self.storage_baseline["year_ago_inventory_bcf"],
             as_of=date.today(),
-            weather_kwargs=dict(
-                model="GFS", run="latest", comparison_run="previous", hdd_run=2.8, hdd_comparison=2.2, cdd_run=4.0, cdd_comparison=4.5
-            ),
+            weather_kwargs=self.weather_kwargs,
             market_consensus_bcf=round(week_balance) + 3,
             disabled_agent_types=await self._disabled_agent_types(),
         )
