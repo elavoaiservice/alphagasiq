@@ -92,6 +92,17 @@ class BaseDataProvider(ABC):
     classification: DataClassification
     freshness_sla_seconds: int | None = None
 
+    # Licensing metadata (spec §31), mirrored one-for-one onto every `ObservationDraft`
+    # this provider produces. `None` means unknown/unclassified -- never defaulted to
+    # permissive -- so only a provider that has actually verified its source's terms
+    # sets these. Surfaced read-only in the admin Data Feeds panel
+    # (`GET /admin/data-feeds`) so an operator can see a source's redistribution/
+    # AI-processing posture without reading connector source code.
+    license_type: str | None = None
+    public_or_commercial: str | None = None
+    redistribution_allowed: bool | None = None
+    ai_processing_allowed: bool | None = None
+
     @abstractmethod
     async def health_check(self) -> ProviderHealth: ...
 

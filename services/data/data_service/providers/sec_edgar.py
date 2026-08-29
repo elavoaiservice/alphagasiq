@@ -24,6 +24,15 @@ TRACKED_COMPANIES: dict[str, str] = {
 # also returns routine forms (3/4/5, S-8, etc.) this connector isn't trying to surface.
 _RELEVANT_FORMS = {"8-K", "10-K", "10-Q"}
 
+# Licensing metadata (spec §31), matching eia.py/noaa.py's identical public-domain
+# government-data posture -- SEC filings are public record, freely redistributable.
+_PUBLIC_GOV_DATA_LICENSE: dict[str, Any] = {
+    "license_type": "PUBLIC_DOMAIN_GOVERNMENT_DATA",
+    "public_or_commercial": "PUBLIC",
+    "redistribution_allowed": True,
+    "ai_processing_allowed": True,
+}
+
 
 class SECEdgarProvider(BaseDataProvider):
     """SEC EDGAR company-filings API. PUBLIC data, no API key required -- SEC's fair-
@@ -42,6 +51,10 @@ class SECEdgarProvider(BaseDataProvider):
     provider_id = "sec_edgar"
     classification = DataClassification.PUBLIC
     freshness_sla_seconds = 24 * 3600  # filings post intermittently, at most a few times/day
+    license_type = _PUBLIC_GOV_DATA_LICENSE["license_type"]
+    public_or_commercial = _PUBLIC_GOV_DATA_LICENSE["public_or_commercial"]
+    redistribution_allowed = _PUBLIC_GOV_DATA_LICENSE["redistribution_allowed"]
+    ai_processing_allowed = _PUBLIC_GOV_DATA_LICENSE["ai_processing_allowed"]
 
     def __init__(self, contact_email: str | None, client: httpx.AsyncClient | None = None):
         self.contact_email = contact_email
@@ -108,6 +121,7 @@ class SECEdgarProvider(BaseDataProvider):
                         "accession_number": accession,
                     },
                     lineage=Lineage(source_url=filing_url),
+                    **_PUBLIC_GOV_DATA_LICENSE,
                 )
             )
         return drafts

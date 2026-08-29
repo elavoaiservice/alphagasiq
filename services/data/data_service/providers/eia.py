@@ -140,6 +140,10 @@ class EIAProvider(BaseDataProvider):
     provider_id = "eia"
     classification = DataClassification.PUBLIC
     freshness_sla_seconds = 7 * 24 * 3600  # weekly release cadence
+    license_type = _PUBLIC_GOV_DATA_LICENSE["license_type"]
+    public_or_commercial = _PUBLIC_GOV_DATA_LICENSE["public_or_commercial"]
+    redistribution_allowed = _PUBLIC_GOV_DATA_LICENSE["redistribution_allowed"]
+    ai_processing_allowed = _PUBLIC_GOV_DATA_LICENSE["ai_processing_allowed"]
 
     def __init__(self, api_key: str | None, client: httpx.AsyncClient | None = None):
         self.api_key = api_key

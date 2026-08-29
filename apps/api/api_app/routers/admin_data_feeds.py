@@ -52,6 +52,12 @@ async def _merge_provider_view(state: AppStateDep, provider_id: str, health, con
     return {
         "provider_id": provider_id,
         "source_type": provider.classification if provider is not None else None,
+        # Licensing metadata (spec §31) -- `None` for a provider that hasn't
+        # verified/declared its source's terms, never defaulted to permissive.
+        "license_type": provider.license_type if provider is not None else None,
+        "public_or_commercial": provider.public_or_commercial if provider is not None else None,
+        "redistribution_allowed": provider.redistribution_allowed if provider is not None else None,
+        "ai_processing_allowed": provider.ai_processing_allowed if provider is not None else None,
         "environment": state.settings.environment,
         "connection_status": health.status if health is not None else "unknown",
         "detail": health.detail if health is not None else "",

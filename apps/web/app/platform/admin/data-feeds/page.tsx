@@ -7,6 +7,10 @@ import { useAuth } from "@/lib/auth-context";
 interface DataFeed {
   provider_id: string;
   source_type: string | null;
+  license_type: string | null;
+  public_or_commercial: string | null;
+  redistribution_allowed: boolean | null;
+  ai_processing_allowed: boolean | null;
   environment: string | null;
   connection_status: string;
   detail: string;
@@ -223,6 +227,25 @@ function FeedDetail({ feed, token, onChanged }: { feed: DataFeed; token: string;
           <div>
             {feed.last_successful_ingestion_at ? new Date(feed.last_successful_ingestion_at).toLocaleString() : "never"}
           </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+        <div>
+          <div className="text-terminal-muted">License Type</div>
+          <div>{feed.license_type ?? "unknown"}</div>
+        </div>
+        <div>
+          <div className="text-terminal-muted">Public / Commercial</div>
+          <div>{feed.public_or_commercial ?? "unknown"}</div>
+        </div>
+        <div>
+          <div className="text-terminal-muted">Redistribution Allowed</div>
+          <div>{feed.redistribution_allowed === null ? "unknown" : feed.redistribution_allowed ? "Yes" : "No"}</div>
+        </div>
+        <div>
+          <div className="text-terminal-muted">AI Processing Allowed</div>
+          <div>{feed.ai_processing_allowed === null ? "unknown" : feed.ai_processing_allowed ? "Yes" : "No"}</div>
         </div>
       </div>
 

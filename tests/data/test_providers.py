@@ -351,6 +351,24 @@ def test_sec_edgar_normalize_produces_corporate_filing_observations():
     assert eight_k.metadata["company_name"] == "Cheniere Energy, Inc."
     assert "0000895729-26-000123" in eight_k.metadata["accession_number"]
     assert eight_k.observation_time == datetime(2026, 8, 20, tzinfo=timezone.utc)
+    assert eight_k.license_type == "PUBLIC_DOMAIN_GOVERNMENT_DATA"
+    assert eight_k.redistribution_allowed is True
+
+
+def test_sec_edgar_provider_declares_licensing_metadata_class_attributes():
+    provider = SECEdgarProvider(contact_email="test@example.com")
+    assert provider.license_type == "PUBLIC_DOMAIN_GOVERNMENT_DATA"
+    assert provider.public_or_commercial == "PUBLIC"
+    assert provider.redistribution_allowed is True
+    assert provider.ai_processing_allowed is True
+
+
+def test_mock_cme_provider_leaves_licensing_metadata_unknown():
+    # SIMULATED data has no real-world license to declare -- `None` (unknown), never
+    # defaulted to permissive.
+    provider = MockCMEProvider(seed=1)
+    assert provider.license_type is None
+    assert provider.redistribution_allowed is None
 
 
 def test_sec_edgar_normalize_skips_irrelevant_forms_and_missing_dates():

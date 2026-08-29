@@ -42,6 +42,10 @@ class NOAAProvider(BaseDataProvider):
     provider_id = "noaa_nws"
     classification = DataClassification.PUBLIC
     freshness_sla_seconds = 6 * 3600  # forecasts update multiple times per day
+    license_type = _PUBLIC_GOV_DATA_LICENSE["license_type"]
+    public_or_commercial = _PUBLIC_GOV_DATA_LICENSE["public_or_commercial"]
+    redistribution_allowed = _PUBLIC_GOV_DATA_LICENSE["redistribution_allowed"]
+    ai_processing_allowed = _PUBLIC_GOV_DATA_LICENSE["ai_processing_allowed"]
 
     def __init__(self, contact_token: str | None, client: httpx.AsyncClient | None = None):
         self.contact_token = contact_token

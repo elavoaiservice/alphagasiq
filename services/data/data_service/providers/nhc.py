@@ -74,6 +74,10 @@ class TropicalWeatherConnector(BaseDataProvider):
     provider_id = "nhc_tropical"
     classification = DataClassification.PUBLIC
     freshness_sla_seconds = 6 * 3600  # NHC issues advisories roughly every 6h for active systems
+    license_type = _PUBLIC_GOV_DATA_LICENSE["license_type"]
+    public_or_commercial = _PUBLIC_GOV_DATA_LICENSE["public_or_commercial"]
+    redistribution_allowed = _PUBLIC_GOV_DATA_LICENSE["redistribution_allowed"]
+    ai_processing_allowed = _PUBLIC_GOV_DATA_LICENSE["ai_processing_allowed"]
 
     def __init__(self, client: httpx.AsyncClient | None = None):
         self._client = client

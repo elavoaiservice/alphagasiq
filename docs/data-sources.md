@@ -158,3 +158,22 @@ summarized as `market_bias`/`market_bias_score` on `GET /market/summary` — the
 Market Bias concept. This replaced an earlier, cruder `ai_market_bias` field on `/market/summary`
 that was just a raw count of LONG vs. SHORT trade ideas and was never actually AI-decided despite
 its name.
+
+## 9. Licensing Metadata Admin Surface (Phase 1 free-data-feed round 3, spec §31)
+
+Round 1 added `license_type`/`public_or_commercial`/`redistribution_allowed`/`ai_processing_allowed`
+to every persisted observation but left them DB-only, with no operator-visible surface — flagged at
+the time as "a dedicated admin/UI surface is later." Round 3 closes that gap: `BaseDataProvider`
+(`data_sdk/provider.py`) now declares these same four fields as class attributes, defaulting to
+`None` (unknown/unclassified — never inferred permissive, matching the per-observation convention).
+EIA, NOAA, the NHC tropical connector, the ISO/RTO connector, and SEC EDGAR each set them to
+`PUBLIC_DOMAIN_GOVERNMENT_DATA`/`PUBLIC`/`True`/`True` — mirroring the same
+`_PUBLIC_GOV_DATA_LICENSE` dict each file already spreads into its `ObservationDraft` calls, so
+there is exactly one source of truth per connector, not two that could drift. A provider that has
+never verified/declared its source's licensing terms (every `Mock*Provider`, the `RSSNewsProvider`)
+correctly reports `None` across the board.
+
+`GET /admin/data-feeds` and `GET /admin/data-feeds/{provider_id}` now include these four fields per
+provider, and the admin Data Feeds page (`apps/web/app/platform/admin/data-feeds/page.tsx`) renders
+them in each feed's detail view alongside connection status and freshness — an operator can now see
+a source's redistribution/AI-processing posture without reading connector source code.

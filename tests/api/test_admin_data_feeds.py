@@ -60,6 +60,28 @@ def test_get_single_data_feed(client):
     assert r.json()["provider_id"] == "eia"
 
 
+def test_data_feed_surfaces_licensing_metadata_for_public_gov_data_provider(client):
+    r = client.get("/api/v1/admin/data-feeds/eia", headers=_admin_headers(client))
+    assert r.status_code == 200
+    body = r.json()
+    assert body["license_type"] == "PUBLIC_DOMAIN_GOVERNMENT_DATA"
+    assert body["public_or_commercial"] == "PUBLIC"
+    assert body["redistribution_allowed"] is True
+    assert body["ai_processing_allowed"] is True
+
+
+def test_data_feed_licensing_metadata_is_none_for_unverified_provider(client):
+    r = client.get("/api/v1/admin/data-feeds", headers=_admin_headers(client))
+    assert r.status_code == 200
+    by_id = {f["provider_id"]: f for f in r.json()}
+    # mock_cme is SIMULATED and has never declared/verified licensing terms -- `None`
+    # (unknown), never defaulted to permissive.
+    mock_cme = by_id.get("mock_cme")
+    if mock_cme is not None:
+        assert mock_cme["license_type"] is None
+        assert mock_cme["redistribution_allowed"] is None
+
+
 def test_get_unknown_data_feed_is_404(client):
     r = client.get("/api/v1/admin/data-feeds/not-a-real-provider", headers=_admin_headers(client))
     assert r.status_code == 404
