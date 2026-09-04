@@ -8,10 +8,13 @@ enforcement -- not just that the SQL text looks right -- against a real
 local Postgres instance; they skip gracefully (`_HAS_POSTGRES`) for a local
 `pytest` run with no Postgres reachable, since SQLite (every default dev/test
 database) has no RLS equivalent at all. CI (`.github/workflows/ci.yml`) runs
-a real `postgres:16` service for exactly this suite -- and demotes the
-connecting role from its bootstrap superuser status first, since a
-superuser silently bypasses RLS regardless of `FORCE ROW LEVEL SECURITY`,
-which would otherwise let these tests pass while proving nothing.
+a real `postgres:16` service for exactly this suite, connecting as a
+dedicated, ordinary (non-superuser) role rather than the service's
+`POSTGRES_USER` bootstrap role -- Postgres superusers always bypass RLS
+regardless of `FORCE ROW LEVEL SECURITY`, and Postgres 16 refuses to strip
+SUPERUSER from the bootstrap role itself, so a second role is the only way
+to actually exercise enforcement rather than letting these tests pass while
+proving nothing.
 """
 
 from __future__ import annotations
@@ -25,7 +28,7 @@ from db.rls import ORG_SCOPED_TABLES, PLATFORM_ONLY_SENTINEL, build_row_level_se
 from schemas import Signal, SignalDirection, SignalStatus, SignalType
 from sqlalchemy import text
 
-_TEST_POSTGRES_URL = "postgresql+asyncpg://alphagasiq_test:alphagasiq_test@127.0.0.1:5432/alphagasiq_test"
+_TEST_POSTGRES_URL = "postgresql+asyncpg://alphagasiq_rls_test:alphagasiq_rls_test@127.0.0.1:5432/alphagasiq_test"
 
 
 def _postgres_reachable() -> bool:

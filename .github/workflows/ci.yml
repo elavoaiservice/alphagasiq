@@ -47,20 +47,32 @@ jobs:
       - name: Install test dependencies
         run: pip install pytest pytest-asyncio
 
-      - name: Harden Postgres test role (demote from bootstrap superuser)
-        # The official postgres image makes POSTGRES_USER the database's initial
-        # superuser. Postgres superusers always bypass Row Level Security, regardless
-        # of `FORCE ROW LEVEL SECURITY` (docs/alpha-intelligence.md section 11.1) -- so
-        # without this step, tests/db/test_rls.py's live-Postgres suite would create
-        # and verify the *policies* while RLS silently never restricted a single query,
-        # for the same reason a production deployment would be silently unprotected if
-        # its app role were ever a superuser. Demoting after the role has already
-        # bootstrapped the database keeps the object-ownership rights `init_schema()`
-        # and `apply_row_level_security()` need (CREATE TABLE/POLICY, INSERT/SELECT/
-        # UPDATE) -- ownership, not superuser status, grants those.
+      - name: Create a non-superuser Postgres role for RLS-enforcement tests
+        # The official postgres image makes POSTGRES_USER (alphagasiq_test) the
+        # database's initdb bootstrap superuser, and Postgres superusers always bypass
+        # Row Level Security regardless of `FORCE ROW LEVEL SECURITY` (docs/
+        # alpha-intelligence.md section 11.1) -- so tests/db/test_rls.py's live-Postgres
+        # suite would create and verify the *policies* while RLS silently never
+        # restricted a single query, for the same reason a production deployment would
+        # be silently unprotected if its app role were ever a superuser.
+        #
+        # Postgres 16 refuses to strip SUPERUSER from the bootstrap role itself
+        # ("the bootstrap user must have the SUPERUSER attribute") -- there must always
+        # be at least one true superuser, so demoting alphagasiq_test in place isn't an
+        # option. Instead, create a second, ordinary role for the actual test
+        # connection and grant it what schema setup needs: GRANT on the database plus
+        # CREATE on the public schema (PG15+ no longer grants that to PUBLIC by
+        # default). It creates its own tables via init_schema(), so it owns them --
+        # ownership, not superuser status, is what apply_row_level_security() needs to
+        # ALTER TABLE/CREATE POLICY on them.
         env:
           PGPASSWORD: alphagasiq_test
-        run: psql -h 127.0.0.1 -U alphagasiq_test -d alphagasiq_test -c "ALTER ROLE alphagasiq_test NOSUPERUSER NOBYPASSRLS;"
+        run: |
+          psql -h 127.0.0.1 -U alphagasiq_test -d alphagasiq_test -c "
+            CREATE ROLE alphagasiq_rls_test WITH LOGIN PASSWORD 'alphagasiq_rls_test' NOSUPERUSER NOBYPASSRLS;
+            GRANT ALL PRIVILEGES ON DATABASE alphagasiq_test TO alphagasiq_rls_test;
+            GRANT ALL PRIVILEGES ON SCHEMA public TO alphagasiq_rls_test;
+          "
 
       - name: Run full test suite
         run: pytest
