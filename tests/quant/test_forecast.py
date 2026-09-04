@@ -1,5 +1,5 @@
 import pytest
-from quant_service.forecast import generate_forecast
+from quant_service.forecast import _direction_probability, generate_forecast
 from quant_service.models import build_model
 from schemas import ForecastHorizon, ModelType
 
@@ -59,3 +59,32 @@ class TestGenerateForecast:
         model.predict_with_uncertainty = lambda steps_ahead: (3.0, 0.1)  # type: ignore[method-assign]
         result = generate_forecast(model=model, instrument="NGQ26", horizon=ForecastHorizon.ONE_DAY, current_price=3.0)
         assert result.confidence == 0.0
+
+
+class TestDirectionProbability:
+    """A noiseless model fit (perfectly linear input, e.g. a constant trend) produces
+    a residual std that lands as floating-point noise around zero (e.g. 1.8e-15), not
+    exact 0.0 -- these exercise that edge directly rather than relying on a specific
+    model fit to happen to reproduce it."""
+
+    def test_negligible_positive_volatility_treated_as_zero_downtrend(self):
+        assert _direction_probability(-0.1, 1.8e-15) == 0.0
+
+    def test_negligible_positive_volatility_treated_as_zero_uptrend(self):
+        assert _direction_probability(0.1, 1.8e-15) == 1.0
+
+    def test_negligible_positive_volatility_treated_as_zero_flat(self):
+        assert _direction_probability(0.0, 1.8e-15) == 0.5
+
+    def test_extreme_z_clamped_instead_of_overflowing(self):
+        # Above the negligible-volatility threshold, but still small enough that
+        # z = return_forecast / expected_volatility is large enough to overflow
+        # math.exp(-z) without the clamp.
+        assert _direction_probability(-0.1, 1e-8) == 0.0
+        assert _direction_probability(0.1, 1e-8) == 1.0
+
+    def test_normal_volatility_unaffected(self):
+        # A real, non-negligible volatility still produces a genuine sigmoid value,
+        # not a hard 0.0/1.0 clamp.
+        result = _direction_probability(0.05, 0.1)
+        assert 0.5 < result < 1.0

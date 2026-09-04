@@ -5,9 +5,13 @@ application-layer cross-organization data-visibility fix.
 Pure unit tests (statement generation, GUC value resolution, SQLite no-ops)
 run everywhere. The live-Postgres integration tests below prove the actual
 enforcement -- not just that the SQL text looks right -- against a real
-local Postgres instance; they skip gracefully (`_HAS_POSTGRES`) when none is
-reachable, since SQLite (every default dev/test database) has no RLS
-equivalent at all and CI does not run a Postgres service for this repo yet.
+local Postgres instance; they skip gracefully (`_HAS_POSTGRES`) for a local
+`pytest` run with no Postgres reachable, since SQLite (every default dev/test
+database) has no RLS equivalent at all. CI (`.github/workflows/ci.yml`) runs
+a real `postgres:16` service for exactly this suite -- and demotes the
+connecting role from its bootstrap superuser status first, since a
+superuser silently bypasses RLS regardless of `FORCE ROW LEVEL SECURITY`,
+which would otherwise let these tests pass while proving nothing.
 """
 
 from __future__ import annotations

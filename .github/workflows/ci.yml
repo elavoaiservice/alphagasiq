@@ -47,6 +47,21 @@ jobs:
       - name: Install test dependencies
         run: pip install pytest pytest-asyncio
 
+      - name: Harden Postgres test role (demote from bootstrap superuser)
+        # The official postgres image makes POSTGRES_USER the database's initial
+        # superuser. Postgres superusers always bypass Row Level Security, regardless
+        # of `FORCE ROW LEVEL SECURITY` (docs/alpha-intelligence.md section 11.1) -- so
+        # without this step, tests/db/test_rls.py's live-Postgres suite would create
+        # and verify the *policies* while RLS silently never restricted a single query,
+        # for the same reason a production deployment would be silently unprotected if
+        # its app role were ever a superuser. Demoting after the role has already
+        # bootstrapped the database keeps the object-ownership rights `init_schema()`
+        # and `apply_row_level_security()` need (CREATE TABLE/POLICY, INSERT/SELECT/
+        # UPDATE) -- ownership, not superuser status, grants those.
+        env:
+          PGPASSWORD: alphagasiq_test
+        run: psql -h 127.0.0.1 -U alphagasiq_test -d alphagasiq_test -c "ALTER ROLE alphagasiq_test NOSUPERUSER NOBYPASSRLS;"
+
       - name: Run full test suite
         run: pytest
 

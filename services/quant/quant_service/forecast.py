@@ -68,14 +68,24 @@ def generate_forecast(
     )
 
 
+_NEGLIGIBLE_VOLATILITY = 1e-9  # a noiseless fit's residual std lands here (floating-point
+# noise around zero, e.g. 1.8e-15), not at exact 0.0 -- `<= 0` alone doesn't catch it and
+# lets `z = return_forecast / expected_volatility` blow up into an unbounded float that
+# overflows `math.exp(-z)`.
+
+
 def _direction_probability(return_forecast: float, expected_volatility: float) -> float:
-    if expected_volatility <= 0:
+    if expected_volatility <= _NEGLIGIBLE_VOLATILITY:
         if return_forecast > 0:
             return 1.0
         if return_forecast < 0:
             return 0.0
         return 0.5
     z = return_forecast / expected_volatility
+    # Clamp as a hard safety net regardless of the guard above: the sigmoid is already
+    # saturated to 0.0/1.0 (at 4-decimal rounding) well before |z| reaches 700, the point
+    # where math.exp(-z) would overflow a float.
+    z = max(-700.0, min(700.0, z))
     return round(1 / (1 + math.exp(-z)), 4)
 
 
