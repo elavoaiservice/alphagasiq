@@ -1,0 +1,521 @@
+"""Alpha Intelligence Layer schemas (docs/alpha-intelligence.md).
+
+`Signal` is the foundational unit produced by AlphaSignal(TM): a detected,
+materiality-scored change in the natural gas ecosystem that everything downstream
+(AlphaImpact, AlphaConsensus, AlphaScenario, AlphaMemory) will eventually consume or
+reference. `ImpactAnalysis`/`ImpactEdge` are AlphaImpact(TM)'s output: what a `Signal`
+means, expressed as a causal chain from physical event to portfolio/risk implication.
+`AgentForecast`/`AgentAlphaScore`/`ConsensusWeight`/`ConsensusView` are AlphaConsensus(TM)'s
+schemas: a structured forecast from one agent, that agent's performance rating, its
+resulting weight in a consensus computation, and the consensus view itself. Nothing in
+this module talks to a database, an LLM, or the network -- it is a pure data contract,
+exactly like every other schema in this package.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from enum import Enum
+from typing import Any
+from uuid import UUID, uuid4
+
+from pydantic import BaseModel, Field
+
+from .agent import Citation
+from .enums import AgentType, DataClassification, OutcomeQuadrant
+from .observation import TimeSeriesObservation
+
+
+class SignalType(str, Enum):
+    PRICE_MOVE = "PRICE_MOVE"
+    CURVE_CHANGE = "CURVE_CHANGE"
+    VOLATILITY_CHANGE = "VOLATILITY_CHANGE"
+    PRODUCTION_CHANGE = "PRODUCTION_CHANGE"
+    DEMAND_CHANGE = "DEMAND_CHANGE"
+    STORAGE_CHANGE = "STORAGE_CHANGE"
+    WEATHER_CHANGE = "WEATHER_CHANGE"
+    PIPELINE_CONSTRAINT = "PIPELINE_CONSTRAINT"
+    PIPELINE_OUTAGE = "PIPELINE_OUTAGE"
+    LNG_CHANGE = "LNG_CHANGE"
+    POWER_CHANGE = "POWER_CHANGE"
+    NEWS_EVENT = "NEWS_EVENT"
+    REGULATORY_EVENT = "REGULATORY_EVENT"
+    POSITION_CHANGE = "POSITION_CHANGE"
+    PORTFOLIO_CHANGE = "PORTFOLIO_CHANGE"
+    RISK_LIMIT_APPROACH = "RISK_LIMIT_APPROACH"
+    CUSTOMER_DATA_CHANGE = "CUSTOMER_DATA_CHANGE"
+    MODEL_DISAGREEMENT = "MODEL_DISAGREEMENT"
+    AGENT_DISAGREEMENT = "AGENT_DISAGREEMENT"
+    ANOMALY = "ANOMALY"
+
+
+class SignalDirection(str, Enum):
+    """A signal's directional lean -- distinct from `Direction` (LONG/SHORT/SPREAD),
+    which describes a trade posture, not a market observation."""
+
+    BULLISH = "BULLISH"
+    BEARISH = "BEARISH"
+    NEUTRAL = "NEUTRAL"
+
+
+class SignalStatus(str, Enum):
+    ACTIVE = "ACTIVE"
+    ACKNOWLEDGED = "ACKNOWLEDGED"
+    ESCALATED = "ESCALATED"
+    EXPIRED = "EXPIRED"
+
+
+class Signal(BaseModel):
+    """A single material change detected by AlphaSignal(TM) (docs/alpha-intelligence.md
+    section 2). `organization_id`/`workspace_id` are nullable -- None means a
+    platform-wide signal derived from shared public/simulated data, the only kind
+    Milestone 1 produces; a future enterprise-data-aware detector can stamp a real
+    tenant id without a schema change."""
+
+    id: UUID = Field(default_factory=uuid4)
+    organization_id: str | None = None
+    workspace_id: str | None = None
+    signal_type: SignalType
+    category: str
+    subcategory: str = ""
+    source_ids: list[str] = Field(default_factory=list)
+    detected_at: datetime = Field(default_factory=datetime.utcnow)
+    effective_at: datetime | None = None
+    market: str = "HENRY_HUB"
+    geography: str | None = None
+    asset_ids: list[str] = Field(default_factory=list)
+    headline: str
+    description: str
+    previous_value: float | None = None
+    current_value: float | None = None
+    absolute_change: float | None = None
+    percent_change: float | None = None
+    z_score: float | None = None
+    historical_percentile: float | None = None
+    materiality_score: float = Field(ge=0, le=100)
+    novelty_score: float = Field(ge=0, le=100, default=0.0)
+    confidence: float = Field(ge=0, le=1)
+    direction: SignalDirection = SignalDirection.NEUTRAL
+    time_horizon: str = ""
+    data_quality: DataClassification = DataClassification.SIMULATED
+    citations: list[Citation] = Field(default_factory=list)
+    affected_agents: list[str] = Field(default_factory=list)
+    affected_business_functions: list[str] = Field(default_factory=list)
+    status: SignalStatus = SignalStatus.ACTIVE
+
+
+class ImpactCategory(str, Enum):
+    """The fixed causal-chain stages AlphaImpact(TM) reasons through (spec's
+    EVENT -> PHYSICAL IMPACT -> SUPPLY/DEMAND -> STORAGE -> REGIONAL -> PRICE/CURVE ->
+    STRATEGY -> PORTFOLIO -> RISK). Not every signal type traverses every stage --
+    `impact_engine.py`'s chain skeletons pick the subset that actually applies."""
+
+    PHYSICAL = "PHYSICAL"
+    SUPPLY_DEMAND = "SUPPLY_DEMAND"
+    STORAGE = "STORAGE"
+    REGIONAL = "REGIONAL"
+    PRICE_CURVE = "PRICE_CURVE"
+    STRATEGY = "STRATEGY"
+    PORTFOLIO = "PORTFOLIO"
+    RISK = "RISK"
+
+
+class ImpactEdge(BaseModel):
+    """One link in an `ImpactAnalysis`'s causal chain. Each link carries its own
+    confidence/magnitude (both decay along the chain -- later stages are always at
+    least as uncertain as earlier ones, never more confident) and the evidence it's
+    grounded in, so the UI can render the chain as a graph rather than a single opaque
+    verdict (docs/alpha-intelligence.md section 5)."""
+
+    id: UUID = Field(default_factory=uuid4)
+    sequence_index: int
+    category: ImpactCategory
+    from_node: str
+    to_node: str
+    description: str
+    confidence: float = Field(ge=0, le=1)
+    magnitude: float | None = Field(default=None, ge=0, le=100)
+    supporting_evidence: list[str] = Field(default_factory=list)
+
+
+class ImpactAnalysis(BaseModel):
+    """AlphaImpact(TM)'s output for one `Signal` (docs/alpha-intelligence.md section 5):
+    what the signal means, not just that it happened. `bullish_bearish`/`magnitude` are
+    carried forward from the originating signal's own `direction`/`materiality_score` in
+    Milestone 2 -- an independently-modeled impact magnitude (distinct from the
+    triggering signal's own materiality) is future work, documented here rather than
+    silently assumed. `affected_contracts`/enterprise-personalized implications are
+    always empty until the Enterprise Data Platform milestones exist."""
+
+    id: UUID = Field(default_factory=uuid4)
+    signal_id: UUID
+    organization_id: str | None = None
+    event_type: SignalType
+    physical_impact: str
+    supply_impact_bcf_day: float | None = None
+    demand_impact_bcf_day: float | None = None
+    storage_impact_bcf: float | None = None
+    expected_duration: str = ""
+    affected_geographies: list[str] = Field(default_factory=list)
+    affected_assets: list[str] = Field(default_factory=list)
+    affected_markets: list[str] = Field(default_factory=list)
+    affected_contracts: list[str] = Field(default_factory=list)
+    basis_implications: str = ""
+    curve_implications: str = ""
+    volatility_implications: str = ""
+    portfolio_implications: str = ""
+    risk_implications: str = ""
+    bullish_bearish: SignalDirection = SignalDirection.NEUTRAL
+    magnitude: float = Field(ge=0, le=100, default=0.0)
+    confidence: float = Field(ge=0, le=1, default=0.0)
+    assumptions: list[str] = Field(default_factory=list)
+    uncertainties: list[str] = Field(default_factory=list)
+    alternative_interpretations: list[str] = Field(default_factory=list)
+    data_sources: list[str] = Field(default_factory=list)
+    agent_contributors: list[str] = Field(default_factory=list)
+    chain: list[ImpactEdge] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class AgentForecast(BaseModel):
+    """A structured directional forecast from one specialized agent for one research
+    cycle (docs/alpha-intelligence.md section 6). Extracted from that agent's own
+    already-computed `AgentResult.outputs` by `alpha_service.forecast_extractor` --
+    not every agent produces one every cycle, only those whose output already
+    contains a genuine directional read (a fabricated direction is never invented
+    for an agent whose output doesn't already imply one)."""
+
+    id: UUID = Field(default_factory=uuid4)
+    agent_id: str
+    agent_type: AgentType
+    agent_version: str
+    organization_id: str | None = None
+    forecast_type: str
+    target: str
+    market: str = "HENRY_HUB"
+    horizon: str = ""
+    forecast_value: float | None = None
+    direction: SignalDirection = SignalDirection.NEUTRAL
+    probability: float = Field(ge=0, le=1, default=0.5)
+    confidence: float = Field(ge=0, le=1, default=0.0)
+    drivers: list[str] = Field(default_factory=list)
+    citations: list[Citation] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    expires_at: datetime | None = None
+
+
+class AgentAlphaScore(BaseModel):
+    """Agent Alpha Score(TM) (docs/alpha-intelligence.md section 6): how much an
+    agent's directional read should be trusted. Milestone 3 is honest about scope --
+    only `FORECASTING` has a genuine historical-accuracy figure available today (the
+    Quantitative Team's real walk-forward backtests, `method="BACKTESTED_
+    DIRECTIONAL_ACCURACY"`); every other agent gets a `"CONFIDENCE_CONSISTENCY_
+    PROXY"` score (recent confidence level/consistency/evidence quality) that is
+    explicitly NOT a claim of historical predictive accuracy -- no resolved-outcome
+    ledger per fundamental agent exists yet (that requires the decision-memory
+    infrastructure a later milestone, AlphaMemory, builds). `sample_size=0` means
+    "insufficient data", not a low score. Regime/horizon-specific breakdowns (spec's
+    "Weather Agent: 93 in extreme cold, 66 in shoulder season") are deferred --
+    `components` carries whatever sub-metrics this milestone actually computed."""
+
+    agent_type: AgentType
+    score: float = Field(ge=0, le=100)
+    method: str
+    sample_size: int = 0
+    components: dict[str, float] = Field(default_factory=dict)
+    computed_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ConsensusWeight(BaseModel):
+    agent_type: AgentType
+    weight: float = Field(ge=0, le=1)
+    alpha_score: float
+    forecast_confidence: float
+    direction: SignalDirection
+
+
+class ConsensusView(BaseModel):
+    """AlphaConsensus(TM)'s output (docs/alpha-intelligence.md section 6): a
+    dynamically (never equal-)weighted aggregation of contributing `AgentForecast`s
+    for the same target/market/horizon, weighted by each agent's `AgentAlphaScore`
+    and its forecast's own confidence."""
+
+    id: UUID = Field(default_factory=uuid4)
+    organization_id: str | None = None
+    consensus_type: str
+    market: str = "HENRY_HUB"
+    target: str
+    horizon: str = ""
+    consensus_value: float | None = None
+    bull_probability: float = Field(ge=0, le=1, default=0.0)
+    bear_probability: float = Field(ge=0, le=1, default=0.0)
+    neutral_probability: float = Field(ge=0, le=1, default=0.0)
+    confidence: float = Field(ge=0, le=1, default=0.0)
+    dispersion: float = Field(ge=0, le=1, default=0.0)
+    agreement_label: str = "LOW"
+    agent_count: int = 0
+    agent_weights: list[ConsensusWeight] = Field(default_factory=list)
+    leading_agents: list[str] = Field(default_factory=list)
+    dissenting_agents: list[str] = Field(default_factory=list)
+    drivers: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+    market_consensus_value: float | None = None
+    variance_vs_market: float | None = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class MarketBiasLabel(str, Enum):
+    """Phase 1 free-data-feed integration, Round 2 (spec section 26)."""
+
+    STRONGLY_BULLISH = "STRONGLY_BULLISH"
+    BULLISH = "BULLISH"
+    NEUTRAL = "NEUTRAL"
+    BEARISH = "BEARISH"
+    STRONGLY_BEARISH = "STRONGLY_BEARISH"
+    INSUFFICIENT_DATA = "INSUFFICIENT_DATA"
+
+
+class MarketBiasDriver(BaseModel):
+    """One weighted component of a `MarketBiasResult` -- always a real, computed,
+    reproducible number, never an LLM's judgment call (spec section 26: 'Do NOT ask
+    an LLM to simply decide the bias')."""
+
+    name: str
+    points: float
+    rationale: str
+
+
+class MarketBiasResult(BaseModel):
+    """`market_bias.compute_market_bias()`'s output: a transparent, reproducible
+    0-100 score built from weighted, cited components -- never itself persisted as
+    a standalone entity (it's a point-in-time synthesis over already-real/already-
+    synthetic inputs, recomputed on every request, not a new fact to remember)."""
+
+    label: MarketBiasLabel
+    score: float | None = Field(default=None, ge=0, le=100)
+    drivers: list[MarketBiasDriver] = Field(default_factory=list)
+    computed_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ScenarioFactorType(str, Enum):
+    """The four shock dimensions `risk_service.scenarios.Scenario` already supports.
+    AlphaScenario(TM) composes named scenarios and/or custom factors into one
+    combined shock rather than introducing a new shock-math engine."""
+
+    PRICE_SHOCK_PCT = "PRICE_SHOCK_PCT"
+    DEMAND_SHOCK_BCF_D = "DEMAND_SHOCK_BCF_D"
+    SUPPLY_SHOCK_BCF_D = "SUPPLY_SHOCK_BCF_D"
+    VOLATILITY_MULTIPLIER = "VOLATILITY_MULTIPLIER"
+
+
+class ScenarioVariable(BaseModel):
+    """One composable shock factor (docs/alpha-intelligence.md section 7). `geography`/
+    `asset_id`/`duration` are accepted on the schema for forward compatibility with the
+    full spec's per-geography/per-asset/duration-aware modeling, but the Milestone 4
+    engine does not yet condition on them -- there is no per-geography position or
+    duration-decay data in this codebase today, and fabricating that precision would
+    violate this project's "never claim more than is actually computed" rule. They are
+    always `None` until that data model exists."""
+
+    factor_type: ScenarioFactorType
+    value: float
+    geography: str | None = None
+    asset_id: str | None = None
+    duration: str | None = None
+
+
+class ScenarioDefinition(BaseModel):
+    """A (possibly composed) scenario: zero or more named base scenarios from
+    `risk_service.scenarios.SCENARIOS` stacked with zero or more custom
+    `ScenarioVariable`s. `alpha_service.scenario_engine.ScenarioEngine.compose()` turns
+    this into a single `risk_service.scenarios.Scenario` by summing/multiplying the
+    matching factor types -- see that module's docstring for the exact composition rule."""
+
+    id: UUID = Field(default_factory=uuid4)
+    name: str
+    description: str = ""
+    base_scenario_ids: list[str] = Field(default_factory=list)
+    variables: list[ScenarioVariable] = Field(default_factory=list)
+
+
+class ScenarioRunResult(BaseModel):
+    """One persisted execution of a `ScenarioDefinition` against the paper-trading
+    book (docs/alpha-intelligence.md section 7). Wraps
+    `risk_service.scenarios.ScenarioResult` (the underlying, already-tested P&L/VaR
+    math, reused rather than duplicated) with composition metadata and persistence
+    identity."""
+
+    id: UUID = Field(default_factory=uuid4)
+    organization_id: str | None = None
+    scenario_name: str
+    scenario_description: str = ""
+    base_scenario_ids: list[str] = Field(default_factory=list)
+    price_shock_pct: float = 0.0
+    demand_shock_bcf_d: float = 0.0
+    supply_shock_bcf_d: float = 0.0
+    volatility_multiplier: float = 1.0
+    portfolio_pnl: float
+    strategy_pnl: dict[str, float] = Field(default_factory=dict)
+    margin_impact: float
+    var_impact: float
+    largest_risk_contributor: str
+    requested_by: str | None = None
+    run_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ScenarioComparison(BaseModel):
+    """The result of running several scenarios (typically the whole standing library)
+    against the same book in one pass, ranked worst-to-best by portfolio P&L impact --
+    the "base vs. A vs. B vs. C" comparison from docs/alpha-intelligence.md section 7."""
+
+    id: UUID = Field(default_factory=uuid4)
+    organization_id: str | None = None
+    run_ids: list[UUID] = Field(default_factory=list)
+    worst_case_scenario_name: str = ""
+    worst_case_portfolio_pnl: float = 0.0
+    best_case_scenario_name: str = ""
+    best_case_portfolio_pnl: float = 0.0
+    ranked_scenario_names: list[str] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class MemoryType(str, Enum):
+    """The ten memory categories from docs/alpha-intelligence.md section 8. Milestone
+    5 only ever produces `DECISION_MEMORY` -- the other nine values ship on the enum
+    for forward compatibility (mirroring how AlphaSignal's `SignalType` shipped
+    values Milestone 1's detector doesn't use yet), not because anything in this
+    codebase produces them today."""
+
+    MARKET_MEMORY = "MARKET_MEMORY"
+    EVENT_MEMORY = "EVENT_MEMORY"
+    AGENT_MEMORY = "AGENT_MEMORY"
+    STRATEGY_MEMORY = "STRATEGY_MEMORY"
+    PORTFOLIO_MEMORY = "PORTFOLIO_MEMORY"
+    DECISION_MEMORY = "DECISION_MEMORY"
+    HUMAN_FEEDBACK_MEMORY = "HUMAN_FEEDBACK_MEMORY"
+    ERROR_MEMORY = "ERROR_MEMORY"
+    MODEL_MEMORY = "MODEL_MEMORY"
+    ORGANIZATION_PRIVATE_MEMORY = "ORGANIZATION_PRIVATE_MEMORY"
+
+
+class MemoryRecord(BaseModel):
+    """AlphaMemory(TM)'s core entity (docs/alpha-intelligence.md section 8): a
+    durable, queryable record of what was known, decided, and what happened.
+    Milestone 5 builds only `DECISION_MEMORY` records, and only links what is
+    already, unambiguously `trade_id`-linked in this codebase (`TradeIdea`,
+    `InvestmentCommitteeDecision`, `RiskCheckResult`, `PostTradeAnalysis`, and the
+    `PriceForecast` attached at trade creation, if any). Linking a signal/impact/
+    consensus/scenario record is deferred future work -- no `TradeIdea` today carries
+    which `Signal`/`ConsensusView`/`ScenarioRunResult` (if any) actually informed it,
+    and fabricating that link via time-window correlation would misrepresent an
+    unverified guess as traceable evidence."""
+
+    id: UUID = Field(default_factory=uuid4)
+    organization_id: str | None = None
+    memory_type: MemoryType = MemoryType.DECISION_MEMORY
+    trade_id: UUID | None = None
+    market: str = ""
+    strategy: str = ""
+    title: str
+    summary: str
+    outcome_quadrant: OutcomeQuadrant | None = None
+    structured_context: dict[str, Any] = Field(default_factory=dict)
+    tags: list[str] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class LessonProposalStatus(str, Enum):
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+
+
+class LessonProposal(BaseModel):
+    """A candidate lesson AlphaMemory(TM) drafted from a `MemoryRecord`'s outcome --
+    always human-reviewed (docs/alpha-intelligence.md section 8: "lesson proposals
+    are AI-drafted but always human-reviewed... never an automatic feedback loop")
+    before it can influence any production model or threshold. `proposed_lesson` is
+    generated by a deterministic template keyed off `OutcomeQuadrant`
+    (`alpha_service.memory_builder.LessonEngine`), not an LLM -- consistent with this
+    layer's "no LLM in the engine path" design already established by
+    `MaterialityEngine`/`ImpactEngine`/`ConsensusEngine`/`ScenarioEngine`; genuinely
+    LLM-drafted lessons are future work."""
+
+    id: UUID = Field(default_factory=uuid4)
+    organization_id: str | None = None
+    memory_record_id: UUID
+    proposed_lesson: str
+    rationale: str
+    status: LessonProposalStatus = LessonProposalStatus.PENDING
+    reviewed_by: str | None = None
+    reviewed_at: datetime | None = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ReplayMode(str, Enum):
+    """The four replay modes from docs/alpha-intelligence.md section 9. Milestone 6
+    only ever produces `CURRENT_MODEL_RETROSPECTIVE` -- see `AsOfReplayResult`'s
+    docstring for exactly why the other three aren't attempted yet."""
+
+    HISTORICAL_REALITY = "HISTORICAL_REALITY"
+    CURRENT_MODEL_RETROSPECTIVE = "CURRENT_MODEL_RETROSPECTIVE"
+    ORIGINAL_MODEL_REPLAY = "ORIGINAL_MODEL_REPLAY"
+    FULL_STRATEGY_REPLAY = "FULL_STRATEGY_REPLAY"
+
+
+class AsOfReplayResult(BaseModel):
+    """AlphaReplay(TM)'s output (docs/alpha-intelligence.md section 9): everything
+    the Alpha Intelligence Layer itself knew and concluded as of a chosen historical
+    moment, reconstructed bitemporally -- every list below is filtered to rows whose
+    `publication_time`/`created_at` was already at-or-before `as_of`, so nothing from
+    after that moment leaks in.
+
+    Milestone 6 is honest about scope: `mode` is always `CURRENT_MODEL_RETROSPECTIVE`
+    -- a replay of what *today's already-running* Alpha Intelligence Layer recorded
+    at the time, not a reconstruction of market reality from before this system
+    existed (`HISTORICAL_REALITY` -- there is no persisted observation history prior
+    to Milestone 6 shipping to reconstruct from), not a replay using the agent
+    versions that existed back then (`ORIGINAL_MODEL_REPLAY` -- `AgentVersionRow`
+    tracks config snapshots per docs/agent-governance.md section 4, but nothing in
+    this codebase yet re-executes an agent against a past version's config; wiring
+    that is separate, not-yet-done work), and not a full re-simulation of the trade
+    lifecycle (`FULL_STRATEGY_REPLAY` -- deterministic re-execution of committee/
+    risk/paper-execution against historical state is future work). `as_of` moments
+    before Milestone 6's own deployment will simply return empty lists, honestly,
+    rather than fabricate a plausible-looking history."""
+
+    market: str = "HENRY_HUB"
+    as_of: datetime
+    mode: ReplayMode = ReplayMode.CURRENT_MODEL_RETROSPECTIVE
+    price_observations: list[TimeSeriesObservation] = Field(default_factory=list)
+    signals: list[Signal] = Field(default_factory=list)
+    impacts: list[ImpactAnalysis] = Field(default_factory=list)
+    consensus_views: list[ConsensusView] = Field(default_factory=list)
+    scenario_runs: list[ScenarioRunResult] = Field(default_factory=list)
+    memory_records: list[MemoryRecord] = Field(default_factory=list)
+    generated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class IntelligenceBrief(BaseModel):
+    """A single cross-component digest of the Alpha Intelligence Layer's output
+    (docs/alpha-intelligence.md section 10, Milestone 7) -- generated once per
+    research cycle, not a live/recomputed view. Pulls already-computed, already-
+    persisted `Signal`/`ImpactAnalysis`/`ConsensusView`/`ScenarioRunResult`/
+    `LessonProposal` records unchanged; never reinterprets or rescoring them.
+    `headline`/`summary` are template-composed from that data by
+    `alpha_service.brief_engine.BriefEngine` -- not an LLM, the same "no LLM in
+    the engine path" discipline as every other Alpha* engine."""
+
+    id: UUID = Field(default_factory=uuid4)
+    organization_id: str | None = None
+    market: str = "HENRY_HUB"
+    period_start: datetime
+    period_end: datetime
+    headline: str
+    summary: str
+    top_signals: list[Signal] = Field(default_factory=list)
+    top_impacts: list[ImpactAnalysis] = Field(default_factory=list)
+    consensus_highlights: list[ConsensusView] = Field(default_factory=list)
+    notable_scenario_runs: list[ScenarioRunResult] = Field(default_factory=list)
+    pending_lessons: list[LessonProposal] = Field(default_factory=list)
+    generated_at: datetime = Field(default_factory=datetime.utcnow)

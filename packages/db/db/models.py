@@ -1,0 +1,1095 @@
+from __future__ import annotations
+
+import uuid
+from datetime import datetime
+
+from sqlalchemy import JSON, DateTime, Float, ForeignKey, String
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+def _uuid_str() -> str:
+    return str(uuid.uuid4())
+
+
+class TradeIdeaRow(Base):
+    __tablename__ = "trade_ideas"
+
+    trade_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    # Tenant-isolation retrofit (docs/alpha-intelligence.md section 11.1, Milestone
+    # 9): schema readiness only -- always NULL today, see `TradeIdea.organization_id`.
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    strategy: Mapped[str] = mapped_column(String, nullable=False)
+    instrument: Mapped[str] = mapped_column(String, nullable=False)
+    instrument_type: Mapped[str] = mapped_column(String, nullable=False)
+    direction: Mapped[str] = mapped_column(String, nullable=False)
+    entry: Mapped[float] = mapped_column(Float, nullable=False)
+    target: Mapped[float] = mapped_column(Float, nullable=False)
+    stop_or_invalidation: Mapped[float] = mapped_column(Float, nullable=False)
+    time_horizon: Mapped[str] = mapped_column(String, nullable=False)
+    expected_return: Mapped[float] = mapped_column(Float, nullable=False)
+    expected_loss: Mapped[float] = mapped_column(Float, nullable=False)
+    probability_success: Mapped[float] = mapped_column(Float, nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    thesis: Mapped[str] = mapped_column(String, nullable=False)
+    catalysts: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    risks: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    invalidation_conditions: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    supporting_data: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    source_citations: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    # Quant/post-trade unification: the PriceForecast attached at trade creation,
+    # stored as its raw dict so it round-trips without needing its own table.
+    forecast: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+class CommitteeDecisionRow(Base):
+    __tablename__ = "committee_decisions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    original_trade_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("trade_ideas.trade_id"), nullable=False
+    )
+    # Tenant-isolation retrofit (docs/alpha-intelligence.md section 11.1, Milestone
+    # 9): schema readiness only -- always NULL today (copied from the originating
+    # `TradeIdea.organization_id` at save time, which is itself always NULL).
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    original_trade: Mapped[dict] = mapped_column(JSON, nullable=False)
+    bull_case: Mapped[str] = mapped_column(String, nullable=False)
+    bear_case: Mapped[str] = mapped_column(String, nullable=False)
+    skeptic_case: Mapped[str] = mapped_column(String, nullable=False)
+    data_quality_assessment: Mapped[str] = mapped_column(String, nullable=False)
+    portfolio_effect: Mapped[str] = mapped_column(String, nullable=False)
+    consensus_score: Mapped[float] = mapped_column(Float, nullable=False)
+    unresolved_questions: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    recommended_action: Mapped[str] = mapped_column(String, nullable=False)
+    decided_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class RiskCheckRow(Base):
+    __tablename__ = "risk_checks"
+
+    check_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    trade_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("trade_ideas.trade_id"), nullable=False
+    )
+    # Tenant-isolation retrofit (docs/alpha-intelligence.md section 11.1, Milestone
+    # 9): schema readiness only -- always NULL today, same as `CommitteeDecisionRow`.
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    verdict: Mapped[str] = mapped_column(String, nullable=False)
+    rule_results: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    governor_version: Mapped[str] = mapped_column(String, nullable=False)
+    evaluated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class ApprovalRow(Base):
+    __tablename__ = "approvals"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    trade_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("trade_ideas.trade_id"), nullable=False
+    )
+    # Tenant-isolation retrofit (docs/alpha-intelligence.md section 11.1, Milestone
+    # 9): schema readiness only -- always NULL today, same as `CommitteeDecisionRow`.
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    state: Mapped[str] = mapped_column(String, nullable=False)
+    actions: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    current_user_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class DecisionJournalRow(Base):
+    __tablename__ = "decision_journal"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    trade_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("trade_ideas.trade_id"), nullable=False
+    )
+    entry: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class PostTradeAnalysisRow(Base):
+    __tablename__ = "post_trade_analyses"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    trade_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("trade_ideas.trade_id"), nullable=False
+    )
+    expected_outcome: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    actual_outcome: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    forecast_error: Mapped[float | None] = mapped_column(Float, nullable=True)
+    thesis_accuracy: Mapped[float] = mapped_column(Float, nullable=False)
+    timing_accuracy: Mapped[float] = mapped_column(Float, nullable=False)
+    risk_accuracy: Mapped[float] = mapped_column(Float, nullable=False)
+    model_contribution: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    unexpected_events: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    lessons: Mapped[str] = mapped_column(String, nullable=False, default="")
+    quadrant: Mapped[str] = mapped_column(String, nullable=False)
+    quant_model_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    quant_model_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    quant_predicted_return: Mapped[float | None] = mapped_column(Float, nullable=True)
+    quant_forecast_error: Mapped[float | None] = mapped_column(Float, nullable=True)
+    quant_up_probability: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class ContactInquiryRow(Base):
+    """A general business inquiry submitted via the public /contact page. This is
+    deliberately NOT part of the account-provisioning system: it never creates a
+    User, Organization, or MagicLinkToken row, and nothing reads this table to grant
+    platform access. See docs/access-model.md "No Self-Registration"."""
+
+    __tablename__ = "contact_inquiries"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    first_name: Mapped[str] = mapped_column(String, nullable=False)
+    last_name: Mapped[str] = mapped_column(String, nullable=False)
+    business_email: Mapped[str] = mapped_column(String, nullable=False)
+    company_name: Mapped[str] = mapped_column(String, nullable=False)
+    job_title: Mapped[str | None] = mapped_column(String, nullable=True)
+    phone: Mapped[str | None] = mapped_column(String, nullable=True)
+    inquiry_type: Mapped[str] = mapped_column(String, nullable=False)
+    message: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class OrganizationRow(Base):
+    """An institutional client account. Users belong to exactly one Organization,
+    looked up by name or created inline during admin user creation — see
+    docs/access-model.md §14 "Organization Management"."""
+
+    __tablename__ = "organizations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    name: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    website: Mapped[str | None] = mapped_column(String, nullable=True)
+    industry: Mapped[str | None] = mapped_column(String, nullable=True)
+    company_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    country: Mapped[str | None] = mapped_column(String, nullable=True)
+    state_region: Mapped[str | None] = mapped_column(String, nullable=True)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="ACTIVE")
+    billing_plan: Mapped[str | None] = mapped_column(String, nullable=True)
+    account_owner: Mapped[str | None] = mapped_column(String, nullable=True)
+    primary_contact: Mapped[str | None] = mapped_column(String, nullable=True)
+    feature_package: Mapped[str | None] = mapped_column(String, nullable=True)
+    data_entitlements: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    notes: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class RoleRow(Base):
+    """One of the 8 fixed roles seeded at startup (`SqlAppRepository.seed_rbac_defaults`)
+    — see docs/access-model.md §5. Custom roles are structurally possible (this is a
+    DB row, not a hardcoded enum) but none are created by this codebase."""
+
+    __tablename__ = "roles"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    name: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class PermissionRow(Base):
+    """A single fine-grained permission key (e.g. `admin.users.create`), seeded at
+    startup from the fixed list in docs/access-model.md §5. Enforcement of these via
+    `require_permission(...)` FastAPI dependencies lands in Milestone 4 — today only
+    `require_role` (apps/api/api_app/auth.py) is enforced at the router layer."""
+
+    __tablename__ = "permissions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    key: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class RolePermissionRow(Base):
+    __tablename__ = "role_permissions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    role_id: Mapped[str] = mapped_column(String(36), ForeignKey("roles.id"), nullable=False)
+    permission_id: Mapped[str] = mapped_column(String(36), ForeignKey("permissions.id"), nullable=False)
+
+
+class UserRow(Base):
+    """An AlphaGasIQ account. Only ever created by an authenticated administrator via
+    `POST /admin/users` (`apps/api/api_app/routers/admin_users.py`) — there is no
+    unauthenticated code path that can insert a row here. See docs/access-model.md."""
+
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    first_name: Mapped[str] = mapped_column(String, nullable=False)
+    last_name: Mapped[str] = mapped_column(String, nullable=False)
+    email: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    organization_id: Mapped[str] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=False)
+    job_title: Mapped[str | None] = mapped_column(String, nullable=True)
+    department: Mapped[str | None] = mapped_column(String, nullable=True)
+    phone: Mapped[str | None] = mapped_column(String, nullable=True)
+    country: Mapped[str | None] = mapped_column(String, nullable=True)
+    state_region: Mapped[str | None] = mapped_column(String, nullable=True)
+    primary_use_case: Mapped[str | None] = mapped_column(String, nullable=True)
+    market_experience: Mapped[str | None] = mapped_column(String, nullable=True)
+    role_id: Mapped[str] = mapped_column(String(36), ForeignKey("roles.id"), nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="INVITED")
+    expiration_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class MagicLinkTokenRow(Base):
+    """A single-use passwordless-login token (docs/access-model.md §3, spec §63). Only
+    `token_hash` (sha256 of the raw token) is ever stored — the raw token exists only
+    in the outbound email URL and this table can never be used to recover it."""
+
+    __tablename__ = "magic_link_tokens"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    purpose: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    requested_ip: Mapped[str | None] = mapped_column(String, nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class SessionRow(Base):
+    """A server-revocable authenticated session (docs/access-model.md §4). Only
+    magic-link-issued JWTs carry a `sid` claim pointing at one of these rows — the
+    dev-mode/OIDC login paths remain stateless JWTs with no `Session` row, unchanged
+    from before this milestone."""
+
+    __tablename__ = "sessions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    ip_address: Mapped[str | None] = mapped_column(String, nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(String, nullable=True)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class FeatureRow(Base):
+    """A gateable unit of platform functionality (docs/access-model.md §5, spec §24) —
+    e.g. "Chief Trading Agent Chat" or "Data Export". Seeded at startup alongside the
+    RBAC data; `security_sensitive=True` features get deny-only user-level overrides
+    (a user override can never grant access beyond what role+org already allow), all
+    others get full override (can grant or deny), per spec §24's "deny-overrides for
+    security-sensitive features"."""
+
+    __tablename__ = "features"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    key: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
+    security_sensitive: Mapped[bool] = mapped_column(nullable=False, default=False)
+    globally_enabled: Mapped[bool] = mapped_column(nullable=False, default=True)
+
+
+class RoleFeatureEntitlementRow(Base):
+    """Role-level feature grant. Deny-by-default: a role only has a feature if an
+    explicit row here says `enabled=True` — there is no implicit "all roles get
+    everything" fallback."""
+
+    __tablename__ = "role_feature_entitlements"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    role_id: Mapped[str] = mapped_column(String(36), ForeignKey("roles.id"), nullable=False)
+    feature_id: Mapped[str] = mapped_column(String(36), ForeignKey("features.id"), nullable=False)
+    enabled: Mapped[bool] = mapped_column(nullable=False, default=True)
+
+
+class OrganizationFeatureEntitlementRow(Base):
+    """Organization-level feature restriction/confirmation. Allow-by-default: absence
+    of a row means the organization's plan does not additionally restrict a feature
+    the user's role already grants; an explicit `enabled=False` row is how a client's
+    plan excludes a feature regardless of role."""
+
+    __tablename__ = "organization_feature_entitlements"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    organization_id: Mapped[str] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=False)
+    feature_id: Mapped[str] = mapped_column(String(36), ForeignKey("features.id"), nullable=False)
+    enabled: Mapped[bool] = mapped_column(nullable=False, default=True)
+
+
+class UserFeatureOverrideRow(Base):
+    """Per-user feature override. For a `security_sensitive` feature this can only
+    narrow access (an `enabled=True` override is ignored if role/org already deny the
+    feature); for any other feature it can both grant and deny regardless of role/org
+    — see `apps/api/api_app/entitlements.py::get_effective_features` for the exact
+    algorithm."""
+
+    __tablename__ = "user_feature_overrides"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False)
+    feature_id: Mapped[str] = mapped_column(String(36), ForeignKey("features.id"), nullable=False)
+    enabled: Mapped[bool] = mapped_column(nullable=False, default=True)
+
+
+class ChatConversationRow(Base):
+    """A persisted Chief Trading Agent Chat conversation (docs/access-model.md §6,
+    spec §29). `id` is shared with the in-memory `ChatSession.id` the router already
+    returns — this table is a write-through durability layer behind that existing
+    response contract, not a replacement for it (mirrors how `AppState`'s other
+    in-memory dicts write through to `SqlAppRepository` — see `state.py`)."""
+
+    __tablename__ = "chat_conversations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, nullable=False)
+    organization_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class ChatMessageRow(Base):
+    """One turn of a `ChatConversationRow`. Deliberately has no column for a private
+    chain-of-thought — only the user's message, the assistant's final response, and
+    metadata about how that response was produced (spec §29: "Do not persist private
+    chain-of-thought")."""
+
+    __tablename__ = "chat_messages"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    conversation_id: Mapped[str] = mapped_column(String(36), ForeignKey("chat_conversations.id"), nullable=False)
+    role: Mapped[str] = mapped_column(String, nullable=False)
+    content: Mapped[str] = mapped_column(String, nullable=False)
+    citations: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    freshness: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    tool_used: Mapped[str | None] = mapped_column(String, nullable=True)
+    model: Mapped[str | None] = mapped_column(String, nullable=True)
+    latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    permissions_context: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class SystemSettingRow(Base):
+    """A single named, admin-editable non-sensitive platform setting (spec §38 —
+    Platform Name, Support Email, Default Timezone, etc.). Every change is versioned/
+    timestamped/reversible via `SystemSettingHistoryRow` — see
+    `SqlAppRepository.set_system_setting`."""
+
+    __tablename__ = "system_settings"
+
+    key: Mapped[str] = mapped_column(String, primary_key=True)
+    value: Mapped[dict] = mapped_column(JSON, nullable=False)
+    version: Mapped[int] = mapped_column(nullable=False, default=1)
+    updated_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class SystemSettingHistoryRow(Base):
+    """Append-only history of every prior value a `SystemSettingRow` held — spec §38
+    "System information changes must be: Versioned, Timestamped, Audited, Reversible
+    where practical". A full cross-cutting `AuditEvent` table (spec §54-55) lands in
+    Milestone 10; this dedicated history table covers system-setting changes now."""
+
+    __tablename__ = "system_setting_history"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    key: Mapped[str] = mapped_column(String, nullable=False)
+    value: Mapped[dict] = mapped_column(JSON, nullable=False)
+    version: Mapped[int] = mapped_column(nullable=False)
+    changed_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    changed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class DataFeedConfigRow(Base):
+    """Admin-configurable state for one registered `data_sdk.BaseDataProvider`
+    (spec §36 "Data Feed Administration"). Deliberately holds no credential/secret
+    field — every provider's API key/token is environment-provisioned
+    (`packages/config/config/settings.py`) and never touches this table or the API
+    layer at all, which is the strongest possible reading of spec §36's "Credentials
+    must never be redisplayed after entry" (they are never *displayed*, or even
+    *enterable*, through this admin surface in the first place)."""
+
+    __tablename__ = "data_feed_configs"
+
+    provider_id: Mapped[str] = mapped_column(String, primary_key=True)
+    enabled: Mapped[bool] = mapped_column(nullable=False, default=True)
+    paused: Mapped[bool] = mapped_column(nullable=False, default=False)
+    polling_frequency_seconds: Mapped[int | None] = mapped_column(nullable=True)
+    freshness_threshold_seconds: Mapped[int | None] = mapped_column(nullable=True)
+    priority: Mapped[int] = mapped_column(nullable=False, default=100)
+    fallback_provider_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    notes: Mapped[str | None] = mapped_column(String, nullable=True)
+    updated_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class DataFeedEventRow(Base):
+    """An ingestion-log entry (spec §36 "View ingestion logs" / "Review errors") —
+    written by the admin "Test Connection" and "Trigger Manual Refresh" actions."""
+
+    __tablename__ = "data_feed_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    provider_id: Mapped[str] = mapped_column(String, nullable=False)
+    event_type: Mapped[str] = mapped_column(String, nullable=False)  # test_connection | manual_refresh
+    status: Mapped[str] = mapped_column(String, nullable=False)  # success | error
+    detail: Mapped[str] = mapped_column(String, nullable=False, default="")
+    records_received: Mapped[int | None] = mapped_column(nullable=True)
+    latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    avg_quality_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class AgentConfigRow(Base):
+    """Admin-editable operational state for one implemented, LLM-driven agent seat
+    (spec §39, `docs/agent-governance.md` §2-3) -- enable/pause/disable and the
+    confidence/alert/escalation thresholds an administrator can tune. Seeded one row
+    per currently-implemented `AgentType` (`apps/api/api_app/agent_catalog.py`), minus
+    `RISK_GOVERNOR`, which has no admin-settable state here (see that module's
+    `administrable` flag and `docs/agent-governance.md` §1)."""
+
+    __tablename__ = "agent_configs"
+
+    agent_type: Mapped[str] = mapped_column(String, primary_key=True)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="ACTIVE")
+    confidence_threshold: Mapped[float | None] = mapped_column(Float, nullable=True)
+    alert_threshold: Mapped[float | None] = mapped_column(Float, nullable=True)
+    escalation_threshold: Mapped[float | None] = mapped_column(Float, nullable=True)
+    notes: Mapped[str | None] = mapped_column(String, nullable=True)
+    updated_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class AgentVersionRow(Base):
+    """One version of an agent's configuration (spec §§40-41, `docs/agent-governance.md`
+    §4) -- model/prompt/tool/threshold config, its lifecycle status, and evaluation
+    results. **A production agent definition is never overwritten**: every change to an
+    agent's instructions, model, or thresholds creates a new row here rather than
+    mutating an existing one, and promoting a version never means the agent's Python
+    class is regenerated or replaced -- it means the runtime *would* read its config
+    from the `PRODUCTION`-status row (wiring that read path per-agent into
+    `services/agents` is real follow-up work, tracked honestly rather than assumed).
+
+    Status lifecycle (enforced in `repository.py`, never skippable):
+    DRAFT -> TESTING -> APPROVED -> PRODUCTION -> (RETIRED | ROLLED_BACK). No transition
+    may skip a step -- "no prompt change may automatically bypass evaluation" (spec
+    §41). Promoting a new PRODUCTION version automatically retires the agent's prior
+    PRODUCTION row, so at most one PRODUCTION version per agent_type exists at a time.
+    `AppState.apply_production_agent_version()` (`apps/api/api_app/state.py`) copies a
+    PRODUCTION row's `system_instructions`/`model_name` onto the live `BaseAgent`
+    instance on every PRODUCTION/ROLLED_BACK transition and at boot, so promoting a
+    version really does change what the agent sends to the LLM, not only what's
+    recorded for history.
+    """
+
+    __tablename__ = "agent_versions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    agent_type: Mapped[str] = mapped_column(String, nullable=False)
+    version: Mapped[str] = mapped_column(String, nullable=False)
+    model_provider: Mapped[str | None] = mapped_column(String, nullable=True)
+    model_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    system_instructions: Mapped[str | None] = mapped_column(String, nullable=True)
+    tool_configuration: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    data_sources: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    execution_settings: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    thresholds: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="DRAFT")
+    created_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    evaluation_results: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    approved_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    deployment_timestamp: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    notes: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class ModelDefinitionRow(Base):
+    """One LLM model definition available for agent assignment (spec §43,
+    `docs/agent-governance.md` §6). Status: `AVAILABLE` -> `TESTING` -> `APPROVED` ->
+    (`DEPRECATED` | `DISABLED`). **An agent may never be configured to use a model that
+    isn't `APPROVED`** -- enforced structurally in
+    `SqlAppRepository.transition_agent_version_status`, which rejects moving an
+    `AgentVersion` referencing a non-`APPROVED` model to `APPROVED` or `PRODUCTION`,
+    not left to admin-UI convention."""
+
+    __tablename__ = "model_definitions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    provider: Mapped[str] = mapped_column(String, nullable=False)
+    model_name: Mapped[str] = mapped_column(String, nullable=False)
+    version: Mapped[str | None] = mapped_column(String, nullable=True)
+    purpose: Mapped[str | None] = mapped_column(String, nullable=True)
+    approved_agent_types: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="AVAILABLE")
+    context_window: Mapped[int | None] = mapped_column(nullable=True)
+    cost_per_1k_input_tokens: Mapped[float | None] = mapped_column(Float, nullable=True)
+    cost_per_1k_output_tokens: Mapped[float | None] = mapped_column(Float, nullable=True)
+    notes: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class AuditEventRow(Base):
+    """Append-only audit trail (spec §55, `docs/agent-governance.md` §7 /
+    `docs/access-model.md` §1) for sensitive actions across the platform: agent
+    enable/disable, version promotion/rollback, model approval, risk-setting change,
+    admin user/organization changes. **No update or delete API exists for this table,
+    ever** -- `SqlAppRepository` exposes only `record_audit_event`/`list_audit_events`,
+    never a mutation or removal of an existing row."""
+
+    __tablename__ = "audit_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    actor_user_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    action: Mapped[str] = mapped_column(String, nullable=False)
+    resource_type: Mapped[str] = mapped_column(String, nullable=False)
+    resource_id: Mapped[str] = mapped_column(String, nullable=False)
+    before: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    after: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class RiskLimitsRow(Base):
+    __tablename__ = "risk_limits"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    max_position_size: Mapped[float] = mapped_column(Float, nullable=False)
+    max_risk_per_trade: Mapped[float] = mapped_column(Float, nullable=False)
+    max_daily_loss: Mapped[float] = mapped_column(Float, nullable=False)
+    max_drawdown: Mapped[float] = mapped_column(Float, nullable=False)
+    max_portfolio_var: Mapped[float] = mapped_column(Float, nullable=False)
+    max_sector_exposure: Mapped[float] = mapped_column(Float, nullable=False)
+    max_contract_exposure: Mapped[float] = mapped_column(Float, nullable=False)
+    max_correlated_exposure: Mapped[float] = mapped_column(Float, nullable=False)
+    effective_from: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow
+    )
+    effective_to: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    set_by_user_id: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class SignalRow(Base):
+    """A single material change detected by AlphaSignal(TM) (docs/alpha-intelligence.md
+    section 2). `organization_id`/`workspace_id` are nullable -- NULL means a
+    platform-wide signal derived from shared public/simulated data, the only kind the
+    Milestone 1 detector produces; a future enterprise-data-aware detector can stamp a
+    real tenant id here without a schema change."""
+
+    __tablename__ = "alpha_signals"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    organization_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=True)
+    workspace_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    signal_type: Mapped[str] = mapped_column(String, nullable=False)
+    category: Mapped[str] = mapped_column(String, nullable=False)
+    subcategory: Mapped[str] = mapped_column(String, nullable=False, default="")
+    source_ids: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    detected_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    effective_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    market: Mapped[str] = mapped_column(String, nullable=False, default="HENRY_HUB")
+    geography: Mapped[str | None] = mapped_column(String, nullable=True)
+    asset_ids: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    headline: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str] = mapped_column(String, nullable=False)
+    previous_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    current_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    absolute_change: Mapped[float | None] = mapped_column(Float, nullable=True)
+    percent_change: Mapped[float | None] = mapped_column(Float, nullable=True)
+    z_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    historical_percentile: Mapped[float | None] = mapped_column(Float, nullable=True)
+    materiality_score: Mapped[float] = mapped_column(Float, nullable=False)
+    novelty_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    direction: Mapped[str] = mapped_column(String, nullable=False, default="NEUTRAL")
+    time_horizon: Mapped[str] = mapped_column(String, nullable=False, default="")
+    data_quality: Mapped[str] = mapped_column(String, nullable=False)
+    citations: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    affected_agents: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    affected_business_functions: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="ACTIVE")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class SignalBaselineRow(Base):
+    """The last-known value + rolling window per `SignalDetector` key (e.g.
+    `"STORAGE.forecast_bcf"`), so AlphaSignal can diff cycle-over-cycle without holding
+    that state in the process-wide `AppState` singleton itself. `signal_emitted_history`
+    is the bounded recent-firing history `SignalDetector._novelty_score()` reads to
+    compute `Signal.novelty_score` -- persisted alongside `rolling_window` so novelty
+    genuinely accumulates across process restarts instead of resetting to "never seen
+    before" every boot."""
+
+    __tablename__ = "alpha_signal_baselines"
+
+    key: Mapped[str] = mapped_column(String, primary_key=True)
+    value: Mapped[float] = mapped_column(Float, nullable=False)
+    rolling_window: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    signal_emitted_history: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    observed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class ImpactAnalysisRow(Base):
+    """AlphaImpact(TM)'s output for one `Signal` (docs/alpha-intelligence.md section 5).
+    `chain` (the ordered `ImpactEdge` list) is stored as a single JSON column rather
+    than a separate join table -- it's always fetched together with its parent and
+    never independently queried edge-by-edge, so a normalized table would add a join
+    for no real benefit at this milestone's scale."""
+
+    __tablename__ = "alpha_impact_analyses"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    signal_id: Mapped[str] = mapped_column(String(36), ForeignKey("alpha_signals.id"), nullable=False)
+    organization_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=True)
+    event_type: Mapped[str] = mapped_column(String, nullable=False)
+    physical_impact: Mapped[str] = mapped_column(String, nullable=False)
+    supply_impact_bcf_day: Mapped[float | None] = mapped_column(Float, nullable=True)
+    demand_impact_bcf_day: Mapped[float | None] = mapped_column(Float, nullable=True)
+    storage_impact_bcf: Mapped[float | None] = mapped_column(Float, nullable=True)
+    expected_duration: Mapped[str] = mapped_column(String, nullable=False, default="")
+    affected_geographies: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    affected_assets: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    affected_markets: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    affected_contracts: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    basis_implications: Mapped[str] = mapped_column(String, nullable=False, default="")
+    curve_implications: Mapped[str] = mapped_column(String, nullable=False, default="")
+    volatility_implications: Mapped[str] = mapped_column(String, nullable=False, default="")
+    portfolio_implications: Mapped[str] = mapped_column(String, nullable=False, default="")
+    risk_implications: Mapped[str] = mapped_column(String, nullable=False, default="")
+    bullish_bearish: Mapped[str] = mapped_column(String, nullable=False, default="NEUTRAL")
+    magnitude: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    assumptions: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    uncertainties: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    alternative_interpretations: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    data_sources: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    agent_contributors: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    chain: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class AgentForecastRow(Base):
+    """A structured directional forecast from one agent for one research cycle
+    (docs/alpha-intelligence.md section 6), extracted by
+    `alpha_service.forecast_extractor.ForecastExtractor`."""
+
+    __tablename__ = "alpha_agent_forecasts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    agent_id: Mapped[str] = mapped_column(String, nullable=False)
+    agent_type: Mapped[str] = mapped_column(String, nullable=False)
+    agent_version: Mapped[str] = mapped_column(String, nullable=False)
+    organization_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=True)
+    forecast_type: Mapped[str] = mapped_column(String, nullable=False)
+    target: Mapped[str] = mapped_column(String, nullable=False)
+    market: Mapped[str] = mapped_column(String, nullable=False, default="HENRY_HUB")
+    horizon: Mapped[str] = mapped_column(String, nullable=False, default="")
+    forecast_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    direction: Mapped[str] = mapped_column(String, nullable=False, default="NEUTRAL")
+    probability: Mapped[float] = mapped_column(Float, nullable=False, default=0.5)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    drivers: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    citations: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class AgentAlphaScoreRow(Base):
+    """Agent Alpha Score(TM) (docs/alpha-intelligence.md section 6) -- the latest
+    score per agent type. Natural-key PK `agent_type`: this is a "current score"
+    row, upserted every cycle, not a history table -- a score trend over time is
+    explicitly deferred future work (see the schema docstring for
+    `AgentAlphaScore`)."""
+
+    __tablename__ = "alpha_agent_scores"
+
+    agent_type: Mapped[str] = mapped_column(String, primary_key=True)
+    score: Mapped[float] = mapped_column(Float, nullable=False)
+    method: Mapped[str] = mapped_column(String, nullable=False)
+    sample_size: Mapped[int] = mapped_column(nullable=False, default=0)
+    components: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    computed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class ConsensusViewRow(Base):
+    """AlphaConsensus(TM)'s output (docs/alpha-intelligence.md section 6) -- a
+    dynamically-weighted aggregation of contributing `AgentForecast`s. `agent_weights`
+    is stored as an embedded JSON list (each contributing agent's weight/alpha
+    score/direction) rather than a separate join table, for the same reason
+    `ImpactAnalysisRow.chain` is embedded -- always fetched with its parent, never
+    queried weight-by-weight independently."""
+
+    __tablename__ = "alpha_consensus_views"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    organization_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=True)
+    consensus_type: Mapped[str] = mapped_column(String, nullable=False)
+    market: Mapped[str] = mapped_column(String, nullable=False, default="HENRY_HUB")
+    target: Mapped[str] = mapped_column(String, nullable=False)
+    horizon: Mapped[str] = mapped_column(String, nullable=False, default="")
+    consensus_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    bull_probability: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    bear_probability: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    neutral_probability: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    dispersion: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    agreement_label: Mapped[str] = mapped_column(String, nullable=False, default="LOW")
+    agent_count: Mapped[int] = mapped_column(nullable=False, default=0)
+    agent_weights: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    leading_agents: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    dissenting_agents: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    drivers: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    risks: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    market_consensus_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    variance_vs_market: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class ScenarioRunRow(Base):
+    """AlphaScenario(TM)'s output (docs/alpha-intelligence.md section 7) -- one
+    persisted execution of a (possibly composed) scenario against the paper-trading
+    book, produced by `alpha_service.scenario_engine.ScenarioEngine`."""
+
+    __tablename__ = "alpha_scenario_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    organization_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=True)
+    scenario_name: Mapped[str] = mapped_column(String, nullable=False)
+    scenario_description: Mapped[str] = mapped_column(String, nullable=False, default="")
+    base_scenario_ids: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    price_shock_pct: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    demand_shock_bcf_d: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    supply_shock_bcf_d: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    volatility_multiplier: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
+    portfolio_pnl: Mapped[float] = mapped_column(Float, nullable=False)
+    strategy_pnl: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    margin_impact: Mapped[float] = mapped_column(Float, nullable=False)
+    var_impact: Mapped[float] = mapped_column(Float, nullable=False)
+    largest_risk_contributor: Mapped[str] = mapped_column(String, nullable=False, default="")
+    requested_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    run_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class MemoryRecordRow(Base):
+    """AlphaMemory(TM)'s output (docs/alpha-intelligence.md section 8) -- a durable
+    record of what was known, decided, and what happened for one closed trade.
+    Milestone 5 only ever produces `memory_type="DECISION_MEMORY"` rows."""
+
+    __tablename__ = "alpha_memory_records"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    organization_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=True)
+    memory_type: Mapped[str] = mapped_column(String, nullable=False, default="DECISION_MEMORY")
+    trade_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    market: Mapped[str] = mapped_column(String, nullable=False, default="")
+    strategy: Mapped[str] = mapped_column(String, nullable=False, default="")
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    summary: Mapped[str] = mapped_column(String, nullable=False)
+    outcome_quadrant: Mapped[str | None] = mapped_column(String, nullable=True)
+    structured_context: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    tags: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class LessonProposalRow(Base):
+    """A candidate lesson AlphaMemory(TM) drafted from a `MemoryRecordRow`'s outcome
+    (docs/alpha-intelligence.md section 8) -- always human-reviewed
+    (`status`: PENDING/APPROVED/REJECTED) before it could ever influence a production
+    model or threshold; Milestone 5 never wires an approved lesson back into
+    anything automatically -- that remains future work."""
+
+    __tablename__ = "alpha_lesson_proposals"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    organization_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=True)
+    memory_record_id: Mapped[str] = mapped_column(String(36), ForeignKey("alpha_memory_records.id"), nullable=False)
+    proposed_lesson: Mapped[str] = mapped_column(String, nullable=False)
+    rationale: Mapped[str] = mapped_column(String, nullable=False, default="")
+    status: Mapped[str] = mapped_column(String, nullable=False, default="PENDING")
+    reviewed_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class MarketObservationRow(Base):
+    """AlphaReplay(TM)'s bitemporal market observation store (docs/alpha-intelligence.md
+    section 9) -- persists a `TimeSeriesObservation` with the full bitemporal
+    revision history: when a later revision arrives for the same
+    `series_id`+`observation_time`, the prior row's `valid_to` is set to the new
+    row's `publication_time` rather than overwritten, so an "as known at
+    <timestamp>" query can still recover exactly what was believed then. `valid_to`
+    is `NULL` only for the current (latest) revision of a given `series_id`+
+    `observation_time`."""
+
+    __tablename__ = "alpha_market_observations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    source: Mapped[str] = mapped_column(String, nullable=False)
+    source_type: Mapped[str] = mapped_column(String, nullable=False)
+    series_id: Mapped[str] = mapped_column(String, nullable=False)
+    symbol: Mapped[str | None] = mapped_column(String, nullable=True)
+    commodity: Mapped[str] = mapped_column(String, nullable=False, default="NATURAL_GAS")
+    category: Mapped[str] = mapped_column(String, nullable=False)
+    sub_category: Mapped[str | None] = mapped_column(String, nullable=True)
+    geography: Mapped[str | None] = mapped_column(String, nullable=True)
+    location: Mapped[str | None] = mapped_column(String, nullable=True)
+    value: Mapped[float] = mapped_column(Float, nullable=False)
+    unit: Mapped[str] = mapped_column(String, nullable=False)
+    observation_time: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    publication_time: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    revision_number: Mapped[int] = mapped_column(nullable=False, default=0)
+    quality_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    metadata_: Mapped[dict] = mapped_column("metadata", JSON, nullable=False, default=dict)
+    lineage: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    revision_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    valid_from: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    valid_to: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    received_time: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    license_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    public_or_commercial: Mapped[str | None] = mapped_column(String, nullable=True)
+    redistribution_allowed: Mapped[bool | None] = mapped_column(nullable=True)
+    ai_processing_allowed: Mapped[bool | None] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class IntelligenceBriefRow(Base):
+    """The Overnight Intelligence Brief (docs/alpha-intelligence.md section 10,
+    Milestone 7) -- one row per generated `IntelligenceBrief`. Top signals/impacts/
+    consensus highlights/scenario runs/pending lessons are embedded jsonb snapshots
+    of already-persisted records (the same pattern as `ImpactAnalysisRow.chain`/
+    `ConsensusViewRow.agent_weights`), not foreign keys -- a brief is a point-in-time
+    digest, and re-reading the live rows later could reflect edits that happened
+    after the brief was generated."""
+
+    __tablename__ = "alpha_intelligence_briefs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    organization_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=True)
+    market: Mapped[str] = mapped_column(String, nullable=False, default="HENRY_HUB")
+    period_start: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    period_end: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    headline: Mapped[str] = mapped_column(String, nullable=False)
+    summary: Mapped[str] = mapped_column(String, nullable=False)
+    top_signals: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    top_impacts: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    consensus_highlights: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    notable_scenario_runs: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    pending_lessons: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    generated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class WorkspaceRow(Base):
+    """A grouping inside an `Organization` (docs/alpha-intelligence.md section
+    11.1, Milestone 8) -- e.g. a trading desk -- that enterprise data sources/
+    datasets/entitlements can be scoped to."""
+
+    __tablename__ = "workspaces"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    organization_id: Mapped[str] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str] = mapped_column(String, nullable=False, default="")
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class WorkspaceMemberRow(Base):
+    """One user's membership in one `WorkspaceRow`. Composite PK -- a user can
+    belong to more than one workspace, but only once per workspace."""
+
+    __tablename__ = "workspace_members"
+
+    workspace_id: Mapped[str] = mapped_column(String(36), ForeignKey("workspaces.id"), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), primary_key=True)
+    added_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    added_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class EnterpriseDataSourceRow(Base):
+    """An admin-registered connection to a customer's proprietary data
+    (docs/alpha-intelligence.md section 11.3/11.4, Milestone 8). Deliberately
+    carries no credential/secret field -- exactly `DataFeedConfigRow`'s
+    existing posture: real secrets are environment-provisioned and never touch
+    this table or the admin API."""
+
+    __tablename__ = "enterprise_data_sources"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    organization_id: Mapped[str] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=False)
+    workspace_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("workspaces.id"), nullable=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    connector_type: Mapped[str] = mapped_column(String, nullable=False)
+    classification: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="DRAFT")
+    description: Mapped[str] = mapped_column(String, nullable=False, default="")
+    connection_config: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class EnterpriseDatasetRow(Base):
+    """One registered dataset within an `EnterpriseDataSourceRow`, normalized
+    into a canonical `EnterpriseDataDomain` (docs/alpha-intelligence.md section
+    11.4)."""
+
+    __tablename__ = "enterprise_datasets"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    source_id: Mapped[str] = mapped_column(String(36), ForeignKey("enterprise_data_sources.id"), nullable=False)
+    organization_id: Mapped[str] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    domain: Mapped[str] = mapped_column(String, nullable=False)
+    classification: Mapped[str] = mapped_column(String, nullable=False)
+    schema_summary: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    row_count: Mapped[int] = mapped_column(nullable=False, default=0)
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class EnterpriseDataEntitlementRow(Base):
+    """Grants a principal (USER/ROLE/WORKSPACE/AGENT -- the `AgentDataEntitlement`
+    concept from docs/alpha-intelligence.md section 11.1 is unified into this
+    same table via `principal_type` rather than a structurally-identical
+    parallel table) read access to one `EnterpriseDatasetRow`."""
+
+    __tablename__ = "enterprise_data_entitlements"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    dataset_id: Mapped[str] = mapped_column(String(36), ForeignKey("enterprise_datasets.id"), nullable=False)
+    principal_type: Mapped[str] = mapped_column(String, nullable=False)
+    principal_id: Mapped[str] = mapped_column(String, nullable=False)
+    granted_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    granted_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class EnterpriseRecordRow(Base):
+    """One ingested row of an `EnterpriseDatasetRow`'s data, as accepted by
+    that dataset's connector's `ingest()` (docs/alpha-intelligence.md section
+    11.3, Milestone 8). Stored as an opaque JSON blob -- there is no per-domain
+    typed table yet; wiring ingested rows into the same rich, typed
+    `ObservationDraft` canonical model market data already uses remains future
+    work, documented here rather than silently assumed."""
+
+    __tablename__ = "enterprise_records"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    dataset_id: Mapped[str] = mapped_column(String(36), ForeignKey("enterprise_datasets.id"), nullable=False)
+    row_data: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    ingested_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class EnterpriseWebhookStagedRowRow(Base):
+    """One row received via `POST /webhooks/enterprise-data/{source_id}`
+    (apps/api/api_app/routers/enterprise_webhooks.py) for a `WEBHOOK`-type
+    `EnterpriseDataSourceRow`, held here until an admin previews/ingests it
+    through the existing dataset flow -- the durable staging buffer
+    `enterprise_data_service.connector.WebhookConnector` reads from rather
+    than touching the network or a queue itself."""
+
+    __tablename__ = "enterprise_webhook_staged_rows"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    source_id: Mapped[str] = mapped_column(String(36), ForeignKey("enterprise_data_sources.id"), nullable=False)
+    row_data: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    received_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class EnterpriseDataEventRow(Base):
+    """An ingestion-log entry for an `EnterpriseDataSourceRow` -- written by
+    the admin "Test Connection" and "Sync Now" actions, the same pattern
+    `DataFeedEventRow` already establishes for the built-in connectors."""
+
+    __tablename__ = "enterprise_data_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    source_id: Mapped[str] = mapped_column(String(36), ForeignKey("enterprise_data_sources.id"), nullable=False)
+    event_type: Mapped[str] = mapped_column(String, nullable=False)  # test_connection | ingest
+    status: Mapped[str] = mapped_column(String, nullable=False)  # success | error
+    detail: Mapped[str] = mapped_column(String, nullable=False, default="")
+    rows_ingested: Mapped[int | None] = mapped_column(nullable=True)
+    rows_rejected: Mapped[int | None] = mapped_column(nullable=True)
+    latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class ModelRoutingPolicyRow(Base):
+    """Tenant-isolation retrofit (docs/alpha-intelligence.md section 11.1,
+    Milestone 9): governs whether a given `EnterpriseDataClassification` may be
+    sent to an external LLM provider for a given organization.
+    `organization_id` is nullable -- unlike every other enterprise table's
+    required `organization_id`, `NULL` here is meaningful: it is the platform
+    default policy consulted when an organization has no override for that
+    classification, not "not yet organization-scoped"."""
+
+    __tablename__ = "model_routing_policies"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    organization_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=True)
+    data_classification: Mapped[str] = mapped_column(String, nullable=False)
+    allow_external_llm_processing: Mapped[bool] = mapped_column(nullable=False)
+    allowed_provider: Mapped[str | None] = mapped_column(String, nullable=True)
+    allowed_region: Mapped[str | None] = mapped_column(String, nullable=True)
+    logging_allowed: Mapped[bool] = mapped_column(nullable=False, default=True)
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class RetentionPolicyRow(Base):
+    """Tenant-isolation retrofit (docs/alpha-intelligence.md section 11.1,
+    Milestone 9): how many days a given `EnterpriseDataClassification`'s data
+    may be retained for an organization. Same nullable-`organization_id`
+    platform-default convention as `ModelRoutingPolicyRow`."""
+
+    __tablename__ = "retention_policies"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    organization_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=True)
+    data_classification: Mapped[str] = mapped_column(String, nullable=False)
+    retention_days: Mapped[int | None] = mapped_column(nullable=True)
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class EnterpriseOpportunityRow(Base):
+    """A candidate opportunity `EnterpriseOpportunityEngine` drafted
+    (docs/alpha-intelligence.md section 11.7, Milestone 10) -- always
+    human-reviewed, never auto-executed. Unlike every other Alpha*/enterprise
+    table, `organization_id` is **required**: an opportunity is inherently
+    derived from one organization's own proprietary position data, so there is
+    no meaningful platform-wide row here."""
+
+    __tablename__ = "enterprise_opportunities"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    organization_id: Mapped[str] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=False)
+    workspace_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    opportunity_type: Mapped[str] = mapped_column(String, nullable=False)
+    market: Mapped[str] = mapped_column(String, nullable=False)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    summary: Mapped[str] = mapped_column(String, nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    supporting_signal_ids: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    supporting_consensus_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    related_dataset_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    related_record_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="PENDING")
+    reviewed_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)

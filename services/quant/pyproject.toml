@@ -1,0 +1,21 @@
+[project]
+name = "alphagasiq-service-quant"
+version = "0.1.0"
+description = "Quantitative platform: point-in-time-correct forecasting, regime detection, relative value, and walk-forward backtesting"
+requires-python = ">=3.11"
+dependencies = [
+  "alphagasiq-schemas",
+  "alphagasiq-service-fundamentals",
+  "numpy>=1.26",
+  "statsmodels>=0.14",
+  "scikit-learn>=1.4",
+  "xgboost>=2.0",
+  "lightgbm>=4.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["quant_service*"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"

@@ -1,0 +1,18 @@
+[project]
+name = "alphagasiq-db"
+version = "0.1.0"
+description = "SQLAlchemy async engine, ORM models, and repository for AlphaGasIQ's trading objects"
+requires-python = ">=3.11"
+dependencies = [
+    "alphagasiq-schemas",
+    "sqlalchemy>=2.0",
+    "aiosqlite>=0.19",
+    "asyncpg>=0.29",
+]
+
+[tool.setuptools.packages.find]
+include = ["db*"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"

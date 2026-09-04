@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  backend-tests:
+    name: Backend tests (pytest)
+    runs-on: ubuntu-latest
+    services:
+      # Backs tests/db/test_rls.py's live-Postgres Row Level Security suite (docs/
+      # alpha-intelligence.md section 11.1) -- RLS has no SQLite equivalent, so without a
+      # real Postgres reachable those tests would silently skip instead of actually
+      # re-verifying the enforcement on every push.
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: alphagasiq_test
+          POSTGRES_PASSWORD: alphagasiq_test
+          POSTGRES_DB: alphagasiq_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install packages (editable, same set as README's dev setup)
+        run: |
+          pip install -e packages/schemas -e packages/data-sdk -e packages/agent-sdk -e packages/config \
+                      -e packages/db -e services/data -e services/fundamentals -e services/risk \
+                      -e services/paper-execution -e services/agents -e services/quant -e services/alpha \
+                      -e services/enterprise_data -e apps/api
+
+      - name: Install test dependencies
+        run: pip install pytest pytest-asyncio
+
+      - name: Create a non-superuser Postgres role for RLS-enforcement tests
+        # The official postgres image makes POSTGRES_USER (alphagasiq_test) the
+        # database's initdb bootstrap superuser, and Postgres superusers always bypass
+        # Row Level Security regardless of `FORCE ROW LEVEL SECURITY` (docs/
+        # alpha-intelligence.md section 11.1) -- so tests/db/test_rls.py's live-Postgres
+        # suite would create and verify the *policies* while RLS silently never
+        # restricted a single query, for the same reason a production deployment would
+        # be silently unprotected if its app role were ever a superuser.
+        #
+        # Postgres 16 refuses to strip SUPERUSER from the bootstrap role itself
+        # ("the bootstrap user must have the SUPERUSER attribute") -- there must always
+        # be at least one true superuser, so demoting alphagasiq_test in place isn't an
+        # option. Instead, create a second, ordinary role for the actual test
+        # connection and grant it what schema setup needs: GRANT on the database plus
+        # CREATE on the public schema (PG15+ no longer grants that to PUBLIC by
+        # default). It creates its own tables via init_schema(), so it owns them --
+        # ownership, not superuser status, is what apply_row_level_security() needs to
+        # ALTER TABLE/CREATE POLICY on them.
+        env:
+          PGPASSWORD: alphagasiq_test
+        run: |
+          psql -h 127.0.0.1 -U alphagasiq_test -d alphagasiq_test -c "
+            CREATE ROLE alphagasiq_rls_test WITH LOGIN PASSWORD 'alphagasiq_rls_test' NOSUPERUSER NOBYPASSRLS;
+            GRANT ALL PRIVILEGES ON DATABASE alphagasiq_test TO alphagasiq_rls_test;
+            GRANT ALL PRIVILEGES ON SCHEMA public TO alphagasiq_rls_test;
+          "
+
+      - name: Run full test suite
+        run: pytest
+
+  frontend-build:
+    name: Frontend build (next build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build (includes TypeScript type-checking)
+        run: npm run build

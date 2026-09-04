@@ -1,0 +1,44 @@
+from __future__ import annotations
+
+from config import get_settings
+from data_sdk import ProviderRegistry
+
+from .providers.eia import EIAProvider
+from .providers.iso_rto import ISORTOProvider
+from .providers.mock_market_data import MockCMEProvider, MockICEProvider
+from .providers.mock_news import MockNewsProvider
+from .providers.nhc import TropicalWeatherConnector
+from .providers.noaa import NOAAProvider
+from .providers.rss_news import RSSNewsProvider
+from .providers.sec_edgar import SECEdgarProvider
+from .providers.stubs import ALL_STUBS
+
+
+def build_default_registry() -> ProviderRegistry:
+    """Wires up every provider the platform knows about.
+
+    LICENSED/paid connectors (CME, ICE) default to their `Mock*Provider` unless the
+    operator has explicitly opted out via settings — this is what lets
+    `docker compose up` run the full dashboard with zero commercial subscriptions.
+    """
+    settings = get_settings()
+    registry = ProviderRegistry()
+
+    registry.register(EIAProvider(api_key=settings.eia_api_key))
+    registry.register(NOAAProvider(contact_token=settings.noaa_api_token))
+    registry.register(ISORTOProvider(api_key=settings.eia_api_key))
+    registry.register(TropicalWeatherConnector())
+    registry.register(SECEdgarProvider(contact_email=settings.sec_edgar_contact_email))
+    registry.register(RSSNewsProvider(feed_urls=[]))
+
+    if settings.use_mock_market_data:
+        registry.register(MockCMEProvider())
+        registry.register(MockICEProvider())
+
+    if settings.use_mock_news:
+        registry.register(MockNewsProvider())
+
+    for stub in ALL_STUBS:
+        registry.register(stub)
+
+    return registry

@@ -1,0 +1,33 @@
+[project]
+name = "alphagasiq-api"
+version = "0.1.0"
+description = "AlphaGasIQ FastAPI gateway: auth, REST, WebSocket"
+requires-python = ">=3.11"
+dependencies = [
+  "alphagasiq-schemas",
+  "alphagasiq-config",
+  "alphagasiq-db",
+  "alphagasiq-data-sdk",
+  "alphagasiq-agent-sdk",
+  "alphagasiq-service-data",
+  "alphagasiq-service-fundamentals",
+  "alphagasiq-service-agents",
+  "alphagasiq-service-quant",
+  "alphagasiq-service-risk",
+  "alphagasiq-service-paper-execution",
+  "alphagasiq-service-alpha",
+  "alphagasiq-service-enterprise-data",
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.29",
+  "pyjwt[crypto]>=2.8",
+  "httpx>=0.27",
+  "pydantic[email]>=2.6",
+  "sentry-sdk>=2.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["api_app*"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"

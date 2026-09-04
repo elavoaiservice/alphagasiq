@@ -1,0 +1,18 @@
+[project]
+name = "alphagasiq-service-agents"
+version = "0.1.0"
+description = "The multi-agent trading organization: Chief Trading Agent and every specialist agent"
+requires-python = ">=3.11"
+dependencies = [
+  "alphagasiq-schemas",
+  "alphagasiq-agent-sdk",
+  "alphagasiq-service-fundamentals",
+  "alphagasiq-service-quant",
+]
+
+[tool.setuptools.packages.find]
+include = ["agents_service*"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
