@@ -557,6 +557,32 @@ class LlmUsageRow(Base):
     label: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
+class DeployLogRow(Base):
+    """One record per build that has actually served traffic, written once on API
+    startup (`AppState.record_running_deploy`) the first time a given
+    `commit_sha` is seen.
+
+    This is what lets the admin Changelog say *when* a change went live rather
+    than only when it was committed. Recording it from the app -- not the host
+    upgrade script -- means the timestamp is "when this code began serving",
+    which is the fact an operator actually wants, and it needs no cooperation
+    from the deploy tooling.
+
+    `commit_sha` is unique: restarting the same build must not add a second row,
+    or a redeploy would look like a new release.
+    """
+
+    __tablename__ = "deploy_log"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    commit_sha: Mapped[str] = mapped_column(String(40), nullable=False, unique=True, index=True)
+    deployed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    environment: Mapped[str] = mapped_column(String, nullable=False)
+    branch: Mapped[str | None] = mapped_column(String, nullable=True)
+    subject: Mapped[str | None] = mapped_column(String, nullable=True)
+    built_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class AuditEventRow(Base):
     """Append-only audit trail (spec §55, `docs/agent-governance.md` §7 /
     `docs/access-model.md` §1) for sensitive actions across the platform: agent

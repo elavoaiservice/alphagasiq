@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
+import { useLiveRefetch } from "@/lib/live-events-context";
 
 interface ConsensusWeight {
   agent_type: string;
@@ -147,7 +148,7 @@ export function ConsensusTable() {
   const [selected, setSelected] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     if (!token) return;
     apiGet<ConsensusView[]>("/alpha/consensus?since_hours=24", token)
       .then(setViews)
@@ -155,6 +156,10 @@ export function ConsensusTable() {
         setMessage("Unable to load AlphaConsensus data — this requires the 'alpha_consensus.view' permission.")
       );
   }, [token]);
+
+  useEffect(load, [load]);
+  // Agent consensus shifting is exactly the kind of change an operator wants pushed.
+  useLiveRefetch(["CONSENSUS_UPDATED", "CONSENSUS_DIVERGENCE_DETECTED"], load);
 
   if (message) return <p className="text-xs text-terminal-bear">{message}</p>;
   if (!views) return <p className="text-xs text-terminal-muted">Loading…</p>;

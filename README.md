@@ -768,3 +768,58 @@ the failure mode it cannot otherwise catch is a fix pushed to a *different* bran
 this host pulls — no rebuild will ever bring that in. `UPGRADE_REPO`/`UPGRADE_BRANCH`/
 `GITHUB_TOKEN` are configurable from the Configuration page ("Upgrade" group); the repo is
 public today, so the token is only a rate-limit lever.
+
+**Changelog**: `/platform/admin/changelog` is a searchable, day-grouped feed of every
+change shipped to the platform — a port of ElavoAI's admin Changelog tab, keeping its
+conventional-commit classification (`feat`/`fix`/`docs`/… with scope and BREAKING badges),
+keyword search across subject/body/scope/sha/file-paths, Central-Time day grouping, and
+its "Not deployed" marker. **Where the history comes from differs, deliberately.** ElavoAI
+shells out to `git log` because its server runs inside the repo; this API runs in a
+container with no `.git` and no git binary, so `infrastructure/docker/build_stamp.py` bakes
+the history into `/app/changelog.json` at image-build time. That is the stronger guarantee —
+the feed describes exactly the code that is running, not whatever the host happens to have
+checked out. Commits pushed *after* the build are fetched from GitHub and marked
+`deploy_pending`, which is precisely ElavoAI's `deployPending`. Deploy *times* come from a
+new `deploy_log` table written once per build on startup (`AppState` records the running
+commit the first time it serves), so "when did this go live" is answered by when the code
+actually began serving rather than by trusting the deploy script to report it. Gated by
+`admin.dashboard` — any admin, not only a SUPER_ADMIN. `api_app/changelog.py` is pure below
+`load_baked_commits()`, so classification, search, deploy-mapping and grouping are tested
+without a repo, a container or a network.
+
+**Real ICE Dutch TTF, so the relative-value engine runs on two real legs.**
+`YahooTTFProvider` (`providers/ice_yahoo.py`, provider id `ice_live`) replaces
+`MockICEProvider` when `USE_MOCK_MARKET_DATA` is off, completing what the Henry Hub
+connector started — the HH-TTF netback was previously computed from one real price and one
+simulated one, which is more misleading than two simulated ones. TTF needed more than a
+symbol swap: it is quoted in **EUR/MWh** while every consumer here works in **USD/MMBtu**,
+so the provider fetches `EURUSD=X` in the same pass and converts via
+`(EUR/MWh × USD-per-EUR) / 3.412142`. Publishing the raw number into a USD/MMBtu field
+would have corrupted the netback by ~3.4× the FX rate, invisibly. **If the FX leg fails the
+whole fetch returns empty** — a TTF price with a guessed rate would be labelled real and be
+wrong — and the raw quote, the exact rate used, and the conversion constant are all recorded
+in `metadata` so any published figure can be audited back to its inputs. The provider also
+refuses to publish if Yahoo ever changes either quoting convention, rather than silently
+mis-converting.
+
+**Refresh cadence, and live push.** Market prices were previously fetched only in `seed()`
+and on config Reload, so a long-running deployment served the same Henry Hub number
+indefinitely while the UI labelled it live. `AppState.refresh_market_data()` is now the one
+path used by boot, Reload, *and* every worker cycle, and the worker runs **two decoupled
+timers**: `MARKET_REFRESH_SECONDS` (default 10, minimum 5) for prices, and
+`WORKER_INTERVAL_SECONDS` (default 300) for the full research cycle, which runs the whole
+agent organization and costs real Anthropic spend — sharing one timer forced a choice between
+stale prices and burning tokens every minute. The fast pass is deliberately cheap: it fetches
+only the front month plus TTF/FX (3 upstream requests) and splices the new front month into
+the existing curve, because one request per contract at a 10s cadence would be ~4,700 Yahoo
+requests an hour and invite throttling; the full forward curve refreshes on the research
+cadence. Each refresh publishes `MARKET_PRICE_UPDATED`, now forwarded over `GET /ws/events`,
+so open dashboards update the moment new prices land instead of on the next page load. Note
+the ceiling on usefulness: the free Yahoo NYMEX/ICE quotes behind both legs are ~15 minutes
+delayed at source, so polling faster than that re-reads the same number — it makes the
+dashboard feel live without making the data fresher. `useLiveRefetch()`
+(`lib/live-events-context.tsx`) generalises `SignalsTable`'s worked example into a reusable
+hook, now wired into `ForwardCurveChart`, `RiskSummaryCard`, `ImpactsTable`, `ConsensusTable`
+and `OpportunitiesTable`. `MarketIntelGrid` and `RecommendationCard` stay fetch-once because
+they are Server Components with no browser session token — converting them is a separate
+change, not an oversight.

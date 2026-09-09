@@ -503,7 +503,8 @@ class AppState:
         self.market_curve = await cme.fetch(FetchRequest(end=as_of))
         await self._persist_market_observations(self.market_curve)
 
-        ice = self.providers.get("mock_ice")
+        ice_id = "mock_ice" if _get_settings().use_mock_market_data else "ice_live"
+        ice = self.providers.get(ice_id)
         self.ttf_price = await ice.fetch(FetchRequest(end=as_of))
 
         news_provider = self.providers.get("mock_news")
@@ -514,6 +515,86 @@ class AppState:
             await self.refresh_fundamentals_from_public_data()
         except Exception:
             logger.exception("Boot-time fundamentals refresh from public data failed; continuing on seeded/synthetic data")
+
+    async def refresh_market_data(self, *, full: bool = True) -> dict:
+        """Re-fetch the market curve (Henry Hub) and the TTF front-month with the
+        *currently configured* providers.
+
+        Called on boot, on config Reload, and on every worker cycle. Before this
+        existed the curve was fetched only at seed()/Reload, so a deployment left
+        running showed the same Henry Hub price indefinitely -- the number looked
+        live and was not. Both legs are independent: a TTF outage must not stop the
+        Henry Hub refresh, so each is guarded separately and reports its own count.
+
+        `full=False` is the **fast path**, for a short `MARKET_REFRESH_SECONDS`. Only
+        the front month moves meaningfully intraday, and the far curve costs one HTTP
+        request per contract -- a full refresh is ~13 Yahoo requests, so at a 10s
+        cadence that is ~4,700/hour and invites throttling. The fast path fetches the
+        front month only (1 request) and splices it into the existing curve, leaving
+        the deferred months from the last full refresh in place. The worker runs the
+        full refresh on the research cadence.
+        """
+        from config import get_settings as _get_settings
+        from data_sdk import FetchRequest
+
+        use_mock = _get_settings().use_mock_market_data
+        result: dict = {"market_curve": 0, "ttf": 0, "full": full, "errors": []}
+
+        try:
+            cme = self.providers.get("mock_cme" if use_mock else "cme_live")
+            request = FetchRequest() if full else FetchRequest(extra={"n_contracts": 1})
+            curve = await cme.fetch(request)
+            # An empty result means the upstream failed; keep the last good curve
+            # rather than blanking the dashboard.
+            if curve and full:
+                self.market_curve = curve
+                await self._persist_market_observations(curve)
+            elif curve and self.market_curve:
+                # Splice the fresh front month onto the existing curve so the chart
+                # keeps its deferred months instead of collapsing to a single point.
+                self.market_curve = [curve[0], *self.market_curve[1:]]
+                await self._persist_market_observations(curve[:1])
+            elif curve:
+                self.market_curve = curve
+                await self._persist_market_observations(curve)
+            result["market_curve"] = len(curve)
+        except Exception as e:  # noqa: BLE001
+            result["errors"].append(f"market_curve: {type(e).__name__}")
+
+        try:
+            ice = self.providers.get("mock_ice" if use_mock else "ice_live")
+            ttf = await ice.fetch(FetchRequest())
+            if ttf:
+                self.ttf_price = ttf
+            result["ttf"] = len(ttf)
+        except Exception as e:  # noqa: BLE001
+            result["errors"].append(f"ttf: {type(e).__name__}")
+
+        # Push the new prices to any open dashboard over `GET /ws/events`, so the
+        # browser updates the moment a refresh lands instead of on its next poll.
+        # Best-effort: a bus failure must not fail the refresh itself.
+        if result["market_curve"] or result["ttf"]:
+            try:
+                await self.event_bus.publish(
+                    DomainEvent(
+                        event_type=EventType.MARKET_PRICE_UPDATED,
+                        source_service="data_service",
+                        payload={
+                            "front_month": self.market_curve[0].value if self.market_curve else None,
+                            "ttf": self.ttf_price[0].value if self.ttf_price else None,
+                            "unit": "USD_MMBTU",
+                            "simulated": use_mock,
+                            "observed_at": (
+                                self.market_curve[0].observation_time.isoformat()
+                                if self.market_curve else None
+                            ),
+                        },
+                    )
+                )
+            except Exception as e:  # noqa: BLE001
+                result["errors"].append(f"publish: {type(e).__name__}")
+
+        return result
 
     async def refresh_fundamentals_from_public_data(self) -> dict:
         """Phase 1 free-data-feed integration (docs/data-sources.md): fetches EIA

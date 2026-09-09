@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
+import { useLiveRefetch } from "@/lib/live-events-context";
 
 interface ImpactEdge {
   sequence_index: number;
@@ -69,7 +70,7 @@ export function ImpactsTable() {
   const [selected, setSelected] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     if (!token) return;
     apiGet<ImpactAnalysis[]>("/alpha/impacts?since_hours=24", token)
       .then(setImpacts)
@@ -77,6 +78,10 @@ export function ImpactsTable() {
         setMessage("Unable to load AlphaImpact data — this requires the 'alpha_impacts.view' permission.")
       );
   }, [token]);
+
+  useEffect(load, [load]);
+  // A newly-created impact analysis appears without a manual refresh.
+  useLiveRefetch(["IMPACT_ANALYSIS_CREATED", "IMPACT_UPDATED"], load);
 
   if (message) return <p className="text-xs text-terminal-bear">{message}</p>;
   if (!impacts) return <p className="text-xs text-terminal-muted">Loading…</p>;

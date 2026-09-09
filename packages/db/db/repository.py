@@ -44,6 +44,7 @@ from .models import (
     Base,
     ChatConversationRow,
     LlmUsageRow,
+    DeployLogRow,
     ChatMessageRow,
     CommitteeDecisionRow,
     ConsensusViewRow,
@@ -1081,6 +1082,46 @@ class SqlAppRepository:
         async with self.session_factory() as session:
             session.add(LlmUsageRow(model=model or "unknown", input_tokens=it, output_tokens=ot, cost_usd=cost, label=label))
             await session.commit()
+
+    async def record_deploy(
+        self, *, commit_sha: str, environment: str, branch: str | None = None,
+        subject: str | None = None, built_at: datetime | None = None,
+    ) -> bool:
+        """Record that `commit_sha` is now serving. Idempotent -- returns False if
+        this build was already recorded, so a restart is not a new release."""
+        if not commit_sha:
+            return False
+        async with self.session_factory() as session:
+            existing = (
+                await session.execute(select(DeployLogRow).where(DeployLogRow.commit_sha == commit_sha))
+            ).scalar_one_or_none()
+            if existing is not None:
+                return False
+            session.add(DeployLogRow(
+                commit_sha=commit_sha, environment=environment, branch=branch,
+                subject=subject, built_at=built_at,
+            ))
+            await session.commit()
+            return True
+
+    async def list_deploys(self, limit: int = 500) -> list[dict]:
+        """Recorded builds, newest first, as plain dicts for `changelog.attach_deploys`."""
+        async with self.session_factory() as session:
+            rows = (
+                await session.execute(
+                    select(DeployLogRow).order_by(DeployLogRow.deployed_at.desc()).limit(limit)
+                )
+            ).scalars().all()
+        return [
+            {
+                "commit_sha": r.commit_sha,
+                "deployed_at": r.deployed_at.isoformat(),
+                "environment": r.environment,
+                "branch": r.branch,
+                "subject": r.subject,
+            }
+            for r in rows
+        ]
 
     async def llm_usage_summary(self) -> dict:
         async with self.session_factory() as session:

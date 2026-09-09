@@ -25,10 +25,58 @@ logger = logging.getLogger("alphagasiq.worker")
 
 
 async def run_forever() -> None:
-    interval = int(os.environ.get("WORKER_INTERVAL_SECONDS", "300"))
+    """Two cadences, deliberately decoupled.
+
+    Market prices move continuously and are cheap to fetch; the research cycle runs
+    the whole multi-agent organization (LLM calls, quant models) and is expensive in
+    both time and Anthropic spend. Running them on one timer forced a bad trade-off:
+    fast prices meant burning tokens every minute. So `MARKET_REFRESH_SECONDS`
+    (default 10) drives the loop, and the full research cycle runs only once
+    `WORKER_INTERVAL_SECONDS` (default 300) has elapsed.
+
+    The fast pass fetches only the front month plus TTF/FX (3 upstream requests); the
+    full forward curve is refreshed on the research cadence, because one request per
+    contract at a 10s cadence would be ~4,700 Yahoo requests an hour and invite
+    throttling.
+
+    MARKET_REFRESH_SECONDS can go as low as 5. Be aware of the ceiling on usefulness:
+    the free Yahoo NYMEX/ICE quotes behind both legs are ~15 minutes delayed at source,
+    so polling faster than that re-reads the same number -- it makes the dashboard feel
+    live without making the data any fresher. Nothing here can outpace the publisher.
+    """
+    research_interval = int(os.environ.get("WORKER_INTERVAL_SECONDS", "300"))
+    market_interval = max(5, int(os.environ.get("MARKET_REFRESH_SECONDS", "10")))
     state = await get_app_state()
-    logger.info("AlphaGasIQ worker started; research cycle every %ss", interval)
+    logger.info(
+        "AlphaGasIQ worker started; market refresh every %ss, research cycle every %ss",
+        market_interval, research_interval,
+    )
+    # Run the full cycle on the first pass rather than waiting one whole interval.
+    since_research = research_interval
     while True:
+        try:
+            # Market prices used to be fetched only at boot/Reload, so a long-running
+            # deployment served the same Henry Hub number forever while labelling it
+            # live. Refresh both legs (HH + TTF) on the fast cadence.
+            # Fast pass: front month + TTF only. The full curve comes with the
+            # research cycle below.
+            market_summary = await state.refresh_market_data(full=False)
+            logger.info("Market data refresh: %s", market_summary)
+        except Exception:
+            logger.exception("Worker market data refresh failed")
+
+        if since_research < research_interval:
+            since_research += market_interval
+            await asyncio.sleep(market_interval)
+            continue
+        since_research = 0
+
+        try:
+            # Full forward curve, on the slower cadence.
+            logger.info("Market data refresh (full curve): %s", await state.refresh_market_data(full=True))
+        except Exception:
+            logger.exception("Worker full market refresh failed")
+
         try:
             # Phase 1 free-data-feed integration (docs/data-sources.md): refreshes
             # `state.storage_baseline`/`state.weather_kwargs` from real EIA/NOAA data
@@ -95,7 +143,8 @@ async def run_forever() -> None:
         except Exception:
             logger.exception("Worker retention purge cycle failed")
 
-        await asyncio.sleep(interval)
+        since_research += market_interval
+        await asyncio.sleep(market_interval)
 
 
 if __name__ == "__main__":

@@ -97,6 +97,8 @@ services:
       REDIS_URL: redis://redis:6379/0
       KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
       WORKER_INTERVAL_SECONDS: "300"
+      # Market prices refresh far more often than the (LLM-expensive) research cycle.
+      MARKET_REFRESH_SECONDS: "10"
     depends_on:
       postgres:
         condition: service_healthy

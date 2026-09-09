@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { apiGet, apiPost } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
+import { useLiveRefetch } from "@/lib/live-events-context";
 
 interface EnterpriseOpportunity {
   id: string;
@@ -41,6 +42,8 @@ export function OpportunitiesTable() {
   }
 
   useEffect(load, [token]);
+  // Worker-generated opportunities arrive on their own cadence — push, don't poll.
+  useLiveRefetch(["OPPORTUNITY_PROPOSED"], load);
 
   async function generate() {
     if (!token) return;

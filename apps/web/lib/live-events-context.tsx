@@ -130,3 +130,28 @@ export function useLiveEvents(): LiveEventsState {
   if (!ctx) throw new Error("useLiveEvents must be used within LiveEventsProvider");
   return ctx;
 }
+
+/** Re-run `reload` whenever one of `eventTypes` arrives.
+ *
+ * Most dashboard tables want "something changed server-side, fetch again" rather
+ * than SignalsTable's optimistic prepend: the WebSocket payload for a trade
+ * approval or a consensus update is not the same shape as the table's own row, so
+ * refetching is both simpler and guaranteed consistent with the REST view.
+ *
+ * `reload` is kept in a ref, so a caller can pass an inline closure without
+ * resubscribing on every render.
+ */
+export function useLiveRefetch(eventTypes: string[], reload: () => void): void {
+  const { subscribe } = useLiveEvents();
+  const reloadRef = useRef(reload);
+  reloadRef.current = reload;
+  // Join, so a caller passing a fresh array literal each render doesn't resubscribe.
+  const key = eventTypes.join(",");
+
+  useEffect(() => {
+    const wanted = new Set(key.split(",").filter(Boolean));
+    return subscribe((event) => {
+      if (wanted.has(event.event_type)) reloadRef.current();
+    });
+  }, [subscribe, key]);
+}

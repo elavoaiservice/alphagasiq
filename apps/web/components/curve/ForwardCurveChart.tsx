@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { API_BASE } from "@/lib/api-client";
 import { DataSourceBadge } from "@/components/common/DataSourceBadge";
 import { FreshnessTag } from "@/components/status/FreshnessTag";
+import { useLiveRefetch } from "@/lib/live-events-context";
 
 interface CurvePoint {
   symbol: string;
@@ -20,24 +21,23 @@ export function ForwardCurveChart() {
   const [asOf, setAsOf] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
+  const load = useCallback(() => {
     // The path segment is vestigial — the API always returns the single continuous
     // Henry Hub curve and reports the real (month-rolling) M1 symbol in the body.
     fetch(`${API_BASE}/market/curve/front-month`)
       .then((r) => r.json())
       .then((data) => {
-        if (!cancelled) {
-          setPoints(data.points);
-          setInstrument(data.instrument);
-          setAsOf(data.as_of);
-        }
+        setPoints(data.points);
+        setInstrument(data.instrument);
+        setAsOf(data.as_of);
       })
-      .catch(() => !cancelled && setError("Unable to load forward curve"));
-    return () => {
-      cancelled = true;
-    };
+      .catch(() => setError("Unable to load forward curve"));
   }, []);
+
+  useEffect(load, [load]);
+  // The worker refreshes prices on MARKET_REFRESH_SECONDS and publishes
+  // MARKET_PRICE_UPDATED; redraw as soon as that lands rather than on a reload.
+  useLiveRefetch(["MARKET_PRICE_UPDATED"], load);
 
   const classification = points?.[0]?.classification;
 

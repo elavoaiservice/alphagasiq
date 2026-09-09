@@ -40,6 +40,13 @@ _CACHE_TTL_SECONDS = 60.0
 
 _remote_cache: tuple[float, dict[str, Any]] | None = None
 
+# The commit list between two fixed shas can never change, so this is memoized
+# outright rather than on a TTL. It matters: the Upgrade page polls /version every
+# few seconds, and without this every poll issued a fresh `compare` call — enough to
+# exhaust GitHub's 60-requests/hour anonymous budget within minutes.
+_compare_cache: dict[tuple[str, str], list[dict[str, Any]]] = {}
+_COMPARE_CACHE_MAX = 64
+
 
 def _read_json(path: str) -> dict[str, Any]:
     try:
@@ -128,6 +135,9 @@ async def incoming_commits(base_sha: str, head_sha: str, *, limit: int = 25) -> 
     Returns [] on any failure; the caller shows counts from the shas instead."""
     if not base_sha or not head_sha or base_sha == head_sha:
         return []
+    cached = _compare_cache.get((base_sha, head_sha))
+    if cached is not None:
+        return cached[:limit]
     settings = get_settings()
     url = f"{_GITHUB_API}/repos/{settings.upgrade_repo}/compare/{base_sha}...{head_sha}"
     try:
@@ -141,6 +151,9 @@ async def incoming_commits(base_sha: str, head_sha: str, *, limit: int = 25) -> 
     out = [
         {
             "sha": _short(c.get("sha")),
+            # Full sha too: the changelog matches commits by identity, and a
+            # 7-char prefix is not a safe key to do that with.
+            "full_sha": c.get("sha"),
             "subject": ((c.get("commit") or {}).get("message") or "").split("\n")[0],
             "author": ((c.get("commit") or {}).get("author") or {}).get("name"),
             "committed_at": ((c.get("commit") or {}).get("author") or {}).get("date"),
@@ -148,6 +161,9 @@ async def incoming_commits(base_sha: str, head_sha: str, *, limit: int = 25) -> 
         for c in commits
     ]
     out.reverse()  # GitHub returns oldest-first
+    if len(_compare_cache) >= _COMPARE_CACHE_MAX:
+        _compare_cache.clear()  # bounded; the pair keys churn as HEAD moves
+    _compare_cache[(base_sha, head_sha)] = out
     return out[:limit]
 
 

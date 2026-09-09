@@ -34,6 +34,12 @@ logger = logging.getLogger("alphagasiq.ws")
 # list also includes internal ingestion/forecast events no dashboard page renders
 # directly -- forwarding those too would just be noise on every connection).
 DASHBOARD_EVENT_TYPES = (
+    # Market prices refresh on the worker's fast cadence (MARKET_REFRESH_SECONDS);
+    # forwarding them is what makes the dashboard's price panels update live rather
+    # than only on a page load.
+    EventType.MARKET_PRICE_UPDATED,
+    EventType.IMPACT_ANALYSIS_CREATED,
+    EventType.CONSENSUS_UPDATED,
     EventType.SIGNAL_DETECTED,
     EventType.SIGNAL_ESCALATED,
     EventType.TRADE_IDEA_CREATED,

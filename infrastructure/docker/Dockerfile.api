@@ -12,21 +12,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /stamp
 COPY .git /stamp/.git
-# NUL-separated so a commit subject containing quotes/backslashes cannot break the
-# JSON -- Python does the escaping, not git's format string.
-RUN git -c safe.directory='*' --git-dir=/stamp/.git log -1 \
-      --pretty=format:'%H%x00%s%x00%an%x00%cI' > /stamp/commit.raw \
-    && git -c safe.directory='*' --git-dir=/stamp/.git rev-parse --abbrev-ref HEAD > /stamp/branch.txt \
-    && python3 -c "\
-import json, datetime; \
-commit, subject, author, committed_at = open('/stamp/commit.raw').read().split(chr(0)); \
-branch = open('/stamp/branch.txt').read().strip(); \
-json.dump({'commit': commit, 'subject': subject, 'author': author, \
-           'committed_at': committed_at, \
-           'branch': None if branch == 'HEAD' else branch, \
-           'built_at': datetime.datetime.now(datetime.timezone.utc).isoformat()}, \
-          open('/stamp/build-info.json', 'w'))" \
-    && cat /stamp/build-info.json
+COPY infrastructure/docker/build_stamp.py /stamp/build_stamp.py
+RUN python3 /stamp/build_stamp.py /stamp/.git /stamp
 
 FROM python:3.11-slim AS base
 
@@ -59,9 +46,11 @@ RUN pip install --upgrade pip && pip install \
     -e services/enterprise_data \
     -e apps/api
 
-# Read at runtime by `api_app/version.py` as the "Running" version. Copied last so
-# a new commit does not invalidate the (expensive) pip-install layer above.
+# Read at runtime by `api_app/version.py` ("Running" version) and
+# `api_app/changelog.py` (the admin Changelog feed). Copied last so a new commit
+# does not invalidate the (expensive) pip-install layer above.
 COPY --from=gitstamp /stamp/build-info.json /app/build-info.json
+COPY --from=gitstamp /stamp/changelog.json /app/changelog.json
 
 EXPOSE 8000
 CMD ["uvicorn", "api_app.main:app", "--host", "0.0.0.0", "--port", "8000"]

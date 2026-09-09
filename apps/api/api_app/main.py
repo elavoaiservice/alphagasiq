@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from datetime import datetime
 
 from config import Settings, branding, get_settings
 from fastapi import FastAPI
@@ -18,6 +19,7 @@ from .routers import (
     admin_governance,
     admin_models,
     admin_token_usage,
+    admin_changelog,
     admin_upgrade,
     admin_users,
     admin_workspaces,
@@ -51,6 +53,31 @@ async def _lifespan(app: FastAPI):
     try:
         from . import config_store
         await config_store.reload_runtime(state)
+    except Exception:  # noqa: BLE001
+        pass
+    # Record that this build is now serving, so the admin Changelog can say when
+    # each change went live rather than only when it was committed. Idempotent
+    # per commit sha, so a restart is not logged as a new release. Best-effort:
+    # a deploy-log failure must never stop the API from booting.
+    try:
+        from .version import build_info
+
+        info = build_info()
+        if info.get("commit"):
+            built_at = None
+            raw_built = info.get("built_at")
+            if raw_built:
+                try:
+                    built_at = datetime.fromisoformat(raw_built).replace(tzinfo=None)
+                except ValueError:
+                    built_at = None
+            await state.repo.record_deploy(
+                commit_sha=info["commit"],
+                environment=get_settings().environment,
+                branch=info.get("branch"),
+                subject=info.get("subject"),
+                built_at=built_at,
+            )
     except Exception:  # noqa: BLE001
         pass
     yield
@@ -123,6 +150,7 @@ def create_app() -> FastAPI:
         admin_users.router,
         admin_config.router,
         admin_token_usage.router,
+        admin_changelog.router,
         admin_upgrade.router,
         admin_console.router,
         admin_data_feeds.router,

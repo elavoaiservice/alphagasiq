@@ -336,3 +336,43 @@ json.dump({'commit': c, 'subject': s, 'author': a, 'committed_at': d},
 ```
 
 Without it the panel simply omits that row — `Current` vs `Remote` still work.
+
+### 13.2 Changelog
+
+`/platform/admin/changelog` lists every change shipped to the platform, grouped by
+day, searchable, with the deploy time each change went live. It needs no host
+cooperation:
+
+- **History** is baked into the image by the same `gitstamp` stage
+  (`infrastructure/docker/build_stamp.py` → `/app/changelog.json`), so the feed
+  describes exactly the code that is running. Commits pushed after the build are
+  fetched from GitHub and shown as **Not deployed**.
+- **Deploy times** come from the `deploy_log` table, written once per build on API
+  startup the first time that commit serves. A restart does not create a new row,
+  so a redeploy of the same build is not logged as a release.
+
+Both mean a rebuild is required for new commits to appear as deployed — which is
+the same rule the Upgrade page's Current/Remote panel enforces.
+
+---
+
+## 14. Refresh cadence
+
+The worker runs two independent timers (`apps/api/api_app/worker.py`):
+
+| Setting | Default | Drives |
+|---|---|---|
+| `MARKET_REFRESH_SECONDS` | `10` (min 5) | Henry Hub front month + TTF, pushed to open dashboards over the WebSocket |
+| `WORKER_INTERVAL_SECONDS` | `300` | Full research cycle (every agent + LLM calls) **and** the full forward curve |
+
+They are separate because the research cycle costs real Anthropic spend — putting
+prices on that timer would mean either stale prices or burning tokens every minute.
+
+The fast pass costs 3 upstream requests (front month, TTF, EUR/USD). The full
+forward curve is one request per contract, so it deliberately stays on the slower
+timer; at a 10s cadence it would be ~4,700 Yahoo requests an hour.
+
+⚠️ **A faster cadence does not mean fresher data.** The free Yahoo NYMEX/ICE quotes
+are ~15 minutes delayed at source. Polling every 10s re-reads the same number ~90
+times before it changes — it makes the dashboard feel live without being any more
+current. Genuinely real-time prices need a paid CME/ICE market-data subscription.

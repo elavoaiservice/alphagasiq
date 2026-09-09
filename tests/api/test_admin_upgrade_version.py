@@ -201,3 +201,44 @@ async def test_incoming_commits_short_circuits_on_equal_shas():
 
     assert await v.incoming_commits("a" * 40, "a" * 40) == []
     assert await v.incoming_commits("", "b" * 40) == []
+
+
+@pytest.mark.asyncio
+async def test_incoming_commits_is_memoized_per_sha_pair(monkeypatch):
+    """The Upgrade page polls every few seconds; without memoization each poll
+    issued a fresh GitHub `compare`, exhausting the 60/hour anonymous budget."""
+    from api_app import version as v
+
+    v._compare_cache.clear()
+    calls = {"n": 0}
+
+    class _Resp:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"commits": [{"sha": "d" * 40, "commit": {"message": "feat: x", "author": {"name": "A"}}}]}
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, *a, **kw):
+            calls["n"] += 1
+            return _Resp()
+
+    monkeypatch.setattr(v.httpx, "AsyncClient", lambda **kw: _Client())
+
+    first = await v.incoming_commits("a" * 40, "b" * 40)
+    second = await v.incoming_commits("a" * 40, "b" * 40)
+
+    assert first == second
+    assert calls["n"] == 1, "second call must be served from the memo, not GitHub"
+
+    # A different pair is a genuine cache miss.
+    await v.incoming_commits("a" * 40, "c" * 40)
+    assert calls["n"] == 2
+    v._compare_cache.clear()

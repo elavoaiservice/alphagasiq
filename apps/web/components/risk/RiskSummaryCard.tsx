@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
+import { useLiveRefetch } from "@/lib/live-events-context";
 
 interface PortfolioRisk {
   gross_exposure: number;
@@ -19,7 +20,7 @@ export function RiskSummaryCard() {
   const { token } = useAuth();
   const [risk, setRisk] = useState<PortfolioRisk | null>(null);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     // Risk Analytics requires the `risk_analytics` feature entitlement as of
     // Milestone 5 (docs/access-model.md §5) -- without a session token there is
     // nothing to fetch, so this stays a client component (a Server Component has no
@@ -32,6 +33,14 @@ export function RiskSummaryCard() {
       .then(setRisk)
       .catch(() => setRisk(null));
   }, [token]);
+
+  useEffect(load, [load]);
+  // Risk is a function of positions and prices — refetch when either moves, and
+  // immediately on a breach, which is the case an operator must not miss.
+  useLiveRefetch(
+    ["RISK_LIMIT_BREACHED", "POSITION_UPDATED", "TRADE_APPROVED", "MARKET_PRICE_UPDATED"],
+    load,
+  );
 
   if (!token) {
     return (
