@@ -121,6 +121,17 @@ class Settings(BaseSettings):
     sentry_traces_sample_rate: float = 0.0
     log_level: str = "INFO"
 
+    # Admin Upgrade page version panel (`apps/api/api_app/version.py`): which repo
+    # and branch an upgrade pulls from. `upgrade_branch` unset means "the branch
+    # this image was built from" (stamped into build-info.json), so a deployment
+    # tracking a feature branch reports against that branch, not always `main`.
+    # `github_token` is optional -- the repo is public today, so the version panel
+    # works unauthenticated; a token only raises GitHub's 60-req/hour anonymous
+    # rate limit, and would become required if the repo were ever made private.
+    upgrade_repo: str = "elavoaiservice/alphagasiq"
+    upgrade_branch: str | None = None
+    github_token: str | None = None
+
 
 @lru_cache
 def get_settings() -> Settings:

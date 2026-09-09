@@ -747,3 +747,24 @@ agent consensus) -- each driver returns `None`, never a fabricated contribution,
 are missing, and the whole result is `INSUFFICIENT_DATA` if every driver is. Exposed at
 `GET /alpha/market-bias` (full breakdown) and summarized on `/market/summary` and a new
 `MarketBiasCard` dashboard panel.
+
+**Upgrade version panel**: the admin Upgrade page (`/platform/admin/upgrade`) previously
+offered a button and a log, with no way to tell what the deployment was actually running.
+`apps/api/api_app/version.py` + `GET /admin/upgrade/version` now report three deliberately
+separate facts, because conflating them caused a real incident (a dependency fix appeared to
+be deployed for days while the running image never contained it). **Current** is the commit the
+*image* was built from — stamped into `/app/build-info.json` by a throwaway `gitstamp` stage in
+`Dockerfile.api`, so it answers "what code is executing", not "what has the host checked out".
+**Remote** is the newest commit on the tracked branch, from the GitHub API
+(`repos/{repo}/commits/{branch}`), cached 60s so polling the page cannot exhaust the anonymous
+rate limit. **Host checkout** is optional (the upgrade agent writes
+`/deploy/checkout-info.json`) and exists only to raise `rebuild_required` when the working tree
+is ahead of the running image — the pull-without-rebuild case. Between Current and Remote,
+`compare/{base}...{head}` lists the incoming commits and the Upgrade button names its target
+("Upgrade to `98aff9a`"), matching the ElavoFishAI version card. Every lookup degrades to
+`unknown`/`error` rather than raising: an unstamped dev run (`uvicorn --reload`) and an
+unreachable GitHub both still render. The panel names the branch it compares against, because
+the failure mode it cannot otherwise catch is a fix pushed to a *different* branch than the one
+this host pulls — no rebuild will ever bring that in. `UPGRADE_REPO`/`UPGRADE_BRANCH`/
+`GITHUB_TOKEN` are configurable from the Configuration page ("Upgrade" group); the repo is
+public today, so the token is only a rate-limit lever.

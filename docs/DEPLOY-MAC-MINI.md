@@ -297,4 +297,42 @@ pull/build failure.
 `launchctl load` it. Creating the trigger file fires the upgrade exactly once.
 
 **4. App** — `routers/admin_upgrade.py` (POST writes the trigger, GET tails the
-log; SUPER_ADMIN-only `admin.system_settings`) + the Upgrade admin page.
+log, `GET /version` reports the version panel; SUPER_ADMIN-only
+`admin.system_settings`) + the Upgrade admin page.
+
+### 13.1 Version panel
+
+The Upgrade page shows **Current** (the commit the running image was built from)
+next to **Remote** (the newest commit on the tracked branch) and lists the
+incoming commits, so an operator can see what an upgrade would actually bring in.
+
+*Current* comes from `/app/build-info.json`, stamped by a throwaway `gitstamp`
+stage in `Dockerfile.api` — it reports what is **executing**, not what the host
+has checked out. That distinction is deliberate: a `git pull` with no rebuild
+leaves old code running, and the panel must not hide that.
+
+*Remote* comes from the GitHub API (`repos/{repo}/commits/{branch}` plus
+`compare/{base}...{head}`), cached 60s. The repo is public, so no token is
+needed; `GITHUB_TOKEN`, `UPGRADE_REPO` and `UPGRADE_BRANCH` are configurable in
+the admin Configuration page under **Upgrade**.
+
+⚠️ **The tracked branch is the whole story.** A fix pushed to a different branch
+than the one this host pulls will never arrive, no matter how many times you
+rebuild. The panel names the branch it is comparing against for exactly this
+reason.
+
+**Optional — surface "pulled but not rebuilt".** If `~/agiq-upgrade.sh` also
+writes the host's checked-out commit into the shared deploy dir, the panel adds a
+*Host checkout* warning whenever the working tree is ahead of the running image.
+Add this to the script after the `git pull`:
+
+```bash
+git -C ~/alphagasiq log -1 --pretty=format:'%H%x00%s%x00%an%x00%cI' > /tmp/agiq-commit.raw
+python3 -c "
+import json
+c, s, a, d = open('/tmp/agiq-commit.raw').read().split(chr(0))
+json.dump({'commit': c, 'subject': s, 'author': a, 'committed_at': d},
+          open('$HOME/agiq-deploy/checkout-info.json', 'w'))"
+```
+
+Without it the panel simply omits that row — `Current` vs `Remote` still work.

@@ -1,5 +1,33 @@
 # AlphaGasIQ API / worker image. Build context is the repo root (see docker-compose.yml)
 # because the API depends on every local package/service in the monorepo.
+
+# Stage 1: stamp the image with the git commit it is being built from, so the admin
+# Upgrade page can report what is *actually running* rather than what the host has
+# checked out (a `git pull` with no rebuild is exactly the case that must be visible).
+# `git` lives only in this throwaway stage -- the runtime image never gets it.
+# Requires `.git` in the build context, which a git clone always has; if it is
+# missing the stamp is simply absent and the panel reports "unknown".
+FROM python:3.11-slim AS gitstamp
+RUN apt-get update && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /stamp
+COPY .git /stamp/.git
+# NUL-separated so a commit subject containing quotes/backslashes cannot break the
+# JSON -- Python does the escaping, not git's format string.
+RUN git -c safe.directory='*' --git-dir=/stamp/.git log -1 \
+      --pretty=format:'%H%x00%s%x00%an%x00%cI' > /stamp/commit.raw \
+    && git -c safe.directory='*' --git-dir=/stamp/.git rev-parse --abbrev-ref HEAD > /stamp/branch.txt \
+    && python3 -c "\
+import json, datetime; \
+commit, subject, author, committed_at = open('/stamp/commit.raw').read().split(chr(0)); \
+branch = open('/stamp/branch.txt').read().strip(); \
+json.dump({'commit': commit, 'subject': subject, 'author': author, \
+           'committed_at': committed_at, \
+           'branch': None if branch == 'HEAD' else branch, \
+           'built_at': datetime.datetime.now(datetime.timezone.utc).isoformat()}, \
+          open('/stamp/build-info.json', 'w'))" \
+    && cat /stamp/build-info.json
+
 FROM python:3.11-slim AS base
 
 WORKDIR /app
@@ -30,6 +58,10 @@ RUN pip install --upgrade pip && pip install \
     -e services/alpha \
     -e services/enterprise_data \
     -e apps/api
+
+# Read at runtime by `api_app/version.py` as the "Running" version. Copied last so
+# a new commit does not invalidate the (expensive) pip-install layer above.
+COPY --from=gitstamp /stamp/build-info.json /app/build-info.json
 
 EXPOSE 8000
 CMD ["uvicorn", "api_app.main:app", "--host", "0.0.0.0", "--port", "8000"]

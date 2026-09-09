@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends
 
 from ..auth import User
 from ..entitlements import require_permission
+from ..version import version_status
 
 router = APIRouter(prefix="/admin/upgrade", tags=["admin-upgrade"])
 
@@ -52,3 +53,14 @@ async def upgrade_status(_admin: User = _RequireSystemSettings) -> dict:
         except OSError:
             log = ""
     return {"configured": configured, "running": running, "log": log}
+
+
+@router.get("/version")
+async def upgrade_version(_admin: User = _RequireSystemSettings) -> dict:
+    """What is running vs. what an upgrade would pull (`api_app/version.py`).
+
+    Read-only and safe to poll: the GitHub lookup behind it is cached for 60s.
+    Never raises on a missing build stamp or an unreachable GitHub — the panel
+    reports "unknown" rather than blocking the Upgrade button.
+    """
+    return await version_status()

@@ -89,6 +89,16 @@ CATALOG: list[ConfigItem] = [
     # ── Storage / monitoring ──
     ConfigItem("SENTRY_DSN", "Sentry DSN", "Monitoring", secret=True, placeholder="optional", restart_required=True),
     ConfigItem("LOG_LEVEL", "Log level", "Monitoring", placeholder="INFO"),
+    # ── Upgrade / version panel ──
+    ConfigItem("UPGRADE_REPO", "Upgrade repo", "Upgrade",
+               placeholder="elavoaiservice/alphagasiq",
+               help="owner/name the Upgrade page checks for new commits."),
+    ConfigItem("UPGRADE_BRANCH", "Upgrade branch", "Upgrade", placeholder="main",
+               help="Branch an upgrade pulls. Blank = the branch this build came from. "
+                    "A fix pushed to a different branch will never reach this deployment."),
+    ConfigItem("GITHUB_TOKEN", "GitHub token", "Upgrade", secret=True, placeholder="optional",
+               help="Only needed if the repo becomes private, or to lift GitHub's "
+                    "60-requests/hour anonymous rate limit."),
     # ── Core (restart required) ──
     ConfigItem("DATABASE_URL", "Database URL", "Core (restart to apply)", secret=True, testable=True, restart_required=True,
                placeholder="postgresql+asyncpg://…"),
