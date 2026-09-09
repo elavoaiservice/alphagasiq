@@ -5,26 +5,29 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
+        // Re-skinned to the ElavoAI look (light, airy, sky-blue on navy). The
+        // `terminal.*` token names are kept so the ~66 existing components pick
+        // up the new palette without per-file edits; only the VALUES changed.
         terminal: {
-          bg: "#0a0e14",
-          panel: "#11161f",
-          border: "#1f2733",
-          text: "#d5dae3",
-          muted: "#7c8798",
-          accent: "#3fb6a8",
-          bull: "#3ecf8e",
-          bear: "#e5534b",
-          warn: "#e0a941",
+          bg: "#f8fbff",      // page background (subtle blue tint)
+          panel: "#ffffff",   // cards / panels
+          border: "#dce7f5",  // pale blue-gray borders
+          text: "#10233f",    // deep navy ink
+          muted: "#5f708a",   // secondary text
+          accent: "#29abe2",  // ElavoAI sky blue
+          bull: "#16a34a",    // up / positive (readable on light)
+          bear: "#dc2626",    // down / negative
+          warn: "#d97706",    // caution amber
         },
-        // Elavo-brand electric blue — used on the public marketing site
-        // (landing/login/contact) to distinguish it from the platform's teal accent.
+        // ElavoAI brand blue.
         elavo: {
-          blue: "#2f6fed",
-          blueLight: "#6b9bff",
-          navy: "#060a12",
+          blue: "#29abe2",
+          blueLight: "#56ccf2",
+          navy: "#10233f",
         },
       },
       fontFamily: {
+        sans: ["Inter", "ui-sans-serif", "system-ui", "-apple-system", "Segoe UI", "sans-serif"],
         mono: ["ui-monospace", "SFMono-Regular", "Menlo", "monospace"],
       },
     },
