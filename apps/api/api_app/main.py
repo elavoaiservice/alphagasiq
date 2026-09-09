@@ -10,6 +10,7 @@ from .logging_config import RequestLoggingMiddleware, configure_logging
 from .routers import (
     admin_agent_versions,
     admin_agents,
+    admin_config,
     admin_console,
     admin_data_feeds,
     admin_data_governance,
@@ -42,6 +43,14 @@ from .state import get_app_state
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     state = await get_app_state()
+    # Apply GUI-managed config overlay (DB → os.environ) + rebuild the data
+    # provider registry so entered settings take effect on boot. Best-effort:
+    # never block startup if the config table isn't ready yet.
+    try:
+        from . import config_store
+        await config_store.reload_runtime(state)
+    except Exception:  # noqa: BLE001
+        pass
     yield
     await state.repo.dispose()
     # Only RedpandaEventBus (EVENT_BUS_IMPL=redpanda) needs an explicit stop — it owns
@@ -110,6 +119,7 @@ def create_app() -> FastAPI:
         chat.router,
         contact.router,
         admin_users.router,
+        admin_config.router,
         admin_console.router,
         admin_data_feeds.router,
         admin_agents.router,

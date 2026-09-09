@@ -1093,3 +1093,17 @@ class EnterpriseOpportunityRow(Base):
     reviewed_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class AppConfigRow(Base):
+    """GUI-managed configuration values (super-admin Configuration page).
+
+    One row per env-var key. Secret values are Fernet-encrypted at rest by
+    `apps/api/api_app/config_store.py` (marked with a `fernet:` prefix); the
+    overlay loader applies these onto os.environ so pydantic Settings reads them.
+    """
+    __tablename__ = "app_config"
+
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    value: Mapped[str] = mapped_column(String, nullable=False, default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
