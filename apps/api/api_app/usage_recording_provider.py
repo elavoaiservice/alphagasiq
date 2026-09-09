@@ -18,6 +18,14 @@ class UsageRecordingLLMProvider(LLMProvider):
         self._repo = repo
         self._label = label
 
+    def __getattr__(self, name: str) -> Any:
+        # Transparent proxy: delegate anything we don't define (e.g. `.model`) to
+        # the wrapped provider. (Only called when normal lookup fails, so the
+        # instance attrs above and `complete` are unaffected.)
+        if name in ("_inner", "_repo", "_label"):
+            raise AttributeError(name)
+        return getattr(self._inner, name)
+
     async def complete(
         self,
         messages: list[LLMMessage],
