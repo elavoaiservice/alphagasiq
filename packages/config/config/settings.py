@@ -87,7 +87,14 @@ class Settings(BaseSettings):
     noaa_api_token: str | None = None
     cme_api_id: str | None = None
     cme_api_secret: str | None = None
+    ice_api_id: str | None = None
+    ice_api_secret: str | None = None
     news_provider_api_key: str | None = None
+    rss_news_feeds: str | None = None  # comma-separated RSS URLs → real (free) news
+    # FERC eLibrary / pipeline EBBs have no stable public JSON API, so their
+    # connectors are stubs. Keys are captured for when a connector is built.
+    ferc_api_key: str | None = None
+    pipeline_ebb_api_key: str | None = None
     # SEC EDGAR requires no API key, only a descriptive contact per its fair-access
     # policy (https://www.sec.gov/os/webmaster-faq#developers) — unlike every other
     # *_api_key setting here, leaving this unset does not disable the connector.

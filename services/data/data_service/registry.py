@@ -29,7 +29,9 @@ def build_default_registry() -> ProviderRegistry:
     registry.register(ISORTOProvider(api_key=settings.eia_api_key))
     registry.register(TropicalWeatherConnector())
     registry.register(SECEdgarProvider(contact_email=settings.sec_edgar_contact_email))
-    registry.register(RSSNewsProvider(feed_urls=[]))
+    # Real free news: comma-separated RSS URLs from RSS_NEWS_FEEDS (set in Configuration).
+    rss_feeds = [u.strip() for u in (settings.rss_news_feeds or "").split(",") if u.strip()]
+    registry.register(RSSNewsProvider(feed_urls=rss_feeds))
 
     if settings.use_mock_market_data:
         registry.register(MockCMEProvider())
