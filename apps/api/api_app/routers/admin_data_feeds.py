@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from ..auth import User
 from ..data_feed_dependencies import full_dependency_map, get_dependencies
 from ..deps import AppStateDep
+from .. import feed_scheduler
 from ..entitlements import require_permission
 
 _quality_service = DataQualityService()
@@ -70,6 +71,17 @@ async def _merge_provider_view(state: AppStateDep, provider_id: str, health, con
         "enabled": config["enabled"],
         "paused": config["paused"],
         "polling_frequency_seconds": config["polling_frequency_seconds"],
+        # What the scheduler will actually do with this feed. `polling_frequency_seconds`
+        # is the operator's setting and may be NULL; `effective_poll_seconds` is the
+        # interval in force (the default for this provider when unset), `None` meaning
+        # the feed is not scheduled at all — the honest stubs, which have nothing to
+        # fetch. `poll_advisory` warns when a setting cannot deliver what it implies.
+        "effective_poll_seconds": feed_scheduler.effective_interval(
+            provider_id, config["polling_frequency_seconds"]
+        ),
+        "last_polled_at": config.get("last_polled_at"),
+        "next_poll_due_at": feed_scheduler.next_due_at(config),
+        "poll_advisory": feed_scheduler.advisory_for(provider_id, config["polling_frequency_seconds"]),
         "freshness_threshold_seconds": config["freshness_threshold_seconds"],
         "priority": config["priority"],
         "fallback_provider_id": config["fallback_provider_id"],
@@ -169,29 +181,31 @@ async def manual_refresh(provider_id: str, state: AppStateDep, _admin: User = _R
     if provider is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Provider not registered")
     started = time.monotonic()
-    try:
-        observations = await provider.fetch(FetchRequest())
-        latency_ms = (time.monotonic() - started) * 1000
-        scores = _quality_service.score_batch(observations)
-        avg_quality_score = sum(scores) / len(scores) if scores else None
-        return await state.repo.record_data_feed_event(
-            provider_id=provider_id,
-            event_type="manual_refresh",
-            status="success",
-            detail=f"Fetched {len(observations)} observation(s).",
-            records_received=len(observations),
-            latency_ms=latency_ms,
-            avg_quality_score=avg_quality_score,
-        )
-    except Exception as exc:  # noqa: BLE001 - feed failures are expected/normal, never a 500
-        latency_ms = (time.monotonic() - started) * 1000
+    # Route the result into the platform rather than fetching and discarding it.
+    # This endpoint used to call `provider.fetch()` and throw the observations away,
+    # logging "Fetched N observation(s)" while nothing on the dashboard changed --
+    # the button reported success without refreshing anything.
+    summary = await state.ingest_from_provider(provider_id)
+    latency_ms = (time.monotonic() - started) * 1000
+
+    if summary.get("error"):
         return await state.repo.record_data_feed_event(
             provider_id=provider_id,
             event_type="manual_refresh",
             status="error",
-            detail=str(exc),
+            detail=summary["error"],
             latency_ms=latency_ms,
         )
+
+    await state.repo.mark_data_feed_polled(provider_id)
+    return await state.repo.record_data_feed_event(
+        provider_id=provider_id,
+        event_type="manual_refresh",
+        status="success",
+        detail=f"Fetched {summary['records']} observation(s); applied to {summary['applied']}.",
+        records_received=summary["records"],
+        latency_ms=latency_ms,
+    )
 
 
 @router.get("/{provider_id}/events")

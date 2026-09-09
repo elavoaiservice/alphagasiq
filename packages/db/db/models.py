@@ -431,6 +431,11 @@ class DataFeedConfigRow(Base):
     notes: Mapped[str | None] = mapped_column(String, nullable=True)
     updated_by: Mapped[str | None] = mapped_column(String, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    # When the scheduler last actually ingested this feed. NULL = never polled since
+    # this table gained a scheduler (`api_app/feed_scheduler.py`), which treats a NULL
+    # as "due now" so a newly-registered feed is picked up on the next tick rather
+    # than waiting a full interval.
+    last_polled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class DataFeedEventRow(Base):

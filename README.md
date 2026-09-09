@@ -823,3 +823,32 @@ hook, now wired into `ForwardCurveChart`, `RiskSummaryCard`, `ImpactsTable`, `Co
 and `OpportunitiesTable`. `MarketIntelGrid` and `RecommendationCard` stay fetch-once because
 they are Server Components with no browser session token — converting them is a separate
 change, not an oversight.
+
+**Per-feed polling actually does something now.** `DataFeedConfigRow` has carried
+`enabled`, `paused` and `polling_frequency_seconds` since Milestone 8 and the admin Data
+Feeds page has always let an operator edit them — but nothing read them. Ingestion was
+hardcoded (EIA/NOAA on the research cycle, the two market feeds on the fast cycle) and
+every other registered feed — NHC, ISO/RTO, SEC EDGAR, RSS news — was never polled at all.
+Changing a frequency in the UI did nothing. Worse, the page's "Trigger Manual Refresh"
+button called `provider.fetch()` and **discarded the observations**, logging "Fetched N
+observation(s)" while nothing on the dashboard changed.
+
+`AppState.ingest_from_provider()` closes the gap by making fetching and *applying* one
+operation: it routes each provider's output to the right place (market curve, TTF, news
+intelligence, EIA storage baseline, NOAA weather kwargs, or the observation store for feeds
+with no derived engine input yet) and returns what it applied. Every caller that wants a
+feed's data to take effect now goes through it — the scheduler, the manual-refresh button,
+and boot. `api_app/feed_scheduler.py` then polls each feed on **its own**
+`polling_frequency_seconds`: `MARKET_REFRESH_SECONDS` is now only the *tick rate* (the
+resolution at which a feed can become due), not the rate any one feed is polled.
+
+Deliberate choices: a NULL frequency means "this feed's default" (set from each upstream's
+real publication cadence — EIA hourly because storage is weekly, NOAA 15 min, market quotes
+10s), never "never poll", so an operator who never opens the page still gets sensible
+behaviour; a provider with no default and no configured value is simply **not scheduled**,
+which is how the honest `NotImplementedProvider` stubs stay unpolled; a failing upstream is
+still stamped `last_polled_at`, so a down provider is not retried on every tick; and a
+frequency far below what an upstream can deliver is **honoured, with an advisory** rather
+than silently clamped — polling EIA every 10s cannot make weekly storage data fresher, and
+the operator should see that rather than be quietly overruled. The admin page now shows the
+interval in force, last polled, and next due.

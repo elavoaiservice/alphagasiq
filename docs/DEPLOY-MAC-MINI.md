@@ -358,11 +358,28 @@ the same rule the Upgrade page's Current/Remote panel enforces.
 
 ## 14. Refresh cadence
 
+Each **data feed** is polled on its own `polling_frequency_seconds` from the
+admin Data Feeds page (`apps/api/api_app/feed_scheduler.py`). Blank = that feed's
+default, taken from how often the upstream really publishes:
+
+| Feed | Default | Why |
+|---|---|---|
+| `cme_live` / `ice_live` | 10s | continuous quotes (though ~15 min delayed on the free feeds) |
+| `noaa_nws` | 15 min | forecasts refresh roughly hourly |
+| `iso_rto_public` | 15 min | ISOs post every 5 min to hourly |
+| `nhc_tropical` | 30 min | advisories are ~6-hourly |
+| `rss_news` | 5 min | fast enough to matter, polite to the publisher |
+| `eia`, `sec_edgar` | 1 hour | EIA storage is weekly (Thu 10:30 ET) |
+| stubs (`ferc_public`, …) | not scheduled | nothing to fetch |
+
+Disabled or paused feeds are skipped. A setting far below what an upstream can
+deliver is honoured, with an advisory shown in the UI — it is not clamped.
+
 The worker runs two independent timers (`apps/api/api_app/worker.py`):
 
 | Setting | Default | Drives |
 |---|---|---|
-| `MARKET_REFRESH_SECONDS` | `10` (min 5) | Henry Hub front month + TTF, pushed to open dashboards over the WebSocket |
+| `MARKET_REFRESH_SECONDS` | `10` (min 5) | The scheduler **tick rate** — how often feeds are checked for being due. Not the rate any one feed is polled. |
 | `WORKER_INTERVAL_SECONDS` | `300` | Full research cycle (every agent + LLM calls) **and** the full forward curve |
 
 They are separate because the research cycle costs real Anthropic spend — putting

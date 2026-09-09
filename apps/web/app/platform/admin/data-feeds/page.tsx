@@ -23,6 +23,10 @@ interface DataFeed {
   enabled: boolean;
   paused: boolean;
   polling_frequency_seconds: number | null;
+  effective_poll_seconds: number | null;
+  last_polled_at: string | null;
+  next_poll_due_at: string | null;
+  poll_advisory: string | null;
   freshness_threshold_seconds: number | null;
   priority: number;
   fallback_provider_id: string | null;
@@ -110,6 +114,13 @@ function EditForm({ feed, token, onSaved }: { feed: DataFeed; token: string; onS
       <label className="flex flex-col gap-1">
         Polling frequency (seconds)
         <input className={inputClass} value={draft.polling_frequency_seconds} onChange={(e) => setDraft((d) => ({ ...d, polling_frequency_seconds: e.target.value }))} />
+        <span className="text-[10px] text-terminal-muted">
+          {feed.effective_poll_seconds === null
+            ? "Not scheduled — this feed is a stub with nothing to fetch."
+            : feed.polling_frequency_seconds === null
+              ? `Blank = this feed's default, ${feed.effective_poll_seconds}s.`
+              : `In force: every ${feed.effective_poll_seconds}s.`}
+        </span>
       </label>
       <label className="flex flex-col gap-1">
         Freshness threshold (seconds)
@@ -228,7 +239,41 @@ function FeedDetail({ feed, token, onChanged }: { feed: DataFeed; token: string;
             {feed.last_successful_ingestion_at ? new Date(feed.last_successful_ingestion_at).toLocaleString() : "never"}
           </div>
         </div>
+        <div>
+          <div className="text-terminal-muted">Polling</div>
+          <div>
+            {feed.effective_poll_seconds === null ? (
+              <span className="text-terminal-muted">not scheduled</span>
+            ) : !feed.enabled ? (
+              <span className="text-terminal-muted">disabled</span>
+            ) : feed.paused ? (
+              <span className="text-terminal-warn">paused</span>
+            ) : (
+              <>every {feed.effective_poll_seconds}s</>
+            )}
+          </div>
+        </div>
+        <div>
+          <div className="text-terminal-muted">Last Polled</div>
+          <div>{feed.last_polled_at ? new Date(feed.last_polled_at).toLocaleString() : "never"}</div>
+        </div>
+        <div>
+          <div className="text-terminal-muted">Next Poll Due</div>
+          <div>
+            {feed.effective_poll_seconds === null || !feed.enabled || feed.paused
+              ? "—"
+              : feed.next_poll_due_at
+                ? new Date(feed.next_poll_due_at).toLocaleString()
+                : "now"}
+          </div>
+        </div>
       </div>
+
+      {feed.poll_advisory && (
+        <div className="rounded border border-terminal-warn/40 bg-terminal-warn/10 p-2 text-[11px] text-terminal-warn">
+          {feed.poll_advisory} The setting is still honoured — this is advice, not a limit.
+        </div>
+      )}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
         <div>

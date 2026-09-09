@@ -596,6 +596,139 @@ class AppState:
 
         return result
 
+    # provider_id -> which live engine input its observations feed. Anything not
+    # listed is persisted as observations only (still real ingestion, just with no
+    # derived engine input yet) -- see `ingest_from_provider`.
+    MARKET_CURVE_PROVIDERS = ("cme_live", "mock_cme")
+    TTF_PROVIDERS = ("ice_live", "mock_ice")
+    NEWS_PROVIDERS = ("rss_news", "mock_news")
+
+    async def ingest_from_provider(self, provider_id: str, *, full: bool = True) -> dict:
+        """Fetch one provider **and route its output into the platform**.
+
+        This exists because fetching and applying were previously separate things:
+        the admin "Trigger Manual Refresh" button called `provider.fetch()` and threw
+        the observations away, logging an event that said "Fetched N observation(s)"
+        while nothing on the dashboard changed. Scheduled polling had the same gap --
+        only EIA/NOAA (via `refresh_fundamentals_from_public_data`) and the two market
+        feeds were ever actually applied, by hardcoded calls that ignored each feed's
+        configuration entirely.
+
+        Every caller that wants a feed's data to *take effect* goes through here: the
+        scheduler (`feed_scheduler.poll_due_feeds`), the admin manual-refresh button,
+        and boot. Returns a summary; never raises -- a feed failure is normal and is
+        reported, not thrown.
+        """
+        summary: dict[str, Any] = {"provider_id": provider_id, "records": 0, "applied": None, "error": None}
+
+        try:
+            provider = self.providers.get(provider_id)
+        except Exception:
+            provider = None
+        if provider is None:
+            summary["error"] = "not registered"
+            return summary
+
+        try:
+            if provider_id in self.MARKET_CURVE_PROVIDERS and not full:
+                request = FetchRequest(extra={"n_contracts": 1})
+            else:
+                request = FetchRequest()
+            drafts = await provider.fetch(request)
+        except Exception as exc:  # noqa: BLE001
+            summary["error"] = f"{type(exc).__name__}: {exc}"
+            return summary
+
+        summary["records"] = len(drafts)
+        if not drafts:
+            # An empty result is an upstream outage, not new data -- never overwrite
+            # good state with nothing.
+            summary["applied"] = "none (empty result)"
+            return summary
+
+        try:
+            if provider_id in self.MARKET_CURVE_PROVIDERS:
+                if full or not self.market_curve:
+                    self.market_curve = drafts
+                    await self._persist_market_observations(drafts)
+                else:
+                    self.market_curve = [drafts[0], *self.market_curve[1:]]
+                    await self._persist_market_observations(drafts[:1])
+                summary["applied"] = "market_curve"
+                await self._publish_market_price_updated()
+
+            elif provider_id in self.TTF_PROVIDERS:
+                self.ttf_price = drafts
+                summary["applied"] = "ttf_price"
+                await self._publish_market_price_updated()
+
+            elif provider_id in self.NEWS_PROVIDERS:
+                await self._run_news_intelligence(drafts)
+                summary["applied"] = "news_events"
+
+            elif provider_id == "eia":
+                await self._persist_scored(drafts)
+                baseline = _derive_storage_baseline(
+                    [d for d in drafts if d.series_id == "EIA.NG.STORAGE.LOWER48"]
+                )
+                if baseline is not None:
+                    self.storage_baseline = baseline
+                    self.storage_baseline_classification = "PUBLIC"
+                    summary["applied"] = "storage_baseline + observations"
+                else:
+                    summary["applied"] = "observations"
+
+            elif provider_id == "noaa_nws":
+                await self._persist_scored(drafts)
+                weather = _derive_weather_kwargs(drafts, previous=self.weather_kwargs)
+                if weather is not None:
+                    self.weather_kwargs = weather
+                    summary["applied"] = "weather_kwargs + observations"
+                else:
+                    summary["applied"] = "observations"
+
+            else:
+                # Real ingestion with no derived engine input yet (NHC, ISO/RTO, SEC
+                # EDGAR). Persisting them is not a no-op: they land in the observation
+                # store with quality scores and lineage like any other feed.
+                await self._persist_scored(drafts)
+                summary["applied"] = "observations"
+        except Exception as exc:  # noqa: BLE001
+            summary["error"] = f"apply failed: {type(exc).__name__}: {exc}"
+
+        return summary
+
+    async def _persist_scored(self, drafts: list[ObservationDraft]) -> None:
+        """Quality-score then persist, the same way the fundamentals refresh does."""
+        scores = self._quality_service.score_batch(drafts)
+        for draft, score in zip(drafts, scores):
+            draft.quality_score = score / 100.0  # ObservationDraft.quality_score is 0-1
+        await self._persist_market_observations(drafts)
+
+    async def _publish_market_price_updated(self) -> None:
+        """Push current prices to open dashboards over `GET /ws/events`. Best-effort:
+        a bus failure must never fail an ingest."""
+        from config import get_settings as _get_settings
+
+        try:
+            await self.event_bus.publish(
+                DomainEvent(
+                    event_type=EventType.MARKET_PRICE_UPDATED,
+                    source_service="data_service",
+                    payload={
+                        "front_month": self.market_curve[0].value if self.market_curve else None,
+                        "ttf": self.ttf_price[0].value if self.ttf_price else None,
+                        "unit": "USD_MMBTU",
+                        "simulated": _get_settings().use_mock_market_data,
+                        "observed_at": (
+                            self.market_curve[0].observation_time.isoformat() if self.market_curve else None
+                        ),
+                    },
+                )
+            )
+        except Exception:  # noqa: BLE001
+            logger.debug("MARKET_PRICE_UPDATED publish failed", exc_info=True)
+
     async def refresh_fundamentals_from_public_data(self) -> dict:
         """Phase 1 free-data-feed integration (docs/data-sources.md): fetches EIA
         (storage, production, consumption by sector, LNG exports, Henry Hub futures

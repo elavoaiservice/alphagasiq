@@ -17,6 +17,7 @@ from datetime import date
 
 from config import get_settings
 
+from . import feed_scheduler
 from .logging_config import configure_logging
 from .state import get_app_state
 
@@ -55,15 +56,16 @@ async def run_forever() -> None:
     since_research = research_interval
     while True:
         try:
-            # Market prices used to be fetched only at boot/Reload, so a long-running
-            # deployment served the same Henry Hub number forever while labelling it
-            # live. Refresh both legs (HH + TTF) on the fast cadence.
-            # Fast pass: front month + TTF only. The full curve comes with the
-            # research cycle below.
-            market_summary = await state.refresh_market_data(full=False)
-            logger.info("Market data refresh: %s", market_summary)
+            # Per-feed scheduling: each registered feed is ingested at its own
+            # configured `polling_frequency_seconds` (admin Data Feeds page), not on
+            # one hardcoded cadence. Feeds that are disabled, paused, or not yet due
+            # are skipped. `MARKET_REFRESH_SECONDS` is the tick rate — the resolution
+            # at which a feed can become due — not the rate any one feed is polled.
+            poll_summary = await feed_scheduler.poll_due_feeds(state)
+            if poll_summary["polled"] or poll_summary["errors"]:
+                logger.info("Feed poll: %s", poll_summary)
         except Exception:
-            logger.exception("Worker market data refresh failed")
+            logger.exception("Worker feed poll failed")
 
         if since_research < research_interval:
             since_research += market_interval
@@ -72,21 +74,13 @@ async def run_forever() -> None:
         since_research = 0
 
         try:
-            # Full forward curve, on the slower cadence.
-            logger.info("Market data refresh (full curve): %s", await state.refresh_market_data(full=True))
+            # The full forward curve on the slower cadence: the scheduler's fast pass
+            # only refreshes the front month, because the deferred months cost one
+            # upstream request each. EIA/NOAA are kept current by the scheduler on
+            # their own intervals, so the research cycle no longer re-fetches them.
+            logger.info("Full forward curve: %s", await state.refresh_market_data(full=True))
         except Exception:
             logger.exception("Worker full market refresh failed")
-
-        try:
-            # Phase 1 free-data-feed integration (docs/data-sources.md): refreshes
-            # `state.storage_baseline`/`state.weather_kwargs` from real EIA/NOAA data
-            # before the research cycle below reads them, so the research cycle
-            # (and AlphaSignal detection inside it) works off the freshest real
-            # figures available, not a stale boot-time snapshot.
-            refresh_summary = await state.refresh_fundamentals_from_public_data()
-            logger.info("Fundamentals refresh: %s", refresh_summary)
-        except Exception:
-            logger.exception("Worker fundamentals refresh failed")
 
         try:
             current_price = state.market_curve[0].value if state.market_curve else 3.0

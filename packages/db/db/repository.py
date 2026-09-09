@@ -517,6 +517,7 @@ def _data_feed_config_to_dict(row: DataFeedConfigRow) -> dict:
         "notes": row.notes,
         "updated_by": row.updated_by,
         "updated_at": row.updated_at,
+        "last_polled_at": row.last_polled_at,
     }
 
 
@@ -1543,7 +1544,22 @@ class SqlAppRepository:
             await session.refresh(row)
         return _data_feed_config_to_dict(row)
 
+    async def mark_data_feed_polled(self, provider_id: str, when: datetime | None = None) -> None:
+        """Stamp a feed's last successful scheduled ingest, so the scheduler can tell
+        when it is next due. Silently ignores an unknown provider — a feed removed
+        from the registry between reading the config and writing the stamp is not an
+        error worth failing a poll cycle over."""
+        async with self.session_factory() as session:
+            row = (
+                await session.execute(select(DataFeedConfigRow).where(DataFeedConfigRow.provider_id == provider_id))
+            ).scalar_one_or_none()
+            if row is None:
+                return
+            row.last_polled_at = when or datetime.utcnow()
+            await session.commit()
+
     async def record_data_feed_event(
+
         self,
         *,
         provider_id: str,
