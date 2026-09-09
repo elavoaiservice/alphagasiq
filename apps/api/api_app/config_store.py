@@ -178,6 +178,18 @@ async def reload_runtime(state) -> dict:
         state.providers = build_default_registry()
     except Exception:
         pass
+    # Re-fetch the market curve with the now-current provider: seed() runs BEFORE
+    # this overlay, so it used the pre-overlay (mock) provider. This makes a change
+    # to USE_MOCK_MARKET_DATA (mock ↔ real Henry Hub) take effect on Reload/boot.
+    try:
+        from data_sdk import FetchRequest
+
+        cme_id = "mock_cme" if get_settings().use_mock_market_data else "cme_live"
+        cme = state.providers.get(cme_id)
+        state.market_curve = await cme.fetch(FetchRequest())
+        await state._persist_market_observations(state.market_curve)
+    except Exception:
+        pass
     restart = [k for k in applied if CATALOG_BY_KEY.get(k) and CATALOG_BY_KEY[k].restart_required]
     return {"applied": applied, "restart_required": restart}
 
