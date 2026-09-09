@@ -6,19 +6,21 @@ export const metadata = { title: "Sign In — AlphaGasIQ" };
 
 export default function LoginPage() {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-elavo-navy px-6 text-white">
-      <div className="w-full max-w-sm">
-        <div className="mb-8 text-center">
-          <Link href="/" className="text-sm font-semibold tracking-tight">
+    <div className="min-h-screen bg-white">
+      <div className="mx-auto flex max-w-md flex-col items-center px-6 py-16">
+        <div className="text-center">
+          <Link href="/" className="text-2xl font-semibold tracking-tight text-terminal-text">
             AlphaGasIQ
           </Link>
-          <div className="mt-2 flex justify-center"><PoweredByElavo tone="dark" /></div>
+          <div className="mt-3 flex justify-center"><PoweredByElavo /></div>
         </div>
-        <div className="rounded border border-white/10 bg-white/[0.02] p-6">
-          <h1 className="text-lg font-semibold">Sign In to AlphaGasIQ</h1>
-          <p className="mt-1 mb-6 text-xs leading-relaxed text-white/50">
-            AlphaGasIQ is a restricted-access platform. Only authorized users may sign in.
-          </p>
+        <div className="mt-10 w-full rounded-[28px] border border-[#c8e6f7] bg-white p-8 shadow-lg">
+          <div className="mb-6 text-center">
+            <h1 className="text-2xl font-semibold tracking-tight text-gray-900">Sign in to AlphaGasIQ</h1>
+            <p className="mt-2 text-sm leading-6 text-gray-600">
+              AlphaGasIQ is a restricted-access platform. Only authorized users may sign in.
+            </p>
+          </div>
           <LoginForm />
         </div>
       </div>

@@ -29,7 +29,7 @@ export function LoginForm() {
   return (
     <form onSubmit={onSubmit} className="space-y-4">
       <div>
-        <label htmlFor="email" className="mb-1.5 block text-xs uppercase tracking-wide text-white/50">
+        <label htmlFor="email" className="mb-1.5 block text-xs uppercase tracking-wide text-gray-500">
           Email
         </label>
         <input
@@ -40,11 +40,11 @@ export function LoginForm() {
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           placeholder="admin@alphagasiq.local"
-          className="w-full rounded border border-white/15 bg-white/[0.03] px-3 py-2.5 text-sm text-white placeholder:text-white/30 focus:border-elavo-blue focus:outline-none"
+          className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 focus:border-elavo-blue focus:outline-none"
         />
       </div>
       <div>
-        <label htmlFor="password" className="mb-1.5 block text-xs uppercase tracking-wide text-white/50">
+        <label htmlFor="password" className="mb-1.5 block text-xs uppercase tracking-wide text-gray-500">
           Password
         </label>
         <input
@@ -55,7 +55,7 @@ export function LoginForm() {
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           placeholder="••••••••"
-          className="w-full rounded border border-white/15 bg-white/[0.03] px-3 py-2.5 text-sm text-white placeholder:text-white/30 focus:border-elavo-blue focus:outline-none"
+          className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 focus:border-elavo-blue focus:outline-none"
         />
       </div>
       {error && <p className="text-xs text-terminal-bear">{error}</p>}
