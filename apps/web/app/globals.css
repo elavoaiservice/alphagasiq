@@ -7,15 +7,23 @@
 }
 
 body {
-  background-color: #f8fbff;
-  color: #10233f;
+  background-color: #f9fafb; /* gray-50 — ElavoAI dashboard page bg */
+  color: #111827;            /* gray-900 — ElavoAI dashboard ink */
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 
-/* ElavoAI-style card: white surface, pale border, rounded, subtle lift. */
+a {
+  color: #1f96c8;
+}
+a:hover {
+  color: #29abe2;
+}
+
+/* Exact ElavoAI dashboard card: white surface, gray-200 border, rounded-2xl,
+   Tailwind shadow-lg. */
 .panel {
-  @apply bg-terminal-panel border border-terminal-border rounded-xl p-4;
-  box-shadow: 0 4px 16px rgba(16, 35, 63, 0.05);
+  @apply bg-terminal-panel border border-terminal-border rounded-2xl p-4;
+  box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
 }
 
 .panel-title {
