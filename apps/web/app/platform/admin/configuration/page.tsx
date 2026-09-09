@@ -122,7 +122,12 @@ export default function ConfigurationPage() {
               <div key={item.key} className="py-2.5">
                 <div className="flex flex-wrap items-center gap-2">
                   <div className="w-56 shrink-0">
-                    <div className="text-xs text-terminal-text">{item.label}</div>
+                    <div className="flex items-center gap-1.5 text-xs text-terminal-text">
+                      {item.label}
+                      {item.has_value
+                        ? <span className="rounded bg-terminal-bull/15 px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-terminal-bull">✓ set</span>
+                        : <span className="rounded bg-terminal-muted/15 px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-terminal-muted">not set</span>}
+                    </div>
                     <div className="font-mono text-[10px] text-terminal-muted">{item.key}{item.restart_required ? " · restart" : ""}</div>
                   </div>
                   {item.kind === "bool" ? (
