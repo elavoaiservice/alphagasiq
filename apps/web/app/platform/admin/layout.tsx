@@ -12,6 +12,7 @@ const NAV = [
   { href: "/platform/admin/settings", label: "System Settings" },
   { href: "/platform/admin/data-feeds", label: "Data Feeds" },
   { href: "/platform/admin/configuration", label: "Configuration" },
+  { href: "/platform/admin/token-usage", label: "Token Usage" },
   { href: "/platform/admin/workspaces", label: "Workspaces" },
   { href: "/platform/admin/enterprise-data", label: "Enterprise Data" },
   { href: "/platform/admin/agents", label: "Agents" },

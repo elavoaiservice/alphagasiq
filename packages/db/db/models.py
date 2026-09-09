@@ -542,6 +542,21 @@ class ModelDefinitionRow(Base):
     approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class LlmUsageRow(Base):
+    """One LLM call's token usage + computed cost, for the admin Token Usage page.
+    Written fire-and-forget after every agent LLM completion."""
+
+    __tablename__ = "llm_usage"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    model: Mapped[str] = mapped_column(String, nullable=False)
+    input_tokens: Mapped[int] = mapped_column(nullable=False, default=0)
+    output_tokens: Mapped[int] = mapped_column(nullable=False, default=0)
+    cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    label: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
 class AuditEventRow(Base):
     """Append-only audit trail (spec §55, `docs/agent-governance.md` §7 /
     `docs/access-model.md` §1) for sensitive actions across the platform: agent

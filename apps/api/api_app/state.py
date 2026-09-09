@@ -192,7 +192,8 @@ class AppState:
             auth = (settings.neo4j_user, settings.neo4j_password) if settings.neo4j_password else None
             self.neo4j_driver = AsyncGraphDatabase.driver(settings.neo4j_uri, auth=auth)
         self.providers: ProviderRegistry = build_default_registry()
-        llm = get_default_llm_provider()
+        from .usage_recording_provider import UsageRecordingLLMProvider
+        llm = UsageRecordingLLMProvider(get_default_llm_provider(), self.repo)
         self.llm = llm
 
         self.chief_trading_agent = ChiefTradingAgent(llm=llm)
@@ -398,7 +399,8 @@ class AppState:
         instance.system_instructions = (production or {}).get("system_instructions") or None
         model_name = (production or {}).get("model_name")
         if model_name:
-            instance.llm = build_llm_provider(model_name)
+            from .usage_recording_provider import UsageRecordingLLMProvider
+            instance.llm = UsageRecordingLLMProvider(build_llm_provider(model_name), self.repo)
         return production is not None
 
     async def _hydrate_from_repo(self) -> None:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from sqlalchemy import select, text
@@ -43,6 +43,7 @@ from .models import (
     AuditEventRow,
     Base,
     ChatConversationRow,
+    LlmUsageRow,
     ChatMessageRow,
     CommitteeDecisionRow,
     ConsensusViewRow,
@@ -1058,6 +1059,55 @@ class SqlAppRepository:
     async def init_schema(self) -> None:
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+
+    # ---- LLM token usage / cost tracking (admin Token Usage page) ----
+    _LLM_PRICING = {  # per 1M tokens: (input, output) USD
+        "claude-opus-4-8": (5.0, 25.0), "claude-opus-4-7": (5.0, 25.0), "claude-opus-4-6": (5.0, 25.0),
+        "claude-sonnet-5": (3.0, 15.0), "claude-sonnet-4-6": (3.0, 15.0),
+        "claude-haiku-4-5": (1.0, 5.0), "claude-fable-5": (10.0, 50.0),
+    }
+
+    def _price(self, model: str) -> tuple[float, float]:
+        m = (model or "").lower()
+        for k, price in self._LLM_PRICING.items():
+            if k in m:
+                return price
+        return (0.0, 0.0)
+
+    async def record_llm_usage(self, model: str, input_tokens: int, output_tokens: int, label: str | None = None) -> None:
+        it, ot = int(input_tokens or 0), int(output_tokens or 0)
+        pin, pout = self._price(model)
+        cost = (it / 1_000_000) * pin + (ot / 1_000_000) * pout
+        async with self.session_factory() as session:
+            session.add(LlmUsageRow(model=model or "unknown", input_tokens=it, output_tokens=ot, cost_usd=cost, label=label))
+            await session.commit()
+
+    async def llm_usage_summary(self) -> dict:
+        async with self.session_factory() as session:
+            rows = (await session.execute(select(LlmUsageRow))).scalars().all()
+        now = datetime.utcnow()
+
+        def agg(since):
+            sel = [r for r in rows if since is None or r.created_at >= since]
+            return {"calls": len(sel), "input_tokens": sum(r.input_tokens for r in sel),
+                    "output_tokens": sum(r.output_tokens for r in sel), "cost_usd": round(sum(r.cost_usd for r in sel), 4)}
+
+        by_model: dict = {}
+        for r in rows:
+            m = by_model.setdefault(r.model, {"calls": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0})
+            m["calls"] += 1
+            m["input_tokens"] += r.input_tokens
+            m["output_tokens"] += r.output_tokens
+            m["cost_usd"] += r.cost_usd
+        for m in by_model.values():
+            m["cost_usd"] = round(m["cost_usd"], 4)
+        return {
+            "today": agg(now.replace(hour=0, minute=0, second=0, microsecond=0)),
+            "last7": agg(now - timedelta(days=7)),
+            "last30": agg(now - timedelta(days=30)),
+            "all": agg(None),
+            "by_model": [{"model": k, **v} for k, v in sorted(by_model.items(), key=lambda x: -x[1]["cost_usd"])],
+        }
 
     async def apply_row_level_security(self) -> None:
         """Enables Postgres Row Level Security on every organization-scoped
