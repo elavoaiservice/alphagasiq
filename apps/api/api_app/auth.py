@@ -11,6 +11,7 @@ based on which login path issued the session JWT.
 """
 
 from __future__ import annotations
+import os
 
 import hashlib
 from datetime import datetime, timedelta, timezone
@@ -26,6 +27,7 @@ from .deps import AppStateDep
 
 
 class Role(str, Enum):
+    SUPER_ADMIN = "SUPER_ADMIN"
     ADMIN = "ADMIN"
     TRADER = "TRADER"
     RISK_MANAGER = "RISK_MANAGER"
@@ -52,19 +54,25 @@ def _hash_password(password: str) -> str:
 _DEV_USERS: dict[str, dict] = {
     "trader@alphagasiq.local": {
         "user_id": "u-trader-1",
-        "password_hash": _hash_password("trader-dev-password"),
+        "password_hash": _hash_password(os.environ.get("DEV_TRADER_PASSWORD", "trader-dev-password")),
         "display_name": "Demo Trader",
         "roles": [Role.TRADER, Role.RESEARCHER, Role.VIEWER],
     },
     "risk@alphagasiq.local": {
         "user_id": "u-risk-1",
-        "password_hash": _hash_password("risk-dev-password"),
+        "password_hash": _hash_password(os.environ.get("DEV_RISK_PASSWORD", "risk-dev-password")),
         "display_name": "Demo Risk Manager",
         "roles": [Role.RISK_MANAGER, Role.VIEWER],
     },
+    "superadmin@alphagasiq.local": {
+        "user_id": "u-superadmin-1",
+        "password_hash": _hash_password(os.environ.get("DEV_SUPERADMIN_PASSWORD", "superadmin-dev-password")),
+        "display_name": "Demo Super Admin",
+        "roles": [Role.SUPER_ADMIN, Role.ADMIN, Role.TRADER, Role.RISK_MANAGER, Role.RESEARCHER, Role.VIEWER],
+    },
     "admin@alphagasiq.local": {
         "user_id": "u-admin-1",
-        "password_hash": _hash_password("admin-dev-password"),
+        "password_hash": _hash_password(os.environ.get("DEV_ADMIN_PASSWORD", "admin-dev-password")),
         "display_name": "Demo Admin",
         "roles": [Role.ADMIN, Role.TRADER, Role.RISK_MANAGER, Role.RESEARCHER, Role.VIEWER],
     },
