@@ -68,7 +68,7 @@ const GOVERNANCE_POINTS = [
 
 export default function LandingPage() {
   return (
-    <div className="min-h-screen bg-elavo-navy text-white">
+    <div className="min-h-screen bg-white text-gray-900">
       <SiteHeader />
       <Hero />
       <PlatformOverview />
@@ -84,22 +84,22 @@ export default function LandingPage() {
 
 function SiteHeader() {
   return (
-    <header className="sticky top-0 z-10 border-b border-white/10 bg-elavo-navy/95 backdrop-blur">
+    <header className="sticky top-0 z-10 border-b border-gray-200 bg-white/90 backdrop-blur">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
         <div className="flex items-baseline gap-2">
           <span className="text-sm font-semibold tracking-tight">AlphaGasIQ</span>
-          <PoweredByElavo tone="dark" />
+          <PoweredByElavo tone="light" />
         </div>
-        <nav className="hidden items-center gap-6 text-xs uppercase tracking-wide text-white/70 md:flex">
+        <nav className="hidden items-center gap-6 text-xs uppercase tracking-wide text-gray-600 md:flex">
           {NAV_LINKS.map((link) => (
-            <Link key={link.href} href={link.href} className="hover:text-elavo-blueLight">
+            <Link key={link.href} href={link.href} className="hover:text-elavo-blue">
               {link.label}
             </Link>
           ))}
         </nav>
         <Link
           href="/login"
-          className="rounded border border-elavo-blue px-3 py-1.5 text-xs font-medium text-elavo-blueLight hover:bg-elavo-blue hover:text-white"
+          className="rounded border border-elavo-blue px-3 py-1.5 text-xs font-medium text-[#1F96C8] hover:bg-elavo-blue hover:text-white"
         >
           Client Login
         </Link>
@@ -110,16 +110,16 @@ function SiteHeader() {
 
 function Hero() {
   return (
-    <section className="relative overflow-hidden border-b border-white/10 px-6 py-24">
+    <section className="relative overflow-hidden border-b border-gray-200 px-6 py-24">
       <NetworkMotif />
       <div className="relative mx-auto max-w-3xl text-center">
-        <p className="mb-4 text-[11px] uppercase tracking-[0.2em] text-elavo-blueLight">
+        <p className="mb-4 text-[11px] uppercase tracking-[0.2em] text-[#1F96C8]">
           Private, invitation-only institutional platform
         </p>
         <h1 className="text-4xl font-semibold leading-tight tracking-tight md:text-5xl">
           Agentic Intelligence for Natural Gas Markets
         </h1>
-        <p className="mx-auto mt-6 max-w-2xl text-sm leading-relaxed text-white/70 md:text-base">
+        <p className="mx-auto mt-6 max-w-2xl text-sm leading-relaxed text-gray-600 md:text-base">
           AlphaGasIQ combines real-time market data, natural gas fundamentals, weather
           intelligence, pipeline information, LNG activity, power markets, news, and
           quantitative models with specialized AI agents to identify and evaluate natural
@@ -129,21 +129,21 @@ function Hero() {
         <div className="mt-10 flex flex-wrap items-center justify-center gap-4">
           <Link
             href="/login"
-            className="rounded bg-elavo-blue px-6 py-2.5 text-sm font-medium text-white hover:bg-elavo-blueLight"
+            className="rounded bg-elavo-blue px-6 py-2.5 text-sm font-medium text-white hover:bg-[#1F96C8]"
           >
             Client Login
           </Link>
           <Link
             href="#platform"
-            className="rounded border border-white/20 px-6 py-2.5 text-sm font-medium text-white/80 hover:border-elavo-blueLight hover:text-elavo-blueLight"
+            className="rounded border border-gray-300 px-6 py-2.5 text-sm font-medium text-gray-700 hover:border-elavo-blue hover:text-elavo-blue"
           >
             Learn More
           </Link>
-          <Link href="/contact" className="text-sm font-medium text-white/50 hover:text-white/80">
+          <Link href="/contact" className="text-sm font-medium text-gray-500 hover:text-gray-700">
             Contact Us
           </Link>
         </div>
-        <p className="mt-8 text-[11px] text-white/40">
+        <p className="mt-8 text-[11px] text-gray-400">
           Platform access is provisioned directly to authorized users and institutional partners.
         </p>
       </div>
@@ -186,7 +186,7 @@ function NetworkMotif() {
 function SectionHeading({ eyebrow, title }: { eyebrow: string; title: string }) {
   return (
     <div className="mb-10 text-center">
-      <p className="text-[11px] uppercase tracking-[0.2em] text-elavo-blueLight">{eyebrow}</p>
+      <p className="text-[11px] uppercase tracking-[0.2em] text-[#1F96C8]">{eyebrow}</p>
       <h2 className="mt-2 text-2xl font-semibold tracking-tight md:text-3xl">{title}</h2>
     </div>
   );
@@ -205,14 +205,14 @@ function PlatformOverview() {
     ["Data lineage and auditability", "Every recommendation traces back to its source data, model version, and reasoning summary."],
   ];
   return (
-    <section id="platform" className="border-b border-white/10 px-6 py-20">
+    <section id="platform" className="border-b border-gray-200 px-6 py-20">
       <div className="mx-auto max-w-5xl">
         <SectionHeading eyebrow="Platform" title="An AI-native natural gas intelligence organization" />
         <div className="grid gap-6 md:grid-cols-3">
           {points.map(([title, body]) => (
-            <div key={title} className="rounded border border-white/10 bg-white/[0.02] p-5">
-              <h3 className="text-sm font-medium text-white">{title}</h3>
-              <p className="mt-2 text-xs leading-relaxed text-white/60">{body}</p>
+            <div key={title} className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+              <h3 className="text-sm font-medium text-gray-900">{title}</h3>
+              <p className="mt-2 text-xs leading-relaxed text-gray-500">{body}</p>
             </div>
           ))}
         </div>
@@ -223,7 +223,7 @@ function PlatformOverview() {
 
 function HowItWorks() {
   return (
-    <section className="border-b border-white/10 px-6 py-20">
+    <section className="border-b border-gray-200 px-6 py-20">
       <div className="mx-auto max-w-2xl">
         <SectionHeading eyebrow="How it works" title="From raw data to an authorized decision" />
         <ol className="relative">
@@ -232,10 +232,10 @@ function HowItWorks() {
               {i < HOW_IT_WORKS.length - 1 && (
                 <span className="absolute left-[15px] top-8 h-full w-px bg-elavo-blue/30" aria-hidden />
               )}
-              <span className="z-[1] flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-elavo-blue bg-elavo-navy text-xs font-medium text-elavo-blueLight">
+              <span className="z-[1] flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-elavo-blue bg-white text-xs font-medium text-[#1F96C8]">
                 {i + 1}
               </span>
-              <span className="pt-1.5 text-sm text-white/80">{step}</span>
+              <span className="pt-1.5 text-sm text-gray-700">{step}</span>
             </li>
           ))}
         </ol>
@@ -246,14 +246,14 @@ function HowItWorks() {
 
 function IntelligenceCoverage() {
   return (
-    <section id="intelligence" className="border-b border-white/10 px-6 py-20">
+    <section id="intelligence" className="border-b border-gray-200 px-6 py-20">
       <div className="mx-auto max-w-5xl">
         <SectionHeading eyebrow="Intelligence coverage" title="Every input that moves the natural gas market" />
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
           {INTELLIGENCE_COVERAGE.map((card) => (
-            <div key={card.title} className="rounded border border-white/10 bg-white/[0.02] p-4">
-              <h3 className="text-xs font-medium uppercase tracking-wide text-elavo-blueLight">{card.title}</h3>
-              <p className="mt-2 text-xs leading-relaxed text-white/60">{card.body}</p>
+            <div key={card.title} className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+              <h3 className="text-xs font-medium uppercase tracking-wide text-[#1F96C8]">{card.title}</h3>
+              <p className="mt-2 text-xs leading-relaxed text-gray-500">{card.body}</p>
             </div>
           ))}
         </div>
@@ -264,14 +264,14 @@ function IntelligenceCoverage() {
 
 function AiOrganization() {
   return (
-    <section id="agents" className="border-b border-white/10 px-6 py-20">
+    <section id="agents" className="border-b border-gray-200 px-6 py-20">
       <div className="mx-auto max-w-4xl">
         <SectionHeading eyebrow="AI trading organization" title="A trading desk, not a chatbot" />
         <div className="grid gap-4 md:grid-cols-2">
           {AI_ORGANIZATION.map((role) => (
-            <div key={role.name} className="rounded border border-white/10 bg-white/[0.02] p-5">
-              <h3 className="text-sm font-medium text-white">{role.name}</h3>
-              <p className="mt-2 text-xs leading-relaxed text-white/60">{role.body}</p>
+            <div key={role.name} className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+              <h3 className="text-sm font-medium text-gray-900">{role.name}</h3>
+              <p className="mt-2 text-xs leading-relaxed text-gray-500">{role.body}</p>
             </div>
           ))}
         </div>
@@ -282,12 +282,12 @@ function AiOrganization() {
 
 function Governance() {
   return (
-    <section id="governance" className="border-b border-white/10 bg-white/[0.02] px-6 py-20">
+    <section id="governance" className="border-b border-gray-200 bg-gray-50 px-6 py-20">
       <div className="mx-auto max-w-3xl">
         <SectionHeading eyebrow="Security & governance" title="Built as a controlled institutional system" />
         <ul className="space-y-3">
           {GOVERNANCE_POINTS.map((point) => (
-            <li key={point} className="flex items-start gap-3 text-sm text-white/75">
+            <li key={point} className="flex items-start gap-3 text-sm text-gray-600">
               <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-elavo-blue" aria-hidden />
               {point}
             </li>
@@ -302,15 +302,13 @@ function About() {
   return (
     <section id="about" className="px-6 py-20">
       <div className="mx-auto max-w-2xl text-center">
-        <p className="mb-4 text-[11px] uppercase tracking-[0.2em] text-elavo-blueLight">About</p>
+        <p className="mb-4 text-[11px] uppercase tracking-[0.2em] text-[#1F96C8]">About</p>
         <div className="mb-6 flex items-center justify-center gap-3">
-          <span className="text-2xl font-semibold text-white sm:text-3xl">Powered by</span>
-          <span className="inline-flex items-center rounded-xl bg-white px-3 py-2">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/elavoai-logo.png" alt="Elavo AI" className="h-8 w-auto sm:h-9" />
-          </span>
+          <span className="text-2xl font-semibold text-gray-900 sm:text-3xl">Powered by</span>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/elavoai-logo.png" alt="Elavo AI" className="h-8 w-auto sm:h-9" />
         </div>
-        <p className="text-sm leading-relaxed text-white/60">
+        <p className="text-sm leading-relaxed text-gray-500">
           AlphaGasIQ is an agentic natural gas intelligence and decision-support platform
           built by Elavo AI. It is a decision-support and paper-trading system — no live
           order routing is enabled. Platform access is provisioned directly to authorized
@@ -323,14 +321,14 @@ function About() {
 
 function SiteFooter() {
   return (
-    <footer className="border-t border-white/10 px-6 py-10">
-      <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 text-[11px] text-white/40 md:flex-row">
+    <footer className="border-t border-gray-200 px-6 py-10">
+      <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 text-[11px] text-gray-400 md:flex-row">
         <span className="inline-flex items-center gap-1.5">
-          &copy; {new Date().getFullYear()} AlphaGasIQ —<PoweredByElavo tone="dark" />
+          &copy; {new Date().getFullYear()} AlphaGasIQ —<PoweredByElavo tone="light" />
         </span>
         <div className="flex items-center gap-6">
-          <Link href="/contact" className="hover:text-white/70">Contact</Link>
-          <Link href="/login" className="hover:text-white/70">Client Login</Link>
+          <Link href="/contact" className="hover:text-gray-600">Contact</Link>
+          <Link href="/login" className="hover:text-gray-600">Client Login</Link>
         </div>
         <span>Decision-support &amp; paper-trading — no live orders are ever routed.</span>
       </div>
