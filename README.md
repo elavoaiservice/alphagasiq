@@ -25,6 +25,69 @@ can override a failed hard risk rule.
 - `docs/access-model.md` — admin-provisioned account lifecycle, magic-link auth, RBAC & entitlements
 - `docs/agent-governance.md` — Agent Control Center, versioning/optimization workflow, Risk Governor boundary (design-only; built out in Milestones 8-10)
 
+## Stack
+
+Versions below are the ones actually declared in the repo (`pyproject.toml` /
+`apps/web/package.json` / `docker-compose.yml`), not aspirational ones.
+
+**Backend — Python 3.11** (`requires-python = ">=3.11"`, `python:3.11-slim` in
+`Dockerfile.api`, `.github/workflows/ci.yml` pins 3.11):
+
+- **FastAPI** `>=0.110` + **Uvicorn[standard]** `>=0.29` — the REST surface and the
+  `GET /ws/events` WebSocket.
+- **Pydantic v2** `>=2.6` + **pydantic-settings** `>=2.2` — `packages/schemas` is the
+  canonical data model; `packages/config` reads every setting from the environment.
+- **SQLAlchemy 2.0** (async) — **asyncpg** `>=0.29` against Postgres, **aiosqlite**
+  `>=0.19` for the default dev DB and the per-test in-memory DB.
+- **PyJWT[crypto]** `>=2.8` — dev-password, magic-link, and OIDC sessions all mint the
+  same JWT (the `sid` claim is what makes a session server-side revocable).
+- **httpx** `>=0.27` — every data connector (EIA, NOAA, NHC, ISO/RTO, SEC EDGAR, Yahoo).
+- **anthropic** `>=0.40` — the Claude agents. Default model `claude-sonnet-5`
+  (`packages/agent-sdk/agent_sdk/anthropic_provider.py`); unset `ANTHROPIC_API_KEY`
+  falls back to the deterministic mock provider.
+- **sentry-sdk** `>=2.0` — imported and initialized only when `SENTRY_DSN` is set.
+
+Per-service additions:
+
+- `services/quant` — **numpy** `>=1.26`, **statsmodels** `>=0.14` (ARIMA/VAR/state-space),
+  **scikit-learn** `>=1.4` (Random Forest), **xgboost** `>=2.0`, **lightgbm** `>=4.0`.
+- `services/enterprise_data` — **boto3** `>=1.34` (S3) and **paramiko** `>=3.4` (SFTP),
+  the two enterprise connectors that are genuinely implemented.
+- `services/fundamentals` — the **neo4j** `>=5.0` driver, for the optional pipeline
+  digital twin.
+- `packages/agent-sdk` — **aiokafka** `>=0.11`, imported only when the event bus is
+  actually `EVENT_BUS_IMPL=redpanda`.
+
+**Frontend — Node 20** (`node:20-slim` in `Dockerfile.web`):
+
+- **Next.js 16.3.3** (App Router) on **React 19.2.8** — upgraded from 14/18.
+- **TypeScript 5.5.3** — `next build` type-checks in CI.
+- **Tailwind CSS 3.4.4** + PostCSS 8.5 + Autoprefixer, carrying the ElavoAI palette.
+- **lightweight-charts 4.1.3** — dynamically imported by `ForwardCurveChart.tsx`; the
+  pipeline map is dependency-free inline SVG, so there is no Mapbox token to provision.
+- No state-management library: one React context (`LiveEventsProvider`) over a shared
+  WebSocket, plus `fetch`.
+
+**Infrastructure** (`docker-compose.yml`):
+
+- **TimescaleDB** `timescale/timescaledb-ha:pg16` — `001_init.sql` creates the extension
+  and three hypertables (`observations`, `weather_demand_impacts`, `market_ticks`).
+  Postgres is also what makes the Row Level Security layer real; SQLite has no equivalent,
+  so the RLS suite skips there.
+- **Redis** `7-alpine` — started, but **nothing reads it yet**. Magic-link rate limiting
+  is an in-process sliding window (`apps/api/api_app/rate_limit.py`); `REDIS_URL` exists
+  for the multi-instance deployment that would need it.
+- **Redpanda** `v24.1.9` (Kafka API) — only used when `EVENT_BUS_IMPL=redpanda`; the
+  default event bus is in-memory.
+- **Neo4j** `5-community` — behind the `neo4j` compose profile, so a plain
+  `docker compose up` never starts it.
+- **CI** — GitHub Actions: pytest (with a `postgres:16` service container backing the
+  live RLS suite) and `next build`.
+
+The backend is a **setuptools monorepo of 14 editable-installed local packages** —
+nothing is published to PyPI, which is why both the Dockerfile and CI install with the
+same explicit `pip install -e ...` ordering.
+
 ## Run it
 
 ```bash
@@ -78,9 +141,9 @@ those tests skip gracefully instead of failing.
 
 ## Repository layout
 
-See `docs/architecture.md` §6. Short version: `/apps` (web, api) · `/services` (data, agents,
-fundamentals, risk, paper-execution, quant, ...) · `/packages` (schemas, agent-sdk, data-sdk, db,
-ui, config) · `/infrastructure` (Docker, DB migrations) · `/docs` · `/tests`.
+See `docs/architecture.md` §6. Short version: `/apps` (web, api) · `/services` (agents, alpha,
+data, enterprise_data, fundamentals, paper-execution, quant, risk) · `/packages` (agent-sdk,
+config, data-sdk, db, schemas) · `/infrastructure` (Docker, DB migrations) · `/docs` · `/tests`.
 
 ## Current implementation status
 
