@@ -20,11 +20,15 @@ RUN pip install --upgrade pip && pip install \
     -e packages/data-sdk \
     -e packages/agent-sdk \
     -e packages/config \
+    -e packages/db \
     -e services/data \
     -e services/fundamentals \
     -e services/risk \
     -e services/paper-execution \
     -e services/agents \
+    -e services/quant \
+    -e services/alpha \
+    -e services/enterprise_data \
     -e apps/api
 
 EXPOSE 8000
