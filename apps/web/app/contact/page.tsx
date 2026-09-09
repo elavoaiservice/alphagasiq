@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ContactForm } from "./ContactForm";
+import { PoweredByElavo } from "@/components/common/PoweredByElavo";
 
 export const metadata = { title: "Contact — AlphaGasIQ" };
 
@@ -11,7 +12,7 @@ export default function ContactPage() {
           <Link href="/" className="text-sm font-semibold tracking-tight">
             AlphaGasIQ
           </Link>
-          <p className="mt-1 text-[10px] text-white/50">Powered by Elavo AI</p>
+          <div className="mt-2 flex justify-center"><PoweredByElavo tone="dark" /></div>
         </div>
         <h1 className="text-center text-2xl font-semibold tracking-tight">Contact Us</h1>
         <p className="mx-auto mt-3 max-w-md text-center text-xs leading-relaxed text-white/50">

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { LoginForm } from "./LoginForm";
+import { PoweredByElavo } from "@/components/common/PoweredByElavo";
 
 export const metadata = { title: "Sign In — AlphaGasIQ" };
 
@@ -11,7 +12,7 @@ export default function LoginPage() {
           <Link href="/" className="text-sm font-semibold tracking-tight">
             AlphaGasIQ
           </Link>
-          <p className="mt-1 text-[10px] text-white/50">Powered by Elavo AI</p>
+          <div className="mt-2 flex justify-center"><PoweredByElavo tone="dark" /></div>
         </div>
         <div className="rounded border border-white/10 bg-white/[0.02] p-6">
           <h1 className="text-lg font-semibold">Sign In to AlphaGasIQ</h1>

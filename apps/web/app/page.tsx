@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { PoweredByElavo } from "@/components/common/PoweredByElavo";
 
 /**
  * Public marketing landing page. Deliberately has no header/sidebar chrome from
@@ -87,7 +88,7 @@ function SiteHeader() {
       <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
         <div className="flex items-baseline gap-2">
           <span className="text-sm font-semibold tracking-tight">AlphaGasIQ</span>
-          <span className="text-[10px] text-white/50">Powered by Elavo AI</span>
+          <PoweredByElavo tone="dark" />
         </div>
         <nav className="hidden items-center gap-6 text-xs uppercase tracking-wide text-white/70 md:flex">
           {NAV_LINKS.map((link) => (
@@ -301,7 +302,14 @@ function About() {
   return (
     <section id="about" className="px-6 py-20">
       <div className="mx-auto max-w-2xl text-center">
-        <SectionHeading eyebrow="About" title="Powered by Elavo AI" />
+        <p className="mb-4 text-[11px] uppercase tracking-[0.2em] text-elavo-blueLight">About</p>
+        <div className="mb-6 flex items-center justify-center gap-3">
+          <span className="text-2xl font-semibold text-white sm:text-3xl">Powered by</span>
+          <span className="inline-flex items-center rounded-xl bg-white px-3 py-2">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/elavoai-logo.png" alt="Elavo AI" className="h-8 w-auto sm:h-9" />
+          </span>
+        </div>
         <p className="text-sm leading-relaxed text-white/60">
           AlphaGasIQ is an agentic natural gas intelligence and decision-support platform
           built by Elavo AI. It is a decision-support and paper-trading system — no live
@@ -317,7 +325,9 @@ function SiteFooter() {
   return (
     <footer className="border-t border-white/10 px-6 py-10">
       <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 text-[11px] text-white/40 md:flex-row">
-        <span>&copy; {new Date().getFullYear()} AlphaGasIQ — Powered by Elavo AI</span>
+        <span className="inline-flex items-center gap-1.5">
+          &copy; {new Date().getFullYear()} AlphaGasIQ —<PoweredByElavo tone="dark" />
+        </span>
         <div className="flex items-center gap-6">
           <Link href="/contact" className="hover:text-white/70">Contact</Link>
           <Link href="/login" className="hover:text-white/70">Client Login</Link>

@@ -8,16 +8,13 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  // Font: match ElavoAI exactly. ElavoAI names Inter first in a system-font
+  // fallback stack but does NOT bundle/load Inter (no next/font, Google Fonts,
+  // or @font-face) — so it renders in the OS UI font. We mirror that stack (in
+  // tailwind `font-sans`) and intentionally do not force-load Inter, so both
+  // apps render identically on the same machine.
   return (
     <html lang="en">
-      <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link
-          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
-          rel="stylesheet"
-        />
-      </head>
       <body className="font-sans">
         <AuthProvider>{children}</AuthProvider>
       </body>

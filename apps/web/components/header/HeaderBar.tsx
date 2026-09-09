@@ -1,6 +1,7 @@
 import { apiGet } from "@/lib/api-client";
 import { DataSourceBadge } from "@/components/common/DataSourceBadge";
 import { AuthWidget } from "@/components/auth/AuthWidget";
+import { PoweredByElavo } from "@/components/common/PoweredByElavo";
 
 interface MarketSummary {
   hh_m1: number;
@@ -49,7 +50,7 @@ export async function HeaderBar() {
       <div className="flex items-center justify-between">
         <div className="flex items-baseline gap-2">
           <span className="font-semibold text-terminal-text tracking-tight">AlphaGasIQ</span>
-          <span className="text-[10px] text-terminal-muted">Powered by Elavo AI</span>
+          <PoweredByElavo />
           {summary && <DataSourceBadge classification={summary.classification} />}
         </div>
         <div className="flex items-center gap-3">
