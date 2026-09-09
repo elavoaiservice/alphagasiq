@@ -264,3 +264,37 @@ docker compose down -v         # stop + delete data
 cloudflared tunnel delete alphagasiq
 ```
 Removing it leaves zero trace on the ElavoAI prod box — it was never there.
+
+---
+
+## 13. Upgrade from the admin portal
+
+A super-admin **Upgrade** page (`/platform/admin/upgrade`) triggers a host-side
+`git pull` + rebuild + restart, with a live log. The API never touches Docker or
+git: it writes a trigger file into a shared `/deploy` volume; a host **launchd**
+agent runs the actual upgrade and streams progress to a log the UI tails.
+
+Requires the Mini's `~/alphagasiq` to be a **git clone** with a repo **deploy
+key** installed (read-only is enough — it only pulls).
+
+**1. Shared deploy dir + volume** — `mkdir -p ~/agiq-deploy`, and mount it into
+the api service in `docker-compose.override.yml`:
+```yaml
+  api:
+    volumes:
+      - /Users/<you>/agiq-deploy:/deploy
+```
+
+**2. Host upgrade script** `~/agiq-upgrade.sh` (chmod +x): sets a homebrew PATH,
+requires `~/agiq-deploy/trigger`, takes `upgrade.lock`, then
+`git pull --ff-only` → `docker compose build` → `docker compose up -d` → health
+check on `:8000/health`, logging each phase to `~/agiq-deploy/status.log` and
+clearing the trigger/lock at the end. Bails (leaving the old build) on any
+pull/build failure.
+
+**3. launchd watcher** `~/Library/LaunchAgents/com.alphagasiq.upgrade.plist` with
+`WatchPaths = [~/agiq-deploy/trigger]` running `/bin/bash ~/agiq-upgrade.sh`;
+`launchctl load` it. Creating the trigger file fires the upgrade exactly once.
+
+**4. App** — `routers/admin_upgrade.py` (POST writes the trigger, GET tails the
+log; SUPER_ADMIN-only `admin.system_settings`) + the Upgrade admin page.

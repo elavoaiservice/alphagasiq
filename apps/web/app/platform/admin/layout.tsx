@@ -19,6 +19,7 @@ const NAV = [
   { href: "/platform/admin/risk-settings", label: "Risk Settings" },
   { href: "/platform/admin/audit-log", label: "Audit Log" },
   { href: "/platform/admin/system-health", label: "System Health" },
+  { href: "/platform/admin/upgrade", label: "Upgrade" },
 ];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
