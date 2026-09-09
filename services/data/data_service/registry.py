@@ -43,4 +43,13 @@ def build_default_registry() -> ProviderRegistry:
     for stub in ALL_STUBS:
         registry.register(stub)
 
+    # Real market data: when the operator turns off mock market data, wire the real
+    # NYMEX Henry Hub futures curve (Yahoo Finance, free/delayed) in place of the
+    # `cme_live` stub, so the dashboard shows real HH M1/M2/strip prices. (ICE/TTF
+    # stays simulated — real TTF is EUR/MWh and needs FX + unit conversion.)
+    if not settings.use_mock_market_data:
+        from .providers.cme_yahoo import YahooHenryHubProvider
+
+        registry.register(YahooHenryHubProvider())
+
     return registry

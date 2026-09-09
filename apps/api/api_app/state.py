@@ -496,7 +496,10 @@ class AppState:
                 )
         self.price_history = generate_price_history(end_date=today, num_days=250)
 
-        cme = self.providers.get("mock_cme")
+        from config import get_settings as _get_settings
+
+        cme_id = "mock_cme" if _get_settings().use_mock_market_data else "cme_live"
+        cme = self.providers.get(cme_id)
         self.market_curve = await cme.fetch(FetchRequest(end=as_of))
         await self._persist_market_observations(self.market_curve)
 
