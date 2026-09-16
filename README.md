@@ -888,3 +888,31 @@ seconds, because fetching the *mock* provider succeeds.
    `config_store.fingerprint()` — a hash of the values *as stored*, so nothing decrypts a
    secret merely to notice one changed — picking up a Configuration-page save without a
    restart, as that page already promises.
+
+**The dashboard showed real prices that were hours old.** The API and the worker are
+separate processes with separate `AppState` objects. The worker fetched prices and
+persisted them; the API only ever fetched at its own boot, and `state.market_curve` is
+a plain in-memory list. In production that meant `GET /market/curve/front-month`
+reporting `as_of 01:55` and `$2.934` while the database held `12:38` and `$2.969` — the
+feeds were genuinely live, the screen was ten hours behind, and nothing in the UI could
+tell the difference because the data was correctly labelled `PUBLIC` either way.
+
+`AppState.rehydrate_market_from_db()` reloads `market_curve`/`ttf_price` from the
+observation store, and `main.py`'s lifespan runs it every `MARKET_REHYDRATE_SECONDS`
+(default 10). It is a database read, not a provider fetch, so it adds no upstream calls
+and cannot hit a vendor rate limit — the worker remains the only process that talks to
+Yahoo. Fixing it at the state layer rather than in the router matters: `mark_price()`,
+`primary_instrument()`, portfolio marks, risk checks and trade entry prices all read
+`market_curve`, so patching `routers/market.py` alone would have left paper trades
+pricing against a stale front month. The curve is re-sorted by `curve_position` on
+reload, because `market_curve[0]` is relied on everywhere to be the front month, and an
+empty query result leaves the existing curve alone — a fresh install must not have its
+seeded curve blanked by an empty store.
+
+The same process split also silently broke live push. `EVENT_BUS_IMPL` defaults to an
+in-memory bus, which is **per-process**: the worker published `MARKET_PRICE_UPDATED`
+into its own bus while the WebSocket that browsers connect to is served by the API
+process, holding a different object entirely. Those events could never arrive. Rather
+than introduce a cross-process broker, the API now re-publishes when a rehydrate cycle
+actually observes a change — it owns the socket, so its own bus is the right one — and
+only on change, so an unchanged cycle doesn't spam connected clients.

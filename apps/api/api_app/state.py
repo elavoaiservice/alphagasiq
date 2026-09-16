@@ -528,6 +528,90 @@ class AppState:
                     "continuing on seeded/synthetic data"
                 )
 
+    async def rehydrate_market_from_db(self) -> dict:
+        """Reload `market_curve`/`ttf_price` from the observation store.
+
+        The API and the worker are separate processes with separate `AppState`
+        objects. The worker fetches prices and persists them; the API only ever
+        fetched at its own boot, so `GET /market/*` served a snapshot that got hours
+        stale while the database held fresh data — real prices, stale on screen.
+
+        This closes that without duplicating upstream calls: it is a database read,
+        not a provider fetch, so running it on a short timer in the API process costs
+        nothing upstream and cannot hit a vendor rate limit. It also fixes every
+        other consumer of `market_curve` at once — `mark_price()`, `primary_instrument()`,
+        portfolio marks, risk checks and trade entry prices all read that list, so
+        patching only the market router would have left those stale.
+
+        Ordering matters: the curve is sorted by its `curve_position` (M1, M2, ...),
+        not by observation time, because `market_curve[0]` is relied on everywhere to
+        be the front month.
+        """
+        result: dict = {"market_curve": 0, "ttf": 0, "errors": []}
+
+        def _as_draft(row: dict) -> ObservationDraft:
+            return ObservationDraft(
+                source=row["source"],
+                source_type=row["source_type"],
+                series_id=row["series_id"],
+                symbol=row["symbol"],
+                commodity=row["commodity"],
+                category=row["category"],
+                sub_category=row["sub_category"],
+                geography=row["geography"],
+                location=row["location"],
+                value=row["value"],
+                unit=row["unit"],
+                observation_time=row["observation_time"],
+                publication_time=row["publication_time"],
+                revision_number=row["revision_number"],
+                quality_score=row["quality_score"],
+                confidence=row["confidence"],
+                metadata=row["metadata"] or {},
+                lineage=row["lineage"] or {},
+            )
+
+        def _position(draft: ObservationDraft) -> int:
+            """M1, M2, ... -> 1, 2, ...; anything unlabelled sorts last."""
+            raw = (draft.metadata or {}).get("curve_position") or ""
+            digits = "".join(c for c in str(raw) if c.isdigit())
+            return int(digits) if digits else 10_000
+
+        def _front(seq) -> tuple | None:
+            return (seq[0].value, seq[0].observation_time) if seq else None
+
+        before = (_front(self.market_curve), _front(self.ttf_price))
+
+        try:
+            rows = await self.repo.latest_observation_per_series(series_prefix="NG.FUT.")
+            if rows:
+                curve = sorted((_as_draft(r) for r in rows), key=_position)
+                self.market_curve = curve
+                result["market_curve"] = len(curve)
+        except Exception as e:  # noqa: BLE001
+            result["errors"].append(f"market_curve: {type(e).__name__}")
+
+        try:
+            rows = await self.repo.latest_observation_per_series(series_prefix="TTF.")
+            if rows:
+                self.ttf_price = [_as_draft(r) for r in rows]
+                result["ttf"] = len(rows)
+        except Exception as e:  # noqa: BLE001
+            result["errors"].append(f"ttf: {type(e).__name__}")
+
+        # Publish only on an actual change, and only from this process's own bus --
+        # which is the point. `EVENT_BUS_IMPL` defaults to an in-memory bus, so the
+        # worker's own MARKET_PRICE_UPDATED never reaches a browser: the WebSocket is
+        # served by the API process, whose bus is a different object entirely. The
+        # API re-publishing what it just observed is what actually makes the
+        # dashboard update live, without needing a cross-process broker.
+        changed = (_front(self.market_curve), _front(self.ttf_price)) != before
+        result["changed"] = changed
+        if changed:
+            await self._publish_market_price_updated()
+
+        return result
+
     async def refresh_market_data(self, *, full: bool = True) -> dict:
         """Re-fetch the market curve (Henry Hub) and the TTF front-month with the
         *currently configured* providers.

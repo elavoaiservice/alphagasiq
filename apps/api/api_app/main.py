@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import logging
+import os
 from contextlib import asynccontextmanager
 from datetime import datetime
 
@@ -44,6 +47,26 @@ from .routers import (
 from .state import get_app_state
 
 
+async def _rehydrate_market_loop(state) -> None:
+    """Reload market state from the DB every `MARKET_REHYDRATE_SECONDS` (default 10).
+
+    Cheap by construction — one indexed query per cycle — and independent of
+    `MARKET_REFRESH_SECONDS`, which governs how often the *worker* goes upstream.
+    Never lets one failure kill the loop: a transient DB error must not leave the
+    dashboard frozen for the life of the process.
+    """
+    interval = max(2, int(os.environ.get("MARKET_REHYDRATE_SECONDS", "10")))
+    logger = logging.getLogger("alphagasiq.api")
+    while True:
+        try:
+            await asyncio.sleep(interval)
+            await state.rehydrate_market_from_db()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            logger.debug("Market rehydrate cycle failed", exc_info=True)
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     state = await get_app_state()
@@ -80,7 +103,19 @@ async def _lifespan(app: FastAPI):
             )
     except Exception:  # noqa: BLE001
         pass
+    # Keep this process's market snapshot current. The worker fetches and persists
+    # prices; without this the API served whatever it fetched at its own boot, so the
+    # dashboard showed real-but-hours-stale numbers while the database was fresh.
+    # A database read, not a provider fetch — no upstream calls, no rate limit.
+    rehydrate_task = asyncio.create_task(_rehydrate_market_loop(state))
+
     yield
+
+    rehydrate_task.cancel()
+    try:
+        await rehydrate_task
+    except (asyncio.CancelledError, Exception):  # noqa: BLE001
+        pass
     await state.repo.dispose()
     # Only RedpandaEventBus (EVENT_BUS_IMPL=redpanda) needs an explicit stop — it owns
     # background consumer tasks and a real network connection; InMemoryEventBus has

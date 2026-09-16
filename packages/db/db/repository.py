@@ -3017,6 +3017,37 @@ class SqlAppRepository:
             rows = (await session.execute(query)).scalars().all()
         return [_market_observation_row_to_dict(r) for r in rows]
 
+    async def latest_observation_per_series(self, *, series_prefix: str, scan_limit: int = 600) -> list[dict]:
+        """The newest current revision of each series whose id starts with
+        `series_prefix` (e.g. "NG.FUT." for the Henry Hub curve).
+
+        Exists so a process can rehydrate market state from the database instead of
+        holding a snapshot taken at its own boot. The API and worker are separate
+        processes with separate `AppState` objects: the worker refreshes prices and
+        persists them, while the API served whatever it had fetched at startup, so
+        the dashboard showed real-but-hours-stale prices. The database is the one
+        thing both processes share.
+
+        Deliberately grouped in Python rather than with `DISTINCT ON`, which is
+        Postgres-only — this repository also runs on SQLite for dev and tests.
+        """
+        query = (
+            select(MarketObservationRow)
+            .where(
+                MarketObservationRow.series_id.like(f"{series_prefix}%"),
+                MarketObservationRow.valid_to.is_(None),
+            )
+            .order_by(MarketObservationRow.observation_time.desc())
+            .limit(scan_limit)
+        )
+        async with self.session_factory() as session:
+            rows = (await session.execute(query)).scalars().all()
+
+        newest: dict[str, MarketObservationRow] = {}
+        for row in rows:  # already newest-first, so the first hit per series wins
+            newest.setdefault(row.series_id, row)
+        return [_market_observation_row_to_dict(r) for r in newest.values()]
+
     async def save_intelligence_brief(self, brief: IntelligenceBrief) -> None:
         row = IntelligenceBriefRow(
             id=str(brief.id),
