@@ -300,6 +300,43 @@ pull/build failure.
 log, `GET /version` reports the version panel; SUPER_ADMIN-only
 `admin.system_settings`) + the Upgrade admin page.
 
+### 13.0 Recovering when the API is down
+
+⚠️ **The Upgrade button cannot fix an API outage.** It is
+`POST /api/v1/admin/upgrade`, served by the very process that is down — so the
+self-serve path is unavailable exactly when it is most needed. This happened on
+2026-09-16: a bad commit crash-looped the api and worker containers, `web` stayed
+up (so the site rendered) and every API call returned 502.
+
+Recover from the host instead. The launchd watcher fires on the trigger file, so
+writing it by hand runs the identical pull → build → restart the button would:
+
+```bash
+ssh mac-mini 'touch ~/agiq-deploy/trigger'      # roll forward to origin/main
+tail -f ~/agiq-deploy/status.log                 # watch it
+```
+
+To roll back instead of forward:
+
+```bash
+ssh mac-mini 'cd ~/alphagasiq && git reset --hard <good-sha> && docker compose up -d --build'
+```
+
+**Health-check caveat.** The script probes `:8000/health` a few seconds after
+`docker compose up -d` returns, which is usually before the API has finished
+booting — it logs `UPGRADE DONE (WARN: health 000)` on deploys that fully
+succeeded. Treat a single `WARN` as inconclusive and check
+`docker compose ps` rather than assuming failure. Replacing the single probe with
+a retry loop removes the false alarm:
+
+```bash
+for i in $(seq 1 30); do
+  code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/health || true)
+  [ "$code" = "200" ] && break
+  sleep 2
+done
+```
+
 ### 13.1 Version panel
 
 The Upgrade page shows **Current** (the commit the running image was built from)

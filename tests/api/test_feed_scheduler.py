@@ -135,9 +135,22 @@ class _Repo:
         self.events.append((provider_id, status))
 
 
+class _AllRegistered:
+    """Stands in for `ProviderRegistry`. These tests are about *scheduling*, so every
+    provider is registered unless a test says otherwise — the not-registered path has
+    its own coverage in tests/api/test_open_items.py."""
+
+    def __init__(self, registered=None):
+        self._registered = registered
+
+    def has(self, provider_id):
+        return True if self._registered is None else provider_id in self._registered
+
+
 class _State:
-    def __init__(self, configs, results=None):
+    def __init__(self, configs, results=None, registered=None):
         self.repo = _Repo(configs)
+        self.providers = _AllRegistered(registered)
         self.ingested: list[tuple[str, bool]] = []
         self._results = results or {}
 

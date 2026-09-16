@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from datetime import datetime, timezone
 from typing import Any
 
@@ -9,14 +11,43 @@ from schemas import DataClassification, Lineage, ObservationDraft
 
 SEC_EDGAR_BASE_URL = "https://data.sec.gov"
 
+logger = logging.getLogger("alphagasiq.sec_edgar")
+
+
+def _names_match(expected: str, actual: str) -> bool:
+    """Loose company-name comparison, for catching a CIK that points at the wrong
+    company. SEC's own casing and suffixes vary ("EQT Corp" vs "EQT Corporation",
+    "WILLIAMS COMPANIES, INC."), so this compares the leading significant word
+    rather than demanding an exact match — enough to catch Norwegian Cruise Line
+    sitting where Williams should be, without rejecting a legitimate rename."""
+    def key(name: str) -> str:
+        cleaned = "".join(c if c.isalnum() or c.isspace() else " " for c in name.lower())
+        for noise in ("inc", "corp", "corporation", "company", "companies", "lp", "ltd", "holdings", "the"):
+            cleaned = cleaned.replace(f" {noise} ", " ")
+        words = cleaned.split()
+        return words[0] if words else ""
+
+    return key(expected) == key(actual)
+
 # Natural-gas-relevant public companies this connector tracks filings for, by CIK
 # (10-digit, zero-padded) -- major LNG/E&P/pipeline names. A real deployment would
 # make this list configurable rather than hardcoded.
+#
+# Every CIK below was verified against SEC's own registry
+# (https://www.sec.gov/files/company_tickers.json) on 2026-09-16. Three of the four
+# original entries were wrong, and only one of them failed loudly: Cheniere's CIK
+# 404'd, while "Williams Companies" actually resolved to Norwegian Cruise Line
+# Holdings and "Kinder Morgan" to Aravive, a biotech. The connector was ingesting
+# cruise-line and pharmaceutical filings into a natural-gas platform under confident
+# pipeline-operator labels. Never hand-write a CIK -- look it up in company_tickers.json
+# and check the `name` that comes back from /submissions matches what you expect.
 TRACKED_COMPANIES: dict[str, str] = {
-    "0000895729": "Cheniere Energy Inc",
-    "0001513761": "Williams Companies Inc",
-    "0001513818": "Kinder Morgan Inc",
-    "0000033213": "EQT Corporation",
+    "0000003570": "Cheniere Energy, Inc.",       # LNG
+    "0000107263": "Williams Companies, Inc.",    # WMB
+    "0001506307": "Kinder Morgan, Inc.",         # KMI
+    "0000033213": "EQT Corp",                    # EQT
+    "0001039684": "ONEOK, Inc.",                 # OKE
+    "0001276187": "Energy Transfer LP",          # ET
 }
 
 # 8-K (material events), 10-K/10-Q (periodic financials) are the filing types most
@@ -72,9 +103,31 @@ class SECEdgarProvider(BaseDataProvider):
         drafts: list[ObservationDraft] = []
         async with (self._client or httpx.AsyncClient(headers=self._headers())) as client:
             for cik in ciks:
-                resp = await client.get(f"{SEC_EDGAR_BASE_URL}/submissions/CIK{cik}.json")
-                resp.raise_for_status()
-                drafts.extend(self.normalize({"cik": cik, "raw": resp.json()}))
+                # Per-CIK isolation: one delisted or mistyped identifier used to
+                # abort the whole batch, so a single bad entry meant zero filings
+                # from any company.
+                try:
+                    resp = await client.get(f"{SEC_EDGAR_BASE_URL}/submissions/CIK{cik}.json")
+                    resp.raise_for_status()
+                    payload = resp.json()
+                except Exception:
+                    logger.warning("SEC EDGAR lookup failed for CIK%s; skipping", cik, exc_info=True)
+                    continue
+
+                # A wrong-but-valid CIK is the dangerous case: it returns 200 with a
+                # different company's filings, which then flow in under the label we
+                # expected. Two of the four original entries did exactly that.
+                expected = TRACKED_COMPANIES.get(cik)
+                actual = payload.get("name")
+                if expected and actual and not _names_match(expected, actual):
+                    logger.error(
+                        "SEC EDGAR CIK%s is %r, not %r — refusing to ingest filings under the "
+                        "wrong company. Verify the CIK in company_tickers.json.",
+                        cik, actual, expected,
+                    )
+                    continue
+
+                drafts.extend(self.normalize({"cik": cik, "raw": payload}))
         return drafts
 
     def normalize(self, raw: Any) -> list[ObservationDraft]:

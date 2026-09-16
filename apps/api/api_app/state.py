@@ -129,6 +129,32 @@ DEFAULT_INSTRUMENT_FALLBACK = "NG-M1"
 logger = logging.getLogger(__name__)
 
 
+def _row_to_draft(row: dict) -> ObservationDraft:
+    """Rebuild an `ObservationDraft` from a stored observation row, so the pure
+    derivation helpers below can run against history read back from the database
+    exactly as they do against a live fetch."""
+    return ObservationDraft(
+        source=row["source"],
+        source_type=row["source_type"],
+        series_id=row["series_id"],
+        symbol=row["symbol"],
+        commodity=row["commodity"],
+        category=row["category"],
+        sub_category=row["sub_category"],
+        geography=row["geography"],
+        location=row["location"],
+        value=row["value"],
+        unit=row["unit"],
+        observation_time=row["observation_time"],
+        publication_time=row["publication_time"],
+        revision_number=row["revision_number"],
+        quality_score=row["quality_score"],
+        confidence=row["confidence"],
+        metadata=row["metadata"] or {},
+        lineage=row["lineage"] or {},
+    )
+
+
 def _derive_storage_baseline(storage_drafts: list[ObservationDraft]) -> dict[str, float] | None:
     """Computes every `storage_baseline` field directly from EIA's real weekly
     storage history -- no interpolation, no synthetic blending. `None` when there
@@ -567,27 +593,7 @@ class AppState:
         """
         result: dict = {"market_curve": 0, "ttf": 0, "errors": []}
 
-        def _as_draft(row: dict) -> ObservationDraft:
-            return ObservationDraft(
-                source=row["source"],
-                source_type=row["source_type"],
-                series_id=row["series_id"],
-                symbol=row["symbol"],
-                commodity=row["commodity"],
-                category=row["category"],
-                sub_category=row["sub_category"],
-                geography=row["geography"],
-                location=row["location"],
-                value=row["value"],
-                unit=row["unit"],
-                observation_time=row["observation_time"],
-                publication_time=row["publication_time"],
-                revision_number=row["revision_number"],
-                quality_score=row["quality_score"],
-                confidence=row["confidence"],
-                metadata=row["metadata"] or {},
-                lineage=row["lineage"] or {},
-            )
+        _as_draft = _row_to_draft
 
         def _position(draft: ObservationDraft) -> int:
             """M1, M2, ... -> 1, 2, ...; anything unlabelled sorts last."""
@@ -642,6 +648,47 @@ class AppState:
         result["changed"] = changed
         if changed:
             await self._publish_market_price_updated()
+
+        return result
+
+    async def rehydrate_fundamentals_from_db(self) -> dict:
+        """Re-derive `storage_baseline`/`weather_kwargs` from persisted observations.
+
+        The same cross-process split that left prices stale applies to the two
+        fundamentals the engines read: the worker fetches EIA and NOAA, derives these,
+        and holds them in *its* memory, while the API's copies stay at whatever boot
+        produced. Storage and weather panels therefore showed the API's boot-time
+        values indefinitely.
+
+        Nothing new is computed here — `_derive_storage_baseline` and
+        `_derive_weather_kwargs` are pure functions over drafts, so they are re-run
+        against history read back from the database. That keeps one definition of each
+        derivation rather than a second, subtly different one for the read path.
+        """
+        result: dict = {"storage_updated": False, "weather_updated": False, "errors": []}
+
+        try:
+            rows = await self.repo.list_market_observations_as_of(
+                series_id="EIA.NG.STORAGE.LOWER48", limit=300
+            )
+            baseline = _derive_storage_baseline([_row_to_draft(r) for r in rows])
+            if baseline is not None:
+                self.storage_baseline = baseline
+                self.storage_baseline_classification = "PUBLIC"
+                result["storage_updated"] = True
+        except Exception as e:  # noqa: BLE001
+            result["errors"].append(f"storage: {type(e).__name__}")
+
+        try:
+            rows = await self.repo.latest_observation_per_series(series_prefix="NOAA.HDD_CDD.")
+            weather = _derive_weather_kwargs(
+                [_row_to_draft(r) for r in rows], previous=self.weather_kwargs
+            )
+            if weather is not None:
+                self.weather_kwargs = weather
+                result["weather_updated"] = True
+        except Exception as e:  # noqa: BLE001
+            result["errors"].append(f"weather: {type(e).__name__}")
 
         return result
 

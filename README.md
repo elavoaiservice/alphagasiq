@@ -935,3 +935,37 @@ the config overlay *before* seeding so a GUI-configured deployment never fetches
 persists mock data at boot in the first place. The guard is the load-bearing half: rows
 written by earlier boots are already in the store, so fixing the ordering alone would not
 have protected an existing deployment.
+
+**Open-item cleanup.** Three follow-ups from running the platform in production:
+
+*The scheduler reported inactive feeds as failures.* `data_feed_configs` keeps a row
+per provider ever registered, so turning the mock flags off left `mock_cme`/`mock_ice`/
+`mock_news` enabled and due while the registry no longer contained them — roughly 250
+`not registered` errors an hour, flooding the ingestion log and showing the admin Data
+Feeds page as permanently broken. `ProviderRegistry.has()` now lets the scheduler
+distinguish "this configuration does not register that feed" (a skip, reported as
+`not_registered`) from a genuine ingest failure.
+
+*SEC EDGAR was ingesting the wrong companies.* Three of the four hardcoded CIKs were
+incorrect, and only one failed loudly: Cheniere's 404'd, while "Williams Companies"
+actually resolved to **Norwegian Cruise Line Holdings** and "Kinder Morgan" to
+**Aravive**, a biotech — cruise-line and pharmaceutical filings flowing into a
+natural-gas platform under confident pipeline-operator labels. Every CIK is now
+verified against SEC's own `company_tickers.json` (and the list extended to ONEOK and
+Energy Transfer), each lookup is isolated so one bad identifier cannot abort the batch,
+and the returned company `name` is checked against the expected one — a wrong-but-valid
+CIK returns `200`, so identity has to be verified rather than assumed. The live fetch
+now returns ~1,600 filings across six correct companies.
+
+*Storage and weather had the same cross-process staleness as prices.* The worker derives
+`storage_baseline`/`weather_kwargs` and holds them in its own memory, so the API served
+its boot-time values indefinitely. `rehydrate_fundamentals_from_db()` re-runs the
+existing pure derivations (`_derive_storage_baseline`, `_derive_weather_kwargs`) against
+history read back from the observation store, keeping one definition of each derivation
+rather than a second, subtly different one for the read path.
+
+Two further gaps are host-side and documented in `docs/DEPLOY-MAC-MINI.md` §13.0 rather
+than fixed in code: the admin Upgrade button cannot recover an API outage (it is served
+by the process that is down — recover with `touch ~/agiq-deploy/trigger`, the same file
+the button writes), and the deploy script's health check probes before the API has
+finished booting, so it reports `WARN: health 000` on deploys that fully succeeded.

@@ -131,7 +131,7 @@ async def poll_due_feeds(state, *, now: datetime | None = None) -> dict[str, Any
     every ingest is guarded and reported on its own.
     """
     now = now or datetime.utcnow()
-    result: dict[str, Any] = {"polled": [], "skipped": 0, "errors": []}
+    result: dict[str, Any] = {"polled": [], "skipped": 0, "errors": [], "not_registered": []}
 
     try:
         configs = await state.repo.list_data_feed_configs()
@@ -142,6 +142,17 @@ async def poll_due_feeds(state, *, now: datetime | None = None) -> dict[str, Any
     for config in configs:
         provider_id = config["provider_id"]
         if not is_due(config, now):
+            result["skipped"] += 1
+            continue
+
+        # A feed whose provider this configuration does not register is not a
+        # failure — it is simply inactive here. `data_feed_configs` keeps a row per
+        # provider ever seen, so turning mocks off left mock_cme/mock_ice/mock_news
+        # enabled and due, and every tick recorded three "not registered" errors:
+        # ~250 bogus failures an hour flooding the ingestion log and showing the
+        # admin Data Feeds page as permanently broken.
+        if not state.providers.has(provider_id):
+            result["not_registered"].append(provider_id)
             result["skipped"] += 1
             continue
 

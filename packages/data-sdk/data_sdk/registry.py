@@ -22,6 +22,16 @@ class ProviderRegistry:
     def get(self, provider_id: str) -> BaseDataProvider:
         return self._providers[provider_id]
 
+    def has(self, provider_id: str) -> bool:
+        """Whether this configuration registers the provider.
+
+        Registration is config-dependent — the mock market/news providers exist only
+        when their USE_MOCK_* flag is on, and the real connectors only when it is off
+        — so callers that hold a provider id from elsewhere (an admin config row, a
+        stored setting) must be able to ask rather than catch `get`'s KeyError.
+        """
+        return provider_id in self._providers
+
     def all(self) -> list[BaseDataProvider]:
         return list(self._providers.values())
 

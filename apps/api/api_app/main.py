@@ -61,6 +61,8 @@ async def _rehydrate_market_loop(state) -> None:
         try:
             await asyncio.sleep(interval)
             await state.rehydrate_market_from_db()
+            # Storage and weather have the same cross-process staleness as prices.
+            await state.rehydrate_fundamentals_from_db()
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001
