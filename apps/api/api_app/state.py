@@ -499,18 +499,36 @@ class AppState:
 
         from config import get_settings as _get_settings
 
-        cme_id = "mock_cme" if _get_settings().use_mock_market_data else "cme_live"
-        cme = self.providers.get(cme_id)
-        self.market_curve = await cme.fetch(FetchRequest(end=as_of))
-        await self._persist_market_observations(self.market_curve)
+        # Seeding must never hard-fail on a provider that this configuration does not
+        # register. `ProviderRegistry.get()` raises KeyError, so a hardcoded id for a
+        # provider that is only registered in one configuration takes the whole
+        # process down at startup -- which is exactly what a hardcoded "mock_news"
+        # did here once the config overlay started being applied before seed: with
+        # USE_MOCK_NEWS=false the mock provider is not registered, and the API and
+        # worker crash-looped on KeyError: 'mock_news'.
+        def _optional(provider_id: str):
+            try:
+                return self.providers.get(provider_id)
+            except KeyError:
+                logger.warning("Provider %s is not registered in this configuration; skipping at seed", provider_id)
+                return None
 
-        ice_id = "mock_ice" if _get_settings().use_mock_market_data else "ice_live"
-        ice = self.providers.get(ice_id)
-        self.ttf_price = await ice.fetch(FetchRequest(end=as_of))
+        settings = _get_settings()
 
-        news_provider = self.providers.get("mock_news")
-        news_observations = await news_provider.fetch(FetchRequest(end=as_of))
-        await self._run_news_intelligence(news_observations)
+        cme = _optional("mock_cme" if settings.use_mock_market_data else "cme_live")
+        if cme is not None:
+            self.market_curve = await cme.fetch(FetchRequest(end=as_of))
+            await self._persist_market_observations(self.market_curve)
+
+        ice = _optional("mock_ice" if settings.use_mock_market_data else "ice_live")
+        if ice is not None:
+            self.ttf_price = await ice.fetch(FetchRequest(end=as_of))
+
+        # Selected by the same flag the registry uses, rather than hardcoded.
+        news_provider = _optional("mock_news" if settings.use_mock_news else "rss_news")
+        if news_provider is not None:
+            news_observations = await news_provider.fetch(FetchRequest(end=as_of))
+            await self._run_news_intelligence(news_observations)
 
         # Skippable because this reaches out to live public APIs (EIA, NOAA). The
         # automated suite builds an `AppState` per test, so leaving it on would mean

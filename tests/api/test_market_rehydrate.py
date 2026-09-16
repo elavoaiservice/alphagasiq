@@ -216,3 +216,30 @@ async def test_a_wholly_simulated_curve_is_still_served(state_module):
 
     assert len(app_state.market_curve) == 12
     assert all(d.source_type == DataClassification.SIMULATED for d in app_state.market_curve)
+
+
+@pytest.mark.asyncio
+async def test_boot_succeeds_when_mock_providers_are_not_registered(state_module, monkeypatch):
+    """Production outage, reproduced. Applying the config overlay before seed meant
+    that with USE_MOCK_NEWS=false the mock provider is not registered — and seed
+    looked it up by a hardcoded id. `ProviderRegistry.get()` raises KeyError, so the
+    API and worker crash-looped on `KeyError: 'mock_news'` and the whole platform was
+    unreachable. Seeding must never hard-fail on a provider this configuration does
+    not register."""
+    import os
+
+    from config import get_settings
+
+    monkeypatch.setenv("USE_MOCK_MARKET_DATA", "false")
+    monkeypatch.setenv("USE_MOCK_NEWS", "false")
+    monkeypatch.setenv("SEED_PUBLIC_DATA_REFRESH", "false")
+    get_settings.cache_clear()
+    try:
+        state_module.reset_app_state()
+        app_state = await state_module.get_app_state()  # must not raise
+        assert app_state is not None
+    finally:
+        for key in ("USE_MOCK_MARKET_DATA", "USE_MOCK_NEWS"):
+            os.environ.pop(key, None)
+        get_settings.cache_clear()
+        state_module.reset_app_state()
