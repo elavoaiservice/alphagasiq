@@ -69,6 +69,13 @@ async def run_forever() -> None:
     try:
         await config_store.reload_runtime(state)
         logger.info("Applied GUI config overlay at worker startup")
+        # `get_app_state()` ran seed() above, which refreshes fundamentals from
+        # public data — but that happened BEFORE the overlay existed, so a
+        # GUI-saved EIA_API_KEY was still invisible and EIA reported
+        # `not_configured` and was skipped. Re-run it now that the real config is
+        # in force, so EIA ingests at startup rather than waiting for its first
+        # scheduled poll an hour later.
+        logger.info("Post-overlay fundamentals refresh: %s", await state.refresh_fundamentals_from_public_data())
     except Exception:
         logger.exception("Worker config overlay failed; continuing with .env only")
 

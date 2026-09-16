@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
@@ -503,6 +504,59 @@ def _organization_to_dict(row: OrganizationRow) -> dict:
 
 def _role_to_dict(row: RoleRow) -> dict:
     return {"id": row.id, "name": row.name, "description": row.description}
+
+
+logger = logging.getLogger("alphagasiq.db")
+
+
+def _add_missing_columns(sync_conn) -> None:
+    """Add mapped columns that an already-existing table is missing.
+
+    `Base.metadata.create_all` creates missing *tables* but never alters existing
+    ones, so a new column on an existing model silently never appears in a deployed
+    database. That is not theoretical: `data_feed_configs.last_polled_at` shipped and
+    was absent in production, which made every `SELECT` of the model raise
+    `ProgrammingError` and took the whole feed scheduler offline -- while the new
+    `deploy_log` *table* in the same release was created fine, which is exactly why
+    the gap is easy to miss.
+
+    Deliberately additive only, and only for columns that are nullable or carry a
+    server default: `ADD COLUMN ... NOT NULL` without a default fails on a non-empty
+    table. Anything else is logged and left for a real migration -- this is a safety
+    net for the common case, not a substitute for a migration tool.
+    """
+    from sqlalchemy import inspect as sa_inspect
+
+    inspector = sa_inspect(sync_conn)
+    preparer = sync_conn.dialect.identifier_preparer
+    existing_tables = set(inspector.get_table_names())
+
+    for table in Base.metadata.sorted_tables:
+        if table.name not in existing_tables:
+            continue  # create_all just made it, with every column
+        have = {c["name"] for c in inspector.get_columns(table.name)}
+        for column in table.columns:
+            if column.name in have:
+                continue
+            if not column.nullable and column.server_default is None:
+                logger.warning(
+                    "Column %s.%s is missing and NOT NULL with no server default; "
+                    "it needs a real migration, skipping",
+                    table.name, column.name,
+                )
+                continue
+            # SQLAlchemy 2.0 has no AddColumn DDL construct (that lives in Alembic),
+            # so the ALTER is emitted directly, with identifiers quoted by the
+            # dialect's own preparer rather than interpolated raw.
+            ddl = (
+                f"ALTER TABLE {preparer.format_table(table)} "
+                f"ADD COLUMN {preparer.format_column(column)} "
+                f"{column.type.compile(dialect=sync_conn.dialect)}"
+            )
+            if column.server_default is not None:
+                ddl += f" DEFAULT {column.server_default.arg}"
+            logger.info("Adding missing column %s.%s", table.name, column.name)
+            sync_conn.execute(text(ddl))
 
 
 def _data_feed_config_to_dict(row: DataFeedConfigRow) -> dict:
@@ -1061,6 +1115,7 @@ class SqlAppRepository:
     async def init_schema(self) -> None:
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            await conn.run_sync(_add_missing_columns)
 
     # ---- LLM token usage / cost tracking (admin Token Usage page) ----
     _LLM_PRICING = {  # per 1M tokens: (input, output) USD
