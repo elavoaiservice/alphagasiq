@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
@@ -511,10 +512,21 @@ class AppState:
         news_observations = await news_provider.fetch(FetchRequest(end=as_of))
         await self._run_news_intelligence(news_observations)
 
-        try:
-            await self.refresh_fundamentals_from_public_data()
-        except Exception:
-            logger.exception("Boot-time fundamentals refresh from public data failed; continuing on seeded/synthetic data")
+        # Skippable because this reaches out to live public APIs (EIA, NOAA). The
+        # automated suite builds an `AppState` per test, so leaving it on would mean
+        # thousands of real requests to a US government API per run -- slow, flaky,
+        # and against docs/data-sources.md section 34 ("mocks/fixtures, not live
+        # public APIs, in automated tests"). `conftest.py` turns it off. It is a
+        # genuine operational knob too: boot need not block on public-data fetches,
+        # since the worker refreshes them on their own cadence anyway.
+        if os.environ.get("SEED_PUBLIC_DATA_REFRESH", "true").strip().lower() != "false":
+            try:
+                await self.refresh_fundamentals_from_public_data()
+            except Exception:
+                logger.exception(
+                    "Boot-time fundamentals refresh from public data failed; "
+                    "continuing on seeded/synthetic data"
+                )
 
     async def refresh_market_data(self, *, full: bool = True) -> dict:
         """Re-fetch the market curve (Henry Hub) and the TTF front-month with the
@@ -566,6 +578,9 @@ class AppState:
             ttf = await ice.fetch(FetchRequest())
             if ttf:
                 self.ttf_price = ttf
+                # Persist alongside the curve — see `ingest_from_provider`; TTF used
+                # to live in memory only, leaving the netback with no history.
+                await self._persist_market_observations(ttf)
             result["ttf"] = len(ttf)
         except Exception as e:  # noqa: BLE001
             result["errors"].append(f"ttf: {type(e).__name__}")
@@ -659,7 +674,12 @@ class AppState:
 
             elif provider_id in self.TTF_PROVIDERS:
                 self.ttf_price = drafts
-                summary["applied"] = "ttf_price"
+                # Persist, not just hold in memory: TTF was previously kept only in
+                # `self.ttf_price`, so it had no history at all -- the HH-TTF netback
+                # could be computed for "now" but never backtested, replayed, or
+                # audited, and the feed looked dead in the observation store.
+                await self._persist_scored(drafts)
+                summary["applied"] = "ttf_price + observations"
                 await self._publish_market_price_updated()
 
             elif provider_id in self.NEWS_PROVIDERS:

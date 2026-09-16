@@ -194,3 +194,27 @@ async def test_full_refresh_replaces_the_whole_curve(state):
     await app_state.refresh_market_data(full=True)
 
     assert [p.value for p in app_state.market_curve] == [4.00, 4.10]
+
+
+@pytest.mark.asyncio
+async def test_refresh_market_data_persists_ttf_too(state):
+    """The other TTF write path — boot and config Reload — had the same gap."""
+    app_state = await state.get_app_state()
+    app_state.providers.get = lambda pid: {  # type: ignore[method-assign]
+        "mock_cme": _StubProvider([_draft(3.0)]),
+        "mock_ice": _StubProvider([_draft(26.9)]),
+    }[pid]
+
+    persisted: list = []
+    original = app_state._persist_market_observations
+
+    async def _capture(drafts):
+        persisted.extend(drafts)
+        return await original(drafts)
+
+    app_state._persist_market_observations = _capture  # type: ignore[method-assign]
+
+    await app_state.refresh_market_data(full=True)
+
+    # Both legs written: 1 curve point + 1 TTF point.
+    assert len(persisted) == 2

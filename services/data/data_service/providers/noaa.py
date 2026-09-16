@@ -19,15 +19,23 @@ _PUBLIC_GOV_DATA_LICENSE: dict[str, Any] = {
     "ai_processing_allowed": True,
 }
 
-# Representative population-weighted demand regions we track forecasts for. Real grid
-# points would be looked up per-station; these are illustrative NWS forecast offices
-# used as regional proxies for the initial connector.
-REGION_STATIONS: dict[str, str] = {
-    "US_NATIONAL": "OKX",  # placeholder proxy station; national HDD/CDD is a
-    "NORTHEAST": "OKX",
-    "MIDWEST": "LOT",
-    "SOUTH": "HGX",
-    "WEST": "LOX",
+# Representative demand-centre coordinates per region. The NWS forecast endpoint is
+# `/gridpoints/{office}/{gridX},{gridY}/forecast` -- an office code alone is NOT a
+# valid gridpoint. This connector previously stored only the office ("OKX") and
+# requested `/gridpoints/OKX/forecast`, which is a guaranteed 404: every NOAA fetch
+# failed from the day it shipped, so `weather_kwargs` was never once updated from
+# real data. Coordinates are resolved to a gridpoint through the documented
+# `/points/{lat},{lon}` lookup (cached per process), which also survives NWS
+# re-gridding -- hardcoding grid indices would silently break again.
+#
+# `US_NATIONAL` is deliberately absent: it is *derived* by
+# `_national_degree_day_average()` from the regions below, not fetched. Including it
+# would re-fetch New York and mislabel it as a national reading.
+REGION_POINTS: dict[str, tuple[float, float]] = {
+    "NORTHEAST": (40.7128, -74.0060),   # New York, NY
+    "MIDWEST": (41.8781, -87.6298),     # Chicago, IL
+    "SOUTH": (29.7604, -95.3698),       # Houston, TX
+    "WEST": (34.0522, -118.2437),       # Los Angeles, CA
 }
 
 
@@ -50,6 +58,8 @@ class NOAAProvider(BaseDataProvider):
     def __init__(self, contact_token: str | None, client: httpx.AsyncClient | None = None):
         self.contact_token = contact_token
         self._client = client
+        # region -> gridpoint forecast URL, resolved once via /points.
+        self._forecast_urls: dict[str, str] = {}
 
     def _headers(self) -> dict[str, str]:
         contact = self.contact_token or "dev@alphagasiq.local"
@@ -58,16 +68,37 @@ class NOAAProvider(BaseDataProvider):
     async def health_check(self) -> ProviderHealth:
         return ProviderHealth(provider_id=self.provider_id, status="healthy")
 
+    async def _forecast_url(self, region: str, client: httpx.AsyncClient) -> str | None:
+        """Resolve a region's gridpoint forecast URL, caching it for this process.
+
+        NWS returns the exact forecast URL for a coordinate from `/points`, so this
+        never has to construct `{office}/{gridX},{gridY}` by hand -- which is what
+        made the previous implementation emit an invalid URL.
+        """
+        cached = self._forecast_urls.get(region)
+        if cached is not None:
+            return cached
+        point = REGION_POINTS.get(region)
+        if point is None:
+            return None
+        lat, lon = point
+        resp = await client.get(f"{NWS_BASE_URL}/points/{lat},{lon}")
+        resp.raise_for_status()
+        url = (resp.json().get("properties") or {}).get("forecast")
+        if url:
+            self._forecast_urls[region] = url
+        return url
+
     async def fetch(self, request: FetchRequest) -> list[ObservationDraft]:
-        regions = request.extra.get("regions") or list(REGION_STATIONS)
+        regions = request.extra.get("regions") or list(REGION_POINTS)
         drafts: list[ObservationDraft] = []
         async with (self._client or httpx.AsyncClient(headers=self._headers())) as client:
             forecast_by_region: dict[str, list[ObservationDraft]] = {}
             for region in regions:
-                station = REGION_STATIONS.get(region)
-                if not station:
+                url = await self._forecast_url(region, client)
+                if not url:
                     continue
-                resp = await client.get(f"{NWS_BASE_URL}/gridpoints/{station}/forecast")
+                resp = await client.get(url)
                 resp.raise_for_status()
                 region_drafts = self.normalize({"region": region, "raw": resp.json()})
                 forecast_by_region[region] = region_drafts

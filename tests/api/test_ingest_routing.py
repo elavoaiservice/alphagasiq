@@ -69,7 +69,7 @@ async def test_ttf_provider_updates_the_ttf_price(state_module):
 
     summary = await app_state.ingest_from_provider("mock_ice")
 
-    assert summary["applied"] == "ttf_price"
+    assert summary["applied"] == "ttf_price + observations"
     assert app_state.ttf_price[0].value == 25.5
 
 
@@ -148,3 +148,26 @@ async def test_market_ingest_publishes_a_price_event(state_module):
     await app_state.ingest_from_provider("mock_cme")
 
     assert [e for e in seen if e.event_type.value == "MARKET_PRICE_UPDATED"]
+
+
+@pytest.mark.asyncio
+async def test_ttf_observations_are_persisted_not_only_held_in_memory(state_module):
+    """TTF used to live only in `state.ttf_price`, so the HH-TTF netback had no
+    history: it could be computed for 'now' but never backtested, replayed or
+    audited, and the feed looked dead in the observation store."""
+    app_state = await state_module.get_app_state()
+    _wire(app_state, {"mock_ice": _Stub([_draft(26.9, series_id="TTF.FRONT_MONTH", location="TTF")])})
+
+    persisted: list = []
+    original = app_state._persist_market_observations
+
+    async def _capture(drafts):
+        persisted.extend(drafts)
+        return await original(drafts)
+
+    app_state._persist_market_observations = _capture  # type: ignore[method-assign]
+
+    summary = await app_state.ingest_from_provider("mock_ice")
+
+    assert summary["applied"] == "ttf_price + observations"
+    assert [d.series_id for d in persisted] == ["TTF.FRONT_MONTH"]

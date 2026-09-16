@@ -13,6 +13,7 @@ worker containers to fully apply them.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 from dataclasses import dataclass, field
 
@@ -145,6 +146,25 @@ async def _get_all_raw(session_factory) -> dict[str, str]:
     async with session_factory() as session:
         rows = (await session.execute(select(AppConfigRow))).scalars().all()
         return {r.key: _decrypt(r.value) for r in rows}
+
+
+async def fingerprint(session_factory) -> str:
+    """A hash of the stored config, for detecting that it changed.
+
+    Reads the values **as stored** (still Fernet-encrypted) rather than decrypting:
+    nothing needs a plaintext secret merely to notice a change. Fernet embeds a
+    timestamp and IV, so re-saving an identical value yields different ciphertext and
+    a different fingerprint — an over-trigger that costs one harmless reload, which
+    is the right way round for a change detector.
+    """
+    async with session_factory() as session:
+        rows = (await session.execute(select(AppConfigRow))).scalars().all()
+    digest = hashlib.sha256()
+    for row in sorted(rows, key=lambda r: r.key):
+        digest.update(row.key.encode())
+        digest.update(b"=")
+        digest.update((row.value or "").encode())
+    return digest.hexdigest()
 
 
 async def set_value(session_factory, key: str, value: str) -> None:

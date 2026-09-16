@@ -17,12 +17,21 @@ from datetime import date
 
 from config import get_settings
 
-from . import feed_scheduler
+from . import config_store, feed_scheduler
 from .logging_config import configure_logging
 from .state import get_app_state
 
 configure_logging(log_level=get_settings().log_level)
 logger = logging.getLogger("alphagasiq.worker")
+
+
+async def _config_fingerprint(state) -> str:
+    """Current GUI-config fingerprint, or "" if it cannot be read (never raises —
+    a config-table hiccup must not stop the worker loop)."""
+    try:
+        return await config_store.fingerprint(state.repo.session_factory)
+    except Exception:
+        return ""
 
 
 async def run_forever() -> None:
@@ -48,10 +57,29 @@ async def run_forever() -> None:
     research_interval = int(os.environ.get("WORKER_INTERVAL_SECONDS", "300"))
     market_interval = max(5, int(os.environ.get("MARKET_REFRESH_SECONDS", "10")))
     state = await get_app_state()
+
+    # Apply the GUI-managed config overlay (DB -> os.environ), exactly as the API
+    # process does in its lifespan. Without this the worker read ONLY `.env`, so
+    # every setting entered in the admin Configuration page was invisible to the one
+    # process that actually does the ingesting: an EIA_API_KEY saved in the GUI left
+    # the worker's provider reporting `not_configured` and skipping EIA entirely, and
+    # USE_MOCK_MARKET_DATA=true in a stale `.env` kept the worker writing simulated
+    # prices no matter what the GUI said. The API process, with the overlay applied,
+    # disagreed with the worker about what was configured.
+    try:
+        await config_store.reload_runtime(state)
+        logger.info("Applied GUI config overlay at worker startup")
+    except Exception:
+        logger.exception("Worker config overlay failed; continuing with .env only")
+
     logger.info(
         "AlphaGasIQ worker started; market refresh every %ss, research cycle every %ss",
         market_interval, research_interval,
     )
+    # Hash of the overlay last applied, so a change saved in the Configuration page
+    # reaches the worker without a restart — matching the page's own promise that
+    # non-`restart_required` settings apply on Reload.
+    config_fingerprint = await _config_fingerprint(state)
     # Run the full cycle on the first pass rather than waiting one whole interval.
     since_research = research_interval
     while True:
@@ -72,6 +100,18 @@ async def run_forever() -> None:
             await asyncio.sleep(market_interval)
             continue
         since_research = 0
+
+        # Pick up Configuration-page changes without a restart. Checked on the slow
+        # cadence: it is one small query, but rebuilding the provider registry is not
+        # something to do every few seconds.
+        try:
+            current = await _config_fingerprint(state)
+            if current != config_fingerprint:
+                applied = await config_store.reload_runtime(state)
+                config_fingerprint = current
+                logger.info("Config change detected; reloaded worker runtime: %s", applied)
+        except Exception:
+            logger.exception("Worker config reload check failed")
 
         try:
             # The full forward curve on the slower cadence: the scheduler's fast pass

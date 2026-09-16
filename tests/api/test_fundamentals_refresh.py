@@ -90,6 +90,21 @@ async def state():
     state_module.reset_app_state()
     app_state = await state_module.get_app_state()
     app_state.providers.register(_FakeNOAAProvider())
+    # Reset to the documented simulated fallback. `seed()` runs before the fake
+    # provider is registered, so if the real NOAA connector reaches the network it
+    # populates real weather and these tests' precondition ("no real refresh has
+    # happened yet") silently stops holding. It used to hold only because the NOAA
+    # connector was broken and every fetch 404'd -- which is exactly the bug that was
+    # just fixed, so the precondition is now established explicitly.
+    app_state.weather_kwargs = dict(
+        model="SIMULATED_FALLBACK",
+        run="not_yet_refreshed",
+        comparison_run="not_yet_refreshed",
+        hdd_run=2.8,
+        hdd_comparison=2.2,
+        cdd_run=4.0,
+        cdd_comparison=4.5,
+    )
     yield app_state
     state_module.reset_app_state()
 

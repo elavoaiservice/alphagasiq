@@ -12,3 +12,11 @@ sys.path.insert(0, str(Path(__file__).parent))
 # its own fully isolated database. Must be set before `config.get_settings()` (which
 # is `@lru_cache`'d) is imported/called anywhere.
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
+
+# `AppState.seed()` refreshes fundamentals from live public APIs (EIA, NOAA). Every
+# test builds its own `AppState`, so leaving that on means thousands of real requests
+# to a US government API per run -- slow, flaky, and contrary to
+# docs/data-sources.md section 34 ("mocks/fixtures, not live public APIs, in
+# automated tests"). Tests that exercise the refresh call it explicitly with stubbed
+# providers (see tests/api/test_fundamentals_refresh.py).
+os.environ.setdefault("SEED_PUBLIC_DATA_REFRESH", "false")

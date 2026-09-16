@@ -165,6 +165,14 @@ def test_noaa_normalize_computes_degree_days():
 
 
 def _noaa_response_for(request: httpx.Request) -> httpx.Response:
+    # NWS is a two-step API: /points/{lat},{lon} returns the gridpoint forecast URL
+    # to call. The connector follows that rather than building the URL itself (an
+    # office code alone is not a valid gridpoint — see providers/noaa.py).
+    if "/points/" in request.url.path:
+        return httpx.Response(
+            200,
+            json={"properties": {"forecast": "https://api.weather.gov/gridpoints/OKX/33,42/forecast"}},
+        )
     if "/alerts/active" in request.url.path:
         return httpx.Response(
             200,

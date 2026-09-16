@@ -852,3 +852,39 @@ frequency far below what an upstream can deliver is **honoured, with an advisory
 than silently clamped — polling EIA every 10s cannot make weekly storage data fresher, and
 the operator should see that rather than be quietly overruled. The admin page now shows the
 interval in force, last polled, and next due.
+
+**Three live-data bugs, found by checking the running deployment rather than the code.**
+Querying the observation store on the deployed Mini showed only two sources had ever
+written a row — simulated `MOCK_CME`, and `YAHOO_NYMEX` which had stopped days earlier —
+while the worker cheerfully logged `{'market_curve': 1, 'ttf': 1, 'errors': []}` every ten
+seconds, because fetching the *mock* provider succeeds.
+
+1. **The NOAA connector could never have worked.** `REGION_STATIONS` mapped each region to
+   a forecast *office* (`"OKX"`) and the connector requested `/gridpoints/OKX/forecast`, but
+   the NWS endpoint is `/gridpoints/{office}/{gridX},{gridY}/forecast` — an office code
+   alone is not a gridpoint, so every fetch 404'd from the day it shipped (2,029 consecutive
+   errors on the Mini, ~12/hour). `weather_kwargs` had therefore *never once* been updated
+   from real data, despite the README claiming NOAA "needs no key, so this always updates".
+   `REGION_POINTS` now holds each region's demand-centre coordinates and resolves the
+   forecast URL through the documented `/points/{lat},{lon}` lookup (cached per process),
+   which returns the exact URL to call and survives NWS re-gridding — hardcoding grid
+   indices would silently break again. `US_NATIONAL` was also removed from the fetched
+   regions: it is *derived* by `_national_degree_day_average()`, so fetching it re-read New
+   York and mislabelled it as a national reading.
+
+2. **TTF was never persisted.** `refresh_market_data`/`ingest_from_provider` set
+   `self.ttf_price` but never wrote the drafts to the observation store, so the HH-TTF
+   netback could be computed for "now" but never backtested, replayed or audited, and the
+   feed looked dead in every freshness check. Both write paths now persist.
+
+3. **The worker ignored every GUI setting.** `apps/api/api_app/worker.py` never applied the
+   DB config overlay that `main.py`'s lifespan applies, so the Configuration page governed
+   only the API process — while the *worker* is what does all scheduled ingestion. An
+   `EIA_API_KEY` saved in the GUI left the worker's provider reporting `not_configured`, so
+   EIA was skipped entirely with no feed event to show for it; and a stale `.env`
+   `USE_MOCK_MARKET_DATA=true` kept the worker writing simulated prices regardless of what
+   the GUI said. The two processes genuinely disagreed about what was configured. The worker
+   now applies the overlay at startup and re-checks it on the research cadence via
+   `config_store.fingerprint()` — a hash of the values *as stored*, so nothing decrypts a
+   secret merely to notice one changed — picking up a Configuration-page save without a
+   restart, as that page already promises.
