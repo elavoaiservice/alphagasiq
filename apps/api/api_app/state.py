@@ -585,7 +585,22 @@ class AppState:
         try:
             rows = await self.repo.latest_observation_per_series(series_prefix="NG.FUT.")
             if rows:
-                curve = sorted((_as_draft(r) for r in rows), key=_position)
+                drafts = sorted((_as_draft(r) for r in rows), key=_position)
+                # NEVER mix sources into one curve. The store can hold contracts from
+                # a previous configuration -- a boot against the mock provider writes
+                # M1-M36, while the real one only refreshes M1-M12, leaving M13-M36
+                # as the newest rows for their series indefinitely. Splicing those
+                # together produced a curve whose front was real and whose tail was
+                # simulated, presented under the single PUBLIC badge the chart reads
+                # from `points[0]`: fabricated prices shown as real. Keep only the
+                # contiguous run that shares the front month's source.
+                front_source = drafts[0].source
+                curve = []
+                for draft in drafts:
+                    if draft.source != front_source:
+                        break
+                    curve.append(draft)
+                result["dropped_foreign_source"] = len(drafts) - len(curve)
                 self.market_curve = curve
                 result["market_curve"] = len(curve)
         except Exception as e:  # noqa: BLE001
@@ -2269,6 +2284,23 @@ async def get_app_state() -> AppState:
     global _state
     if _state is None:
         _state = AppState()
+        # Apply the GUI-managed config overlay BEFORE seeding. `AppState.__init__`
+        # builds the provider registry from `get_settings()`, which without this
+        # reads `.env` only -- so a deployment whose `.env` still said
+        # USE_MOCK_MARKET_DATA=true would seed from the mock provider and *persist*
+        # 36 simulated contracts on every boot, even though the Configuration page
+        # said to use real data. The real provider then only refreshed M1-M12,
+        # leaving M13-M36 as the newest stored rows for their series forever.
+        # Best-effort: a missing/unreadable config table must never block startup.
+        try:
+            from . import config_store
+
+            await config_store.apply_overlay(_state.repo.session_factory)
+            from data_service.registry import build_default_registry
+
+            _state.providers = build_default_registry()
+        except Exception:  # noqa: BLE001
+            logger.debug("Pre-seed config overlay unavailable; seeding from environment", exc_info=True)
         await _state.seed()
     return _state
 

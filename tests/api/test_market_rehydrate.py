@@ -163,3 +163,56 @@ async def test_rehydrate_never_raises_on_a_database_error(state_module):
 
     result = await app_state.rehydrate_market_from_db()
     assert result["errors"]
+
+
+@pytest.mark.asyncio
+async def test_rehydrate_never_mixes_real_and_simulated_into_one_curve(state_module):
+    """The store can hold contracts from a previous configuration: a boot against the
+    mock provider writes M1-M36, while the real one only refreshes M1-M12, leaving
+    M13-M36 as the newest rows for their series indefinitely. Splicing those together
+    produced a curve whose front was real and whose tail was fabricated — under the
+    single PUBLIC badge the chart reads from points[0]. Observed in production.
+    """
+    app_state = await state_module.get_app_state()
+    await _clear_observations(app_state)
+    now = datetime(2026, 9, 16, 13, 7, tzinfo=timezone.utc)
+
+    real = [_curve_draft(2.95 + i / 100, i, now) for i in range(1, 13)]
+    simulated = []
+    for i in range(13, 25):
+        d = _curve_draft(2.60 + i / 100, i, now - timedelta(minutes=1))
+        d.source = "MOCK_CME"
+        d.source_type = DataClassification.SIMULATED
+        simulated.append(d)
+    await app_state._persist_market_observations(real + simulated)
+
+    result = await app_state.rehydrate_market_from_db()
+
+    sources = {d.source for d in app_state.market_curve}
+    assert sources == {"YAHOO_NYMEX"}, f"curve must be single-source, got {sources}"
+    assert len(app_state.market_curve) == 12
+    assert result["dropped_foreign_source"] == 12
+    # And nothing SIMULATED can be presented under the front month's badge.
+    assert all(d.source_type == DataClassification.PUBLIC for d in app_state.market_curve)
+
+
+@pytest.mark.asyncio
+async def test_a_wholly_simulated_curve_is_still_served(state_module):
+    """The guard drops foreign sources, not simulated data itself — a mock-only
+    deployment must still get its full curve, honestly labelled."""
+    app_state = await state_module.get_app_state()
+    await _clear_observations(app_state)
+    now = datetime(2026, 9, 16, 13, 7, tzinfo=timezone.utc)
+
+    drafts = []
+    for i in range(1, 13):
+        d = _curve_draft(2.60 + i / 100, i, now)
+        d.source = "MOCK_CME"
+        d.source_type = DataClassification.SIMULATED
+        drafts.append(d)
+    await app_state._persist_market_observations(drafts)
+
+    await app_state.rehydrate_market_from_db()
+
+    assert len(app_state.market_curve) == 12
+    assert all(d.source_type == DataClassification.SIMULATED for d in app_state.market_curve)

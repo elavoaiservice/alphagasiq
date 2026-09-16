@@ -916,3 +916,22 @@ process, holding a different object entirely. Those events could never arrive. R
 than introduce a cross-process broker, the API now re-publishes when a rehydrate cycle
 actually observes a change — it owns the socket, so its own bus is the right one — and
 only on change, so an unchanged cycle doesn't spam connected clients.
+
+**The forward curve must never mix sources.** Rehydrating from the observation store
+surfaced a subtler problem than staleness. The store can hold contracts from a previous
+configuration: `AppState.seed()` ran *before* the GUI config overlay was applied, so a
+deployment whose `.env` still said `USE_MOCK_MARKET_DATA=true` would seed from the mock
+provider and **persist all 36 simulated contracts** on every boot, even though the
+Configuration page said to use real data. The real provider then only refreshes M1-M12,
+leaving M13-M36 as the newest stored rows for their series indefinitely. Taking "the
+latest observation per series" therefore produced a curve whose front twelve points were
+real `YAHOO_NYMEX` and whose remaining twenty-four were fabricated `MOCK_CME` — served
+under the single `PUBLIC` badge `ForwardCurveChart` reads from `points[0]`. Fabricated
+prices presented as real is the one thing this platform's data-classification design
+exists to prevent, so it is now guarded twice: `rehydrate_market_from_db()` keeps only
+the contiguous run of contracts sharing the front month's source (a mock-only deployment
+still gets its full curve, honestly labelled `SIMULATED`), and `get_app_state()` applies
+the config overlay *before* seeding so a GUI-configured deployment never fetches or
+persists mock data at boot in the first place. The guard is the load-bearing half: rows
+written by earlier boots are already in the store, so fixing the ordering alone would not
+have protected an existing deployment.
