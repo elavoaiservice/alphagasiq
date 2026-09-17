@@ -70,10 +70,11 @@ class YahooTTFProvider(BaseDataProvider):
 
     async def health_check(self) -> ProviderHealth:
         try:
-            async with (self._client or httpx.AsyncClient()) as client:
-                ttf, fx = await asyncio.gather(
-                    self._quote(TTF_SYMBOL, client), self._quote(FX_SYMBOL, client)
-                )
+            # Pooled, never closed per fetch — see BaseDataProvider.http_client.
+            client = self.http_client()
+            ttf, fx = await asyncio.gather(
+                self._quote(TTF_SYMBOL, client), self._quote(FX_SYMBOL, client)
+            )
             # Degraded, not healthy, when only one leg answers: the conversion
             # needs both, so a half-available feed cannot publish anything.
             return ProviderHealth(
@@ -89,12 +90,13 @@ class YahooTTFProvider(BaseDataProvider):
         # Never raise: a network hiccup must not break boot (same contract as
         # YahooHenryHubProvider) — degrade to an empty, honestly-unavailable curve.
         try:
-            async with (self._client or httpx.AsyncClient()) as client:
-                ttf, fx = await asyncio.gather(
-                    self._quote(TTF_SYMBOL, client),
-                    self._quote(FX_SYMBOL, client),
-                    return_exceptions=True,
-                )
+            # Pooled, never closed per fetch — see BaseDataProvider.http_client.
+            client = self.http_client()
+            ttf, fx = await asyncio.gather(
+                self._quote(TTF_SYMBOL, client),
+                self._quote(FX_SYMBOL, client),
+                return_exceptions=True,
+            )
         except Exception:
             return []
 

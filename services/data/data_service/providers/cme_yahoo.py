@@ -50,8 +50,9 @@ class YahooHenryHubProvider(BaseDataProvider):
 
     async def health_check(self) -> ProviderHealth:
         try:
-            async with (self._client or httpx.AsyncClient()) as client:
-                px = await self._price("NG=F", client)
+            # Pooled, never closed per fetch — see BaseDataProvider.http_client.
+            client = self.http_client()
+            px = await self._price("NG=F", client)
             return ProviderHealth(provider_id=self.provider_id, status="healthy" if px else "degraded")
         except Exception:
             return ProviderHealth(provider_id=self.provider_id, status="unhealthy")
@@ -64,12 +65,13 @@ class YahooHenryHubProvider(BaseDataProvider):
         # Never raise: a network hiccup here must not break boot — return an empty
         # curve and the platform degrades honestly ("data unavailable").
         try:
-            async with (self._client or httpx.AsyncClient()) as client:
-                results = await asyncio.gather(
-                    self._price("NG=F", client),
-                    *[self._price(s, client) for s in symbols],
-                    return_exceptions=True,
-                )
+            # Pooled, never closed per fetch — see BaseDataProvider.http_client.
+            client = self.http_client()
+            results = await asyncio.gather(
+                self._price("NG=F", client),
+                *[self._price(s, client) for s in symbols],
+                return_exceptions=True,
+            )
         except Exception:
             return []
         front = results[0] if not isinstance(results[0], Exception) else None

@@ -969,3 +969,29 @@ than fixed in code: the admin Upgrade button cannot recover an API outage (it is
 by the process that is down — recover with `touch ~/agiq-deploy/trigger`, the same file
 the button writes), and the deploy script's health check probes before the API has
 finished booting, so it reports `WARN: health 000` on deploys that fully succeeded.
+
+**Connection pooling, and the outage that forced it.** Every connector opened its HTTP
+client as `async with (self._client or httpx.AsyncClient()) as client:` — a fresh
+connection pool per fetch, closed at the end. At the original cadences that was merely
+wasteful. At `MARKET_REFRESH_SECONDS=10` it took the production host down: each poll's
+TCP connections sat in `TIME_WAIT` for ~30s and accumulated to **21,302 sockets against
+an ephemeral port range of 16,384** (49152-65535), at which point the machine could not
+open *any* outbound connection. The public site returned 502 on both web and API, and
+Colima could not SSH to its own VM — every container was healthy the entire time and
+`docker compose ps` showed them `Up`, which made it look like a tunnel or deploy problem
+rather than port exhaustion. Diagnosis is `netstat -an -p tcp | awk '/TIME_WAIT/ {print
+$5}' | sort | uniq -c | sort -rn`, which pointed straight at two Yahoo Finance IPs.
+
+`BaseDataProvider.http_client()` now returns one lazily-created pooled client per
+provider instance, kept for the process's life with a bounded pool
+(`max_connections=20`, `max_keepalive_connections=10`) so connections are reused across
+polls instead of re-established. It also fixes a second, latent bug in the old pattern:
+`async with` closed a caller-*injected* client, so a second fetch on the same instance
+would have used a closed one.
+
+The lesson generalises beyond this connector: raising a polling rate is not a
+configuration change when the code underneath opens a new socket per poll. The immediate
+remedy on the host was `sudo sysctl -w net.inet.ip.portrange.first=16384`, which makes
+the unused low range available without disturbing the stuck sockets; note that the
+`TIME_WAIT` entries did **not** drain on their own, so waiting it out is not a recovery
+strategy.

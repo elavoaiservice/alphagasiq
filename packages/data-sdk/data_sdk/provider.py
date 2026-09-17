@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import httpx
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from typing import Any, Literal
@@ -91,6 +92,47 @@ class BaseDataProvider(ABC):
     provider_id: str
     classification: DataClassification
     freshness_sla_seconds: int | None = None
+
+    # One pooled HTTP client per provider instance, created lazily and kept for the
+    # process's life.
+    #
+    # Every connector used to do `async with (self._client or httpx.AsyncClient())`,
+    # which opens a fresh connection pool per fetch and closes it at the end. At the
+    # old cadences that was merely wasteful; at MARKET_REFRESH_SECONDS=10 it took a
+    # production host down. Each poll left its TCP connections in TIME_WAIT for ~30s,
+    # they accumulated to 21,302 sockets against an ephemeral range of 16,384, and the
+    # machine could no longer open ANY outbound connection -- the site 502'd, and even
+    # Colima could not reach its own VM.
+    #
+    # It also silently closed a caller-injected client (tests pass one in), so a second
+    # fetch on the same provider instance would use a closed client.
+    _owned_http_client: httpx.AsyncClient | None = None
+
+    def http_client(self, **client_kwargs: Any) -> httpx.AsyncClient:
+        """The pooled client for this provider. Never use it in an `async with`:
+        closing it per fetch is exactly the bug this exists to prevent.
+
+        An injected `self._client` (tests) is returned untouched and never closed here.
+        """
+        injected = getattr(self, "_client", None)
+        if injected is not None:
+            return injected
+        existing = self._owned_http_client
+        if existing is None or existing.is_closed:
+            self._owned_http_client = httpx.AsyncClient(
+                # Keep-alive is the whole point: a bounded pool that is reused across
+                # polls, rather than new sockets every time.
+                limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+                timeout=httpx.Timeout(15.0),
+                **client_kwargs,
+            )
+        return self._owned_http_client
+
+    async def aclose(self) -> None:
+        """Release the pooled client. For process shutdown, not per fetch."""
+        if self._owned_http_client is not None and not self._owned_http_client.is_closed:
+            await self._owned_http_client.aclose()
+        self._owned_http_client = None
 
     # Licensing metadata (spec §31), mirrored one-for-one onto every `ObservationDraft`
     # this provider produces. `None` means unknown/unclassified -- never defaulted to
