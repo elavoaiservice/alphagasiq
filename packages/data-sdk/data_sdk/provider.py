@@ -10,6 +10,11 @@ from schemas import DataClassification, ObservationDraft
 
 FreshnessStatus = Literal["LIVE", "CURRENT", "DELAYED", "STALE", "FAILED", "UNKNOWN"]
 
+# How long an idle pooled connection is kept. Must comfortably exceed the fastest
+# polling interval any connector runs at (MARKET_REFRESH_SECONDS, default 10s), or
+# connections expire between polls and the pool never gets reused.
+KEEPALIVE_EXPIRY_SECONDS = 120.0
+
 
 def compute_freshness_status(
     *,
@@ -122,7 +127,18 @@ class BaseDataProvider(ABC):
             self._owned_http_client = httpx.AsyncClient(
                 # Keep-alive is the whole point: a bounded pool that is reused across
                 # polls, rather than new sockets every time.
-                limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+                #
+                # `keepalive_expiry` must exceed the polling interval or pooling buys
+                # nothing. httpx defaults it to 5s; the market feeds poll every 10s
+                # (MARKET_REFRESH_SECONDS), so every idle connection was dropped 5s
+                # before the next poll and each poll opened fresh sockets anyway —
+                # measured in production as 24 new sockets/minute, exactly 4 requests
+                # per poll x 6 polls. Pooling without this is pooling in name only.
+                limits=httpx.Limits(
+                    max_connections=20,
+                    max_keepalive_connections=10,
+                    keepalive_expiry=KEEPALIVE_EXPIRY_SECONDS,
+                ),
                 timeout=httpx.Timeout(15.0),
                 **client_kwargs,
             )

@@ -91,3 +91,25 @@ async def test_aclose_is_idempotent_and_reopens_on_demand():
     await p.aclose()  # must not raise
     assert p.http_client() is not None  # usable again after close
     await p.aclose()
+
+
+@pytest.mark.asyncio
+async def test_keepalive_outlives_the_polling_interval():
+    """Pooling only helps if idle connections survive until the next poll.
+
+    httpx defaults `keepalive_expiry` to 5s while the market feeds poll every 10s
+    (MARKET_REFRESH_SECONDS), so connections were dropped 5s before each poll and
+    every poll opened fresh sockets regardless of the pool — measured in production
+    as 24 new sockets/minute, exactly 4 requests per poll x 6 polls. The first
+    pooling fix reduced the leak but did not stop it until this was raised.
+    """
+    from data_sdk.provider import KEEPALIVE_EXPIRY_SECONDS
+
+    p = YahooHenryHubProvider()
+    pool = p.http_client()._transport._pool  # type: ignore[attr-defined]
+
+    assert pool._keepalive_expiry == KEEPALIVE_EXPIRY_SECONDS
+    # Must clear the fastest cadence any connector runs at, with real headroom.
+    assert KEEPALIVE_EXPIRY_SECONDS >= 60, "must comfortably exceed MARKET_REFRESH_SECONDS"
+    assert KEEPALIVE_EXPIRY_SECONDS > 10
+    await p.aclose()
